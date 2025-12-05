@@ -1,0 +1,23 @@
+# Build results
+bin/
+obj/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# State files
+sync_state.json
+sync_report.json
+
+# Secrets
+*.env
+appsettings.Development.json
+
+# OS
+.DS_Store
+Thumbs.db
