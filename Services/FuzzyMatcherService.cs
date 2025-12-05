@@ -1,0 +1,732 @@
+using FuzzySharp;
+using GedcomGeniSync.Models;
+
+namespace GedcomGeniSync.Services;
+
+/// <summary>
+/// Fuzzy matching service for comparing PersonRecords
+/// </summary>
+public class FuzzyMatcherService
+{
+    private readonly NameVariantsService _nameVariants;
+    private readonly ILogger _logger;
+    private readonly MatchingOptions _options;
+
+    public FuzzyMatcherService(
+        NameVariantsService nameVariants, 
+        ILogger logger,
+        MatchingOptions? options = null)
+    {
+        _nameVariants = nameVariants;
+        _logger = logger;
+        _options = options ?? new MatchingOptions();
+    }
+
+    /// <summary>
+    /// Compare two persons and return match score (0-100)
+    /// </summary>
+    public MatchCandidate Compare(PersonRecord source, PersonRecord target)
+    {
+        var candidate = new MatchCandidate
+        {
+            Source = source,
+            Target = target,
+            Score = 0,
+            Reasons = new List<MatchReason>()
+        };
+
+        // First name comparison
+        var firstNameScore = CompareFirstNames(source, target);
+        if (firstNameScore > 0)
+        {
+            candidate.Reasons.Add(new MatchReason
+            {
+                Field = "FirstName",
+                Points = (int)(firstNameScore * _options.FirstNameWeight),
+                Details = $"{source.FirstName} ↔ {target.FirstName} ({firstNameScore:P0})"
+            });
+        }
+
+        // Last name comparison
+        var lastNameScore = CompareLastNames(source, target);
+        if (lastNameScore > 0)
+        {
+            candidate.Reasons.Add(new MatchReason
+            {
+                Field = "LastName",
+                Points = (int)(lastNameScore * _options.LastNameWeight),
+                Details = $"{source.LastName} ↔ {target.LastName} ({lastNameScore:P0})"
+            });
+        }
+
+        // Birth date comparison
+        var birthDateScore = CompareDates(source.BirthDate, target.BirthDate);
+        if (birthDateScore > 0)
+        {
+            candidate.Reasons.Add(new MatchReason
+            {
+                Field = "BirthDate",
+                Points = (int)(birthDateScore * _options.BirthDateWeight),
+                Details = $"{source.BirthDate} ↔ {target.BirthDate} ({birthDateScore:P0})"
+            });
+        }
+
+        // Birth place comparison
+        var birthPlaceScore = ComparePlaces(source.BirthPlace, target.BirthPlace);
+        if (birthPlaceScore > 0)
+        {
+            candidate.Reasons.Add(new MatchReason
+            {
+                Field = "BirthPlace",
+                Points = (int)(birthPlaceScore * _options.BirthPlaceWeight),
+                Details = $"{source.BirthPlace} ↔ {target.BirthPlace} ({birthPlaceScore:P0})"
+            });
+        }
+
+        // Gender comparison (penalty for mismatch)
+        var genderScore = CompareGender(source.Gender, target.Gender);
+        if (genderScore < 1.0)
+        {
+            candidate.Reasons.Add(new MatchReason
+            {
+                Field = "Gender",
+                Points = (int)(genderScore * _options.GenderWeight) - _options.GenderWeight,
+                Details = $"{source.Gender} ↔ {target.Gender} (penalty)"
+            });
+        }
+
+        // Death date comparison (bonus if both have it)
+        var deathDateScore = CompareDates(source.DeathDate, target.DeathDate);
+        if (deathDateScore > 0)
+        {
+            candidate.Reasons.Add(new MatchReason
+            {
+                Field = "DeathDate",
+                Points = (int)(deathDateScore * _options.DeathDateWeight),
+                Details = $"{source.DeathDate} ↔ {target.DeathDate} ({deathDateScore:P0})"
+            });
+        }
+
+        // Calculate total score
+        candidate.Score = Math.Min(100, Math.Max(0, 
+            candidate.Reasons.Sum(r => r.Points)));
+
+        return candidate;
+    }
+
+    /// <summary>
+    /// Find best matches for a person from a list of candidates
+    /// </summary>
+    public List<MatchCandidate> FindMatches(
+        PersonRecord source, 
+        IEnumerable<PersonRecord> candidates,
+        int minScore = 0)
+    {
+        var matches = new List<MatchCandidate>();
+
+        foreach (var candidate in candidates)
+        {
+            // Quick pre-filter: skip if gender definitely mismatches
+            if (source.Gender != Gender.Unknown && 
+                candidate.Gender != Gender.Unknown &&
+                source.Gender != candidate.Gender)
+            {
+                continue;
+            }
+
+            // Quick pre-filter: skip if birth years are too far apart
+            if (source.BirthYear.HasValue && candidate.BirthYear.HasValue)
+            {
+                var yearDiff = Math.Abs(source.BirthYear.Value - candidate.BirthYear.Value);
+                if (yearDiff > _options.MaxBirthYearDifference)
+                {
+                    continue;
+                }
+            }
+
+            var match = Compare(source, candidate);
+            if (match.Score >= minScore)
+            {
+                matches.Add(match);
+            }
+        }
+
+        return matches
+            .OrderByDescending(m => m.Score)
+            .ToList();
+    }
+
+    #region Name Comparison
+
+    private double CompareFirstNames(PersonRecord source, PersonRecord target)
+    {
+        var sourceName = source.FirstName;
+        var targetName = target.FirstName;
+
+        if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(targetName))
+            return 0;
+
+        // 1. Exact match
+        if (NormalizeForComparison(sourceName) == NormalizeForComparison(targetName))
+            return 1.0;
+
+        // 2. Check name variants dictionary
+        if (_nameVariants.AreEquivalent(sourceName, targetName))
+            return 0.95;
+
+        // 3. Check all name variants from both records
+        var sourceVariants = GetAllNameVariants(source, true);
+        var targetVariants = GetAllNameVariants(target, true);
+
+        foreach (var sv in sourceVariants)
+        {
+            foreach (var tv in targetVariants)
+            {
+                if (_nameVariants.AreEquivalent(sv, tv))
+                    return 0.90;
+            }
+        }
+
+        // 4. Levenshtein ratio
+        var ratio = Fuzz.Ratio(
+            NormalizeForComparison(sourceName), 
+            NormalizeForComparison(targetName)) / 100.0;
+
+        // 5. Partial ratio for nicknames (Александр vs Саша)
+        var partialRatio = Fuzz.PartialRatio(
+            NormalizeForComparison(sourceName),
+            NormalizeForComparison(targetName)) / 100.0;
+
+        return Math.Max(ratio, partialRatio * 0.9);
+    }
+
+    private double CompareLastNames(PersonRecord source, PersonRecord target)
+    {
+        var sourceName = source.LastName;
+        var targetName = target.LastName;
+
+        if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(targetName))
+            return 0;
+
+        // 1. Exact match
+        if (NormalizeForComparison(sourceName) == NormalizeForComparison(targetName))
+            return 1.0;
+
+        // 2. Check maiden name
+        if (!string.IsNullOrEmpty(source.MaidenName))
+        {
+            if (NormalizeForComparison(source.MaidenName) == NormalizeForComparison(targetName))
+                return 0.95;
+        }
+        if (!string.IsNullOrEmpty(target.MaidenName))
+        {
+            if (NormalizeForComparison(target.MaidenName) == NormalizeForComparison(sourceName))
+                return 0.95;
+        }
+
+        // 3. Check surname variants dictionary
+        if (_nameVariants.AreEquivalentSurnames(sourceName, targetName))
+            return 0.90;
+
+        // 4. Levenshtein ratio with transliteration
+        var sourceTranslit = _nameVariants.Transliterate(sourceName);
+        var targetTranslit = _nameVariants.Transliterate(targetName);
+        
+        var ratio = Fuzz.Ratio(
+            NormalizeForComparison(sourceTranslit), 
+            NormalizeForComparison(targetTranslit)) / 100.0;
+
+        return ratio;
+    }
+
+    private IEnumerable<string> GetAllNameVariants(PersonRecord person, bool firstName)
+    {
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (firstName)
+        {
+            if (!string.IsNullOrEmpty(person.FirstName))
+                variants.Add(person.FirstName);
+            if (!string.IsNullOrEmpty(person.Nickname))
+                variants.Add(person.Nickname);
+            if (!string.IsNullOrEmpty(person.MiddleName))
+                variants.Add(person.MiddleName);
+        }
+        else
+        {
+            if (!string.IsNullOrEmpty(person.LastName))
+                variants.Add(person.LastName);
+            if (!string.IsNullOrEmpty(person.MaidenName))
+                variants.Add(person.MaidenName);
+        }
+
+        // Add variants from GEDCOM name variants
+        foreach (var v in person.NameVariants)
+        {
+            variants.Add(v);
+        }
+
+        return variants;
+    }
+
+    #endregion
+
+    #region Date Comparison
+
+    private double CompareDates(DateInfo? source, DateInfo? target)
+    {
+        if (source == null || target == null)
+            return 0;
+
+        if (!source.Year.HasValue || !target.Year.HasValue)
+            return 0;
+
+        var yearDiff = Math.Abs(source.Year.Value - target.Year.Value);
+
+        // Exact year match
+        if (yearDiff == 0)
+        {
+            // Check month
+            if (source.Month.HasValue && target.Month.HasValue)
+            {
+                if (source.Month == target.Month)
+                {
+                    // Check day
+                    if (source.Day.HasValue && target.Day.HasValue)
+                    {
+                        return source.Day == target.Day ? 1.0 : 0.95;
+                    }
+                    return 0.95;
+                }
+                return 0.85;
+            }
+            return 0.90;
+        }
+
+        // Within tolerance
+        if (yearDiff <= 1) return 0.80;
+        if (yearDiff <= 2) return 0.60;
+        if (yearDiff <= 5) return 0.40;
+        if (yearDiff <= 10) return 0.20;
+
+        return 0;
+    }
+
+    #endregion
+
+    #region Place Comparison
+
+    private double ComparePlaces(string? source, string? target)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(target))
+            return 0;
+
+        var sourceNorm = NormalizePlaceName(source);
+        var targetNorm = NormalizePlaceName(target);
+
+        // Exact match
+        if (sourceNorm == targetNorm)
+            return 1.0;
+
+        // Check if one contains the other (city vs full address)
+        if (sourceNorm.Contains(targetNorm) || targetNorm.Contains(sourceNorm))
+            return 0.80;
+
+        // Token matching (compare individual parts)
+        var sourceTokens = sourceNorm.Split(',', ' ')
+            .Select(t => t.Trim())
+            .Where(t => t.Length > 2)
+            .ToHashSet();
+        
+        var targetTokens = targetNorm.Split(',', ' ')
+            .Select(t => t.Trim())
+            .Where(t => t.Length > 2)
+            .ToHashSet();
+
+        if (sourceTokens.Count == 0 || targetTokens.Count == 0)
+            return 0;
+
+        var intersection = sourceTokens.Intersect(targetTokens).Count();
+        var union = sourceTokens.Union(targetTokens).Count();
+
+        // Jaccard similarity
+        return (double)intersection / union;
+    }
+
+    private static string NormalizePlaceName(string place)
+    {
+        return place
+            .ToLowerInvariant()
+            .Replace(".", "")
+            .Replace("-", " ")
+            .Trim();
+    }
+
+    #endregion
+
+    #region Gender Comparison
+
+    private static double CompareGender(Gender source, Gender target)
+    {
+        if (source == Gender.Unknown || target == Gender.Unknown)
+            return 1.0; // No penalty if unknown
+
+        return source == target ? 1.0 : 0.0;
+    }
+
+    #endregion
+
+    #region Normalization
+
+    private string NormalizeForComparison(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        // Transliterate to common alphabet
+        var transliterated = _nameVariants.Transliterate(text);
+
+        return transliterated
+            .ToLowerInvariant()
+            .Replace("-", "")
+            .Replace("'", "")
+            .Replace(".", "")
+            .Trim();
+    }
+
+    #endregion
+}
+
+/// <summary>
+/// Options for matching algorithm
+/// </summary>
+public class MatchingOptions
+{
+    // Weights (should sum to ~100 for intuitive percentage)
+    public int FirstNameWeight { get; set; } = 30;
+    public int LastNameWeight { get; set; } = 25;
+    public int BirthDateWeight { get; set; } = 20;
+    public int BirthPlaceWeight { get; set; } = 15;
+    public int DeathDateWeight { get; set; } = 5;
+    public int GenderWeight { get; set; } = 5;
+
+    // Thresholds
+    public int MatchThreshold { get; set; } = 70;
+    public int AutoMatchThreshold { get; set; } = 90;
+    public int MaxBirthYearDifference { get; set; } = 10;
+}
+
+/// <summary>
+/// Service for name variants lookup and transliteration
+/// </summary>
+public class NameVariantsService
+{
+    private readonly Dictionary<string, HashSet<string>> _givenNameGroups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, HashSet<string>> _surnameGroups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ILogger _logger;
+
+    // Cyrillic to Latin transliteration map
+    private static readonly Dictionary<char, string> CyrillicToLatin = new()
+    {
+        ['а'] = "a", ['б'] = "b", ['в'] = "v", ['г'] = "g", ['д'] = "d",
+        ['е'] = "e", ['ё'] = "yo", ['ж'] = "zh", ['з'] = "z", ['и'] = "i",
+        ['й'] = "y", ['к'] = "k", ['л'] = "l", ['м'] = "m", ['н'] = "n",
+        ['о'] = "o", ['п'] = "p", ['р'] = "r", ['с'] = "s", ['т'] = "t",
+        ['у'] = "u", ['ф'] = "f", ['х'] = "kh", ['ц'] = "ts", ['ч'] = "ch",
+        ['ш'] = "sh", ['щ'] = "shch", ['ъ'] = "", ['ы'] = "y", ['ь'] = "",
+        ['э'] = "e", ['ю'] = "yu", ['я'] = "ya",
+        // Ukrainian specific
+        ['і'] = "i", ['ї'] = "yi", ['є'] = "ye", ['ґ'] = "g",
+        // Upper case
+        ['А'] = "A", ['Б'] = "B", ['В'] = "V", ['Г'] = "G", ['Д'] = "D",
+        ['Е'] = "E", ['Ё'] = "Yo", ['Ж'] = "Zh", ['З'] = "Z", ['И'] = "I",
+        ['Й'] = "Y", ['К'] = "K", ['Л'] = "L", ['М'] = "M", ['Н'] = "N",
+        ['О'] = "O", ['П'] = "P", ['Р'] = "R", ['С'] = "S", ['Т'] = "T",
+        ['У'] = "U", ['Ф'] = "F", ['Х'] = "Kh", ['Ц'] = "Ts", ['Ч'] = "Ch",
+        ['Ш'] = "Sh", ['Щ'] = "Shch", ['Ъ'] = "", ['Ы'] = "Y", ['Ь'] = "",
+        ['Э'] = "E", ['Ю'] = "Yu", ['Я'] = "Ya",
+        ['І'] = "I", ['Ї'] = "Yi", ['Є'] = "Ye", ['Ґ'] = "G"
+    };
+
+    public NameVariantsService(ILogger logger)
+    {
+        _logger = logger;
+        LoadBuiltInVariants();
+    }
+
+    /// <summary>
+    /// Load CSV files with name variants
+    /// </summary>
+    public void LoadFromCsv(string givenNamesPath, string surnamesPath)
+    {
+        if (File.Exists(givenNamesPath))
+        {
+            LoadGivenNamesCsv(givenNamesPath);
+        }
+
+        if (File.Exists(surnamesPath))
+        {
+            LoadSurnamesCsv(surnamesPath);
+        }
+    }
+
+    private void LoadGivenNamesCsv(string path)
+    {
+        _logger.LogInformation("Loading given names from {Path}", path);
+        
+        var lines = File.ReadAllLines(path);
+        var count = 0;
+
+        foreach (var line in lines.Skip(1)) // Skip header
+        {
+            var parts = line.Split(',');
+            if (parts.Length >= 2)
+            {
+                var name = parts[0].Trim().Trim('"');
+                var variants = parts[1].Trim().Trim('"')
+                    .Split('|')
+                    .Select(v => v.Trim())
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToList();
+
+                AddGivenNameVariants(name, variants);
+                count++;
+            }
+        }
+
+        _logger.LogInformation("Loaded {Count} given name entries", count);
+    }
+
+    private void LoadSurnamesCsv(string path)
+    {
+        _logger.LogInformation("Loading surnames from {Path}", path);
+        
+        var lines = File.ReadAllLines(path);
+        var count = 0;
+
+        foreach (var line in lines.Skip(1)) // Skip header
+        {
+            var parts = line.Split(',');
+            if (parts.Length >= 2)
+            {
+                var name = parts[0].Trim().Trim('"');
+                var variants = parts[1].Trim().Trim('"')
+                    .Split('|')
+                    .Select(v => v.Trim())
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToList();
+
+                AddSurnameVariants(name, variants);
+                count++;
+            }
+        }
+
+        _logger.LogInformation("Loaded {Count} surname entries", count);
+    }
+
+    /// <summary>
+    /// Check if two given names are equivalent
+    /// </summary>
+    public bool AreEquivalent(string name1, string name2)
+    {
+        if (string.IsNullOrEmpty(name1) || string.IsNullOrEmpty(name2))
+            return false;
+
+        var norm1 = name1.ToLowerInvariant().Trim();
+        var norm2 = name2.ToLowerInvariant().Trim();
+
+        if (norm1 == norm2)
+            return true;
+
+        // Check if in same group
+        if (_givenNameGroups.TryGetValue(norm1, out var group1))
+        {
+            if (group1.Contains(norm2))
+                return true;
+        }
+
+        if (_givenNameGroups.TryGetValue(norm2, out var group2))
+        {
+            if (group2.Contains(norm1))
+                return true;
+        }
+
+        // Check transliterated versions
+        var translit1 = Transliterate(norm1);
+        var translit2 = Transliterate(norm2);
+
+        if (translit1 == translit2)
+            return true;
+
+        if (_givenNameGroups.TryGetValue(translit1, out var group3))
+        {
+            if (group3.Contains(translit2))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Check if two surnames are equivalent
+    /// </summary>
+    public bool AreEquivalentSurnames(string name1, string name2)
+    {
+        if (string.IsNullOrEmpty(name1) || string.IsNullOrEmpty(name2))
+            return false;
+
+        var norm1 = name1.ToLowerInvariant().Trim();
+        var norm2 = name2.ToLowerInvariant().Trim();
+
+        if (norm1 == norm2)
+            return true;
+
+        // Check if in same group
+        if (_surnameGroups.TryGetValue(norm1, out var group1))
+        {
+            if (group1.Contains(norm2))
+                return true;
+        }
+
+        if (_surnameGroups.TryGetValue(norm2, out var group2))
+        {
+            if (group2.Contains(norm1))
+                return true;
+        }
+
+        // Check transliterated versions
+        var translit1 = Transliterate(norm1);
+        var translit2 = Transliterate(norm2);
+
+        return translit1 == translit2;
+    }
+
+    /// <summary>
+    /// Transliterate text from Cyrillic to Latin
+    /// </summary>
+    public string Transliterate(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        var result = new System.Text.StringBuilder(text.Length * 2);
+
+        foreach (var c in text)
+        {
+            if (CyrillicToLatin.TryGetValue(c, out var replacement))
+            {
+                result.Append(replacement);
+            }
+            else
+            {
+                result.Append(c);
+            }
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Add custom given name variants
+    /// </summary>
+    public void AddGivenNameVariants(string baseName, IEnumerable<string> variants)
+    {
+        var key = baseName.ToLowerInvariant();
+        
+        if (!_givenNameGroups.ContainsKey(key))
+        {
+            _givenNameGroups[key] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        foreach (var variant in variants)
+        {
+            var variantKey = variant.ToLowerInvariant();
+            _givenNameGroups[key].Add(variantKey);
+            
+            // Also add reverse mapping
+            if (!_givenNameGroups.ContainsKey(variantKey))
+            {
+                _givenNameGroups[variantKey] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+            _givenNameGroups[variantKey].Add(key);
+        }
+    }
+
+    /// <summary>
+    /// Add custom surname variants
+    /// </summary>
+    public void AddSurnameVariants(string baseName, IEnumerable<string> variants)
+    {
+        var key = baseName.ToLowerInvariant();
+        
+        if (!_surnameGroups.ContainsKey(key))
+        {
+            _surnameGroups[key] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        foreach (var variant in variants)
+        {
+            var variantKey = variant.ToLowerInvariant();
+            _surnameGroups[key].Add(variantKey);
+            
+            // Also add reverse mapping
+            if (!_surnameGroups.ContainsKey(variantKey))
+            {
+                _surnameGroups[variantKey] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+            _surnameGroups[variantKey].Add(key);
+        }
+    }
+
+    /// <summary>
+    /// Load built-in common variants (Slavic names focus)
+    /// </summary>
+    private void LoadBuiltInVariants()
+    {
+        // Common Russian/Ukrainian/Polish given name equivalents
+        var givenNameEquivalents = new Dictionary<string, string[]>
+        {
+            // Male names
+            ["иван"] = new[] { "ivan", "john", "johann", "jan", "jean", "giovanni", "juan", "ioan" },
+            ["александр"] = new[] { "alexander", "alex", "oleksandr", "aleksander", "саша", "sasha" },
+            ["михаил"] = new[] { "michael", "michel", "miguel", "mykhailo", "michal", "миша" },
+            ["николай"] = new[] { "nicholas", "nicolas", "mykola", "mikolaj", "коля" },
+            ["пётр"] = new[] { "peter", "pierre", "pedro", "petro", "piotr", "петр" },
+            ["павел"] = new[] { "paul", "pavel", "pawel", "pablo", "паша" },
+            ["андрей"] = new[] { "andrew", "andrei", "andriy", "andrzej", "andre" },
+            ["сергей"] = new[] { "sergei", "serge", "sergiy", "серёжа" },
+            ["дмитрий"] = new[] { "dmitry", "dmitri", "dmytro", "дима" },
+            ["владимир"] = new[] { "vladimir", "volodymyr", "wladimir", "володя" },
+            ["борис"] = new[] { "boris", "borys" },
+            ["григорий"] = new[] { "gregory", "grigory", "hryhoriy", "гриша" },
+            ["василий"] = new[] { "vasily", "basil", "vasyl", "вася" },
+            ["яков"] = new[] { "jacob", "james", "jakub", "yakov" },
+            ["семён"] = new[] { "simon", "semen", "семен" },
+            ["фёдор"] = new[] { "theodore", "fedor", "федор", "федя" },
+            
+            // Female names
+            ["мария"] = new[] { "maria", "mary", "marie", "марія", "маша" },
+            ["анна"] = new[] { "anna", "anne", "ann", "hanna", "ганна", "аня" },
+            ["елена"] = new[] { "helen", "helena", "elena", "olena", "лена" },
+            ["екатерина"] = new[] { "catherine", "katarina", "kateryna", "катя" },
+            ["наталья"] = new[] { "natalia", "natalie", "nataliya", "наташа" },
+            ["ольга"] = new[] { "olga", "olha", "helga" },
+            ["татьяна"] = new[] { "tatiana", "tanya", "tetiana", "таня" },
+            ["ирина"] = new[] { "irina", "irene", "iryna" },
+            ["светлана"] = new[] { "svetlana", "svitlana", "света" },
+            ["людмила"] = new[] { "ludmila", "lyudmila", "liudmyla", "люда" },
+            ["евгения"] = new[] { "eugenia", "yevheniya", "женя" },
+            ["софья"] = new[] { "sophia", "sofia", "zofia", "софія", "соня" },
+            ["елизавета"] = new[] { "elizabeth", "yelyzaveta", "elzbieta", "лиза" },
+            ["валентина"] = new[] { "valentina", "валя" },
+            ["галина"] = new[] { "galina", "halyna", "галя" }
+        };
+
+        foreach (var (key, variants) in givenNameEquivalents)
+        {
+            AddGivenNameVariants(key, variants);
+        }
+
+        _logger.LogInformation("Loaded {Count} built-in given name groups", givenNameEquivalents.Count);
+    }
+}
