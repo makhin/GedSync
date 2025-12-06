@@ -317,12 +317,12 @@ class Program
 
             logger.LogInformation("Test: {Description}", description);
             logger.LogInformation("  {Source} vs {Target}", source.FullName, target.FullName);
-            logger.LogInformation("  Score: {Score}%", result.Score);
+            logger.LogInformation("  Score: {Score}%", Math.Round(result.Score, 1));
 
             foreach (var reason in result.Reasons)
             {
                 logger.LogInformation("    {Field}: +{Points} ({Details})",
-                    reason.Field, reason.Points, reason.Details);
+                    reason.Field, Math.Round(reason.Points, 1), reason.Details);
             }
 
             logger.LogInformation(string.Empty);

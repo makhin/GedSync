@@ -475,17 +475,17 @@ public record MatchCandidate
 {
     public required PersonRecord Source { get; init; }
     public required PersonRecord Target { get; init; }
-    public int Score { get; init; }
+    public double Score { get; init; }
     public ImmutableList<MatchReason> Reasons { get; init; } = ImmutableList<MatchReason>.Empty;
 
     public override string ToString() =>
-        $"{Source.FullName} ↔ {Target.FullName} (Score: {Score}%)";
+        $"{Source.FullName} ↔ {Target.FullName} (Score: {Math.Round(Score)}%)";
 }
 
 public record MatchReason
 {
     public required string Field { get; init; }
-    public int Points { get; init; }
+    public double Points { get; init; }
     public string Details { get; init; } = string.Empty;
 }
 

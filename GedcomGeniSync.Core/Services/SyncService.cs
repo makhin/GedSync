@@ -414,7 +414,7 @@ public class SyncService
 
         var geniPerson = ConvertGeniNodeToPerson(geniId, node);
         var match = _matcher.Compare(gedcomPerson, geniPerson);
-        return match.Score;
+        return (int)Math.Round(match.Score);
     }
 
     private async Task<GeniProfile?> CreateProfileAsync(
