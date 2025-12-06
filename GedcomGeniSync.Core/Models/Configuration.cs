@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using GedcomGeniSync.Services;
 using System.Text.Json.Serialization;
 
@@ -6,6 +7,7 @@ namespace GedcomGeniSync.Models;
 /// <summary>
 /// Application configuration
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class GedSyncConfiguration
 {
     /// <summary>
@@ -42,6 +44,9 @@ public class GedSyncConfiguration
 /// <summary>
 /// Matching algorithm configuration
 /// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
 public class MatchingConfig
 {
     /// <summary>
@@ -121,6 +126,9 @@ public class MatchingConfig
 /// <summary>
 /// Synchronization configuration
 /// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
 public class SyncConfig
 {
     /// <summary>
@@ -139,6 +147,9 @@ public class SyncConfig
 /// <summary>
 /// Name variants configuration
 /// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
 public class NameVariantsConfig
 {
     /// <summary>
@@ -157,6 +168,9 @@ public class NameVariantsConfig
 /// <summary>
 /// Paths configuration
 /// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
 public class PathsConfig
 {
     /// <summary>
@@ -175,6 +189,9 @@ public class PathsConfig
 /// <summary>
 /// Logging configuration
 /// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
 public class LoggingConfig
 {
     /// <summary>

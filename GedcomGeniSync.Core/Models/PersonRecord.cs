@@ -493,6 +493,7 @@ public record MatchReason
 /// Sync operation result for reporting
 /// Immutable record for thread-safety
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
 public record SyncResult
 {
     public required string GedcomId { get; init; }
