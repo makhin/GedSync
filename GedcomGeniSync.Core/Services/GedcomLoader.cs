@@ -53,7 +53,7 @@ public class GedcomLoader
         // First pass: create all PersonRecords
         foreach (var individual in db.Individuals)
         {
-            var person = ConvertIndividual(individual);
+            var person = ConvertIndividual(individual, db);
             result.Persons[person.Id] = person;
         }
 
@@ -72,7 +72,7 @@ public class GedcomLoader
         return result;
     }
 
-    private PersonRecord ConvertIndividual(GedcomIndividualRecord individual)
+    private PersonRecord ConvertIndividual(GedcomIndividualRecord individual, GedcomDatabase db)
     {
         string? firstName = null;
         string? lastName = null;
@@ -208,12 +208,20 @@ public class GedcomLoader
 
         // Extract photo URLs from multimedia records
         var photoUrlsBuilder = ImmutableList.CreateBuilder<string>();
-        foreach (var multimediaLink in individual.Multimedia)
+        if (db.Media != null)
         {
-            var photoUrl = ExtractPhotoUrl(multimediaLink);
-            if (!string.IsNullOrEmpty(photoUrl))
+            foreach (var multimediaLink in individual.Multimedia)
             {
-                photoUrlsBuilder.Add(photoUrl);
+                // Find the multimedia record in the database
+                var multimediaRecord = db.Media.FirstOrDefault(m => m.XRefID == multimediaLink);
+                if (multimediaRecord != null)
+                {
+                    var photoUrl = ExtractPhotoUrl(multimediaRecord);
+                    if (!string.IsNullOrEmpty(photoUrl))
+                    {
+                        photoUrlsBuilder.Add(photoUrl);
+                    }
+                }
             }
         }
 
