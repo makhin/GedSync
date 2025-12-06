@@ -84,17 +84,58 @@ public class GedcomLoader
         {
             firstName = CleanName(primaryName.Given);
             lastName = CleanName(primaryName.Surname);
-            maidenName = CleanName(primaryName.SurnamePrefix); // Sometimes used for maiden name
             nickname = CleanName(primaryName.Nick);
             suffix = CleanName(primaryName.Suffix);
+        }
 
-            // Store all name variants
-            foreach (var name in individual.Names)
+        // Process all names to find maiden name and store variants
+        // Check for proper TYPE tags (MAIDEN, MARRIED, BIRTH) according to GEDCOM standard
+        foreach (var name in individual.Names)
+        {
+            var nameType = name.Type?.ToUpperInvariant().Trim();
+
+            // Store name variants for fuzzy matching
+            if (!string.IsNullOrEmpty(name.Given))
+                nameVariantsBuilder.Add(name.Given);
+            if (!string.IsNullOrEmpty(name.Surname))
+                nameVariantsBuilder.Add(name.Surname);
+
+            // Look for maiden name from TYPE=MAIDEN or TYPE=BIRTH
+            // MAIDEN is the standard type, but BIRTH is also used to indicate birth name
+            if (nameType == "MAIDEN" || nameType == "BIRTH")
             {
-                if (!string.IsNullOrEmpty(name.Given))
-                    nameVariantsBuilder.Add(name.Given);
-                if (!string.IsNullOrEmpty(name.Surname))
-                    nameVariantsBuilder.Add(name.Surname);
+                var surname = CleanName(name.Surname);
+                if (!string.IsNullOrEmpty(surname))
+                {
+                    maidenName = surname;
+                    _logger.LogDebug("Found maiden name '{MaidenName}' from NAME with TYPE={Type} for {Id}",
+                        maidenName, nameType, individual.XRefID);
+                }
+            }
+            // If TYPE=MARRIED, update the current last name to married name
+            else if (nameType == "MARRIED")
+            {
+                var surname = CleanName(name.Surname);
+                if (!string.IsNullOrEmpty(surname))
+                {
+                    lastName = surname;
+                    _logger.LogDebug("Found married name '{MarriedName}' from NAME with TYPE=MARRIED for {Id}",
+                        lastName, individual.XRefID);
+                }
+            }
+        }
+
+        // Fallback: if no maiden name found via TYPE and SurnamePrefix exists on primary name
+        // Note: SurnamePrefix is not the correct GEDCOM way to store maiden names,
+        // but some genealogy software may use it this way
+        if (string.IsNullOrEmpty(maidenName) && primaryName != null)
+        {
+            var surnamePrefix = CleanName(primaryName.SurnamePrefix);
+            if (!string.IsNullOrEmpty(surnamePrefix))
+            {
+                maidenName = surnamePrefix;
+                _logger.LogDebug("Using SurnamePrefix '{SurnamePrefix}' as fallback maiden name for {Id}",
+                    maidenName, individual.XRefID);
             }
         }
 
