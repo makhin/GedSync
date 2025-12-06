@@ -1,5 +1,6 @@
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Services.Interfaces;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -22,14 +23,14 @@ class Program
         {
             await using var provider = BuildServiceProvider(verbose: true, services =>
             {
-                services.AddSingleton<NameVariantsService>();
+                services.AddSingleton<INameVariantsService, NameVariantsService>();
                 services.AddSingleton(sp => new FuzzyMatcherService(
-                    sp.GetRequiredService<NameVariantsService>(),
+                    sp.GetRequiredService<INameVariantsService>(),
                     sp.GetRequiredService<ILogger<FuzzyMatcherService>>()));
             });
 
             var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("TestMatch");
-            await RunTestMatchAsync(logger, provider.GetRequiredService<NameVariantsService>(),
+            await RunTestMatchAsync(logger, provider.GetRequiredService<INameVariantsService>(),
                 provider.GetRequiredService<FuzzyMatcherService>());
             context.ExitCode = 0;
         });
@@ -176,9 +177,9 @@ class Program
                     MatchingOptions = sp.GetRequiredService<MatchingOptions>(),
                     SyncPhotos = syncPhotos
                 });
-                services.AddSingleton<NameVariantsService>();
+                services.AddSingleton<INameVariantsService, NameVariantsService>();
                 services.AddSingleton<IFuzzyMatcherService>(sp => new FuzzyMatcherService(
-                    sp.GetRequiredService<NameVariantsService>(),
+                    sp.GetRequiredService<INameVariantsService>(),
                     sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
                     sp.GetRequiredService<MatchingOptions>()));
                 services.AddSingleton<IGedcomLoader>(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
@@ -223,7 +224,7 @@ class Program
                     return;
                 }
 
-                var nameVariants = provider.GetRequiredService<NameVariantsService>();
+                var nameVariants = provider.GetRequiredService<INameVariantsService>();
                 if (!string.IsNullOrEmpty(givenNamesCsv) || !string.IsNullOrEmpty(surnamesCsv))
                 {
                     nameVariants.LoadFromCsv(givenNamesCsv ?? string.Empty, surnamesCsv ?? string.Empty);
@@ -368,7 +369,7 @@ class Program
 
         logger.LogInformation("=== Geni Authentication ===");
 
-        var authClient = new GeniAuthClient(appKey, appSecret, logger);
+        IGeniAuthClient authClient = new GeniAuthClient(appKey, appSecret, logger);
 
         var existingToken = await authClient.LoadTokenAsync(tokenFile);
         if (existingToken != null && !existingToken.IsExpired)
@@ -414,7 +415,7 @@ class Program
 
     private static async Task RunTestMatchAsync(
         ILogger logger,
-        NameVariantsService nameVariants,
+        INameVariantsService nameVariants,
         FuzzyMatcherService matcher)
     {
         logger.LogInformation("=== Testing Fuzzy Matching ===\n");

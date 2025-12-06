@@ -2,20 +2,12 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using GedcomGeniSync.Services.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Services;
 
-public class GeniAuthToken
-{
-    public string AccessToken { get; set; } = string.Empty;
-    public string? RefreshToken { get; set; }
-    public DateTimeOffset ExpiresAt { get; set; }
-
-    public bool IsExpired => DateTimeOffset.UtcNow >= ExpiresAt;
-}
-
-public class GeniAuthClient
+public class GeniAuthClient : IGeniAuthClient
 {
     private readonly string _appKey;
     private readonly string _appSecret;
