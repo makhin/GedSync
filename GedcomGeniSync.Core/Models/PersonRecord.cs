@@ -155,12 +155,19 @@ public record PersonRecord
 /// <summary>
 /// Flexible date representation handling GEDCOM date formats
 /// Immutable record for thread-safety
+/// Uses DateOnly for type-safe date handling
 /// </summary>
 public record DateInfo
 {
-    public int? Year { get; init; }
-    public int? Month { get; init; }
-    public int? Day { get; init; }
+    /// <summary>
+    /// The actual date value (with day=1 for year-only, day=1 for year+month-only dates)
+    /// </summary>
+    public DateOnly? Date { get; init; }
+
+    /// <summary>
+    /// Precision of the date (Year, Month, or Day)
+    /// </summary>
+    public DatePrecision Precision { get; init; } = DatePrecision.Day;
 
     /// <summary>
     /// Original date string from source
@@ -168,7 +175,7 @@ public record DateInfo
     public string? Original { get; init; }
 
     /// <summary>
-    /// Date precision/modifier
+    /// Date modifier (About, Before, After, etc.)
     /// </summary>
     public DateModifier Modifier { get; init; } = DateModifier.Exact;
 
@@ -177,22 +184,37 @@ public record DateInfo
     /// </summary>
     public DateInfo? RangeEnd { get; init; }
 
-    public bool HasValue => Year.HasValue || Month.HasValue || Day.HasValue;
+    public bool HasValue => Date.HasValue;
+
+    /// <summary>
+    /// Year component for backward compatibility
+    /// </summary>
+    public int? Year => Date?.Year;
+
+    /// <summary>
+    /// Month component for backward compatibility
+    /// </summary>
+    public int? Month => Precision >= DatePrecision.Month ? Date?.Month : null;
+
+    /// <summary>
+    /// Day component for backward compatibility
+    /// </summary>
+    public int? Day => Precision >= DatePrecision.Day ? Date?.Day : null;
 
     /// <summary>
     /// Format for Geni API: "YYYY-MM-DD", "YYYY-MM", or "YYYY"
     /// </summary>
     public string? ToGeniFormat()
     {
-        if (!Year.HasValue) return null;
+        if (!Date.HasValue) return null;
 
-        if (Day.HasValue && Month.HasValue)
-            return $"{Year:D4}-{Month:D2}-{Day:D2}";
-
-        if (Month.HasValue)
-            return $"{Year:D4}-{Month:D2}";
-
-        return Year.ToString();
+        return Precision switch
+        {
+            DatePrecision.Year => Date.Value.Year.ToString(),
+            DatePrecision.Month => $"{Date.Value.Year:D4}-{Date.Value.Month:D2}",
+            DatePrecision.Day => $"{Date.Value.Year:D4}-{Date.Value.Month:D2}-{Date.Value.Day:D2}",
+            _ => null
+        };
     }
 
     public override string ToString()
@@ -214,9 +236,13 @@ public record DateInfo
         if (!HasValue)
             return string.Empty;
 
-        var date = Year.HasValue ? Year.ToString() : "";
-        if (Month.HasValue) date = $"{Month:D2}/{date}";
-        if (Day.HasValue) date = $"{Day:D2}/{date}";
+        var date = Precision switch
+        {
+            DatePrecision.Year => Date!.Value.Year.ToString(),
+            DatePrecision.Month => $"{Date!.Value.Month:D2}/{Date!.Value.Year}",
+            DatePrecision.Day => $"{Date!.Value.Day:D2}/{Date!.Value.Month:D2}/{Date!.Value.Year}",
+            _ => ""
+        };
 
         return $"{prefix}{date}";
     }
@@ -274,14 +300,42 @@ public record DateInfo
         // Parse the actual date
         var (year, month, day) = ParseDatePart(upper);
 
-        if (!year.HasValue && !month.HasValue && !day.HasValue)
+        if (!year.HasValue)
             return null;
+
+        // Determine precision and create DateOnly
+        DatePrecision precision;
+        DateOnly date;
+
+        if (day.HasValue && month.HasValue)
+        {
+            precision = DatePrecision.Day;
+            try
+            {
+                date = new DateOnly(year.Value, month.Value, day.Value);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Invalid date (e.g., Feb 31), fall back to month precision
+                precision = DatePrecision.Month;
+                date = new DateOnly(year.Value, month.Value, 1);
+            }
+        }
+        else if (month.HasValue)
+        {
+            precision = DatePrecision.Month;
+            date = new DateOnly(year.Value, month.Value, 1);
+        }
+        else
+        {
+            precision = DatePrecision.Year;
+            date = new DateOnly(year.Value, 1, 1);
+        }
 
         return new DateInfo
         {
-            Year = year,
-            Month = month,
-            Day = day,
+            Date = date,
+            Precision = precision,
             Original = original,
             Modifier = modifier,
             RangeEnd = rangeEnd
@@ -325,6 +379,13 @@ public record DateInfo
 
         return (year, month, day);
     }
+}
+
+public enum DatePrecision
+{
+    Year,   // Only year is known
+    Month,  // Year and month are known
+    Day     // Full date is known
 }
 
 public enum DateModifier

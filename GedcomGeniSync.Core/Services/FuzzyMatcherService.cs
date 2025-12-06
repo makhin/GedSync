@@ -276,26 +276,24 @@ public class FuzzyMatcherService
 
     private double CompareDates(DateInfo? source, DateInfo? target)
     {
-        if (source == null || target == null)
+        if (source?.Date == null || target?.Date == null)
             return 0;
 
-        if (!source.Year.HasValue || !target.Year.HasValue)
-            return 0;
-
-        var yearDiff = Math.Abs(source.Year.Value - target.Year.Value);
+        var yearDiff = Math.Abs(source.Date.Value.Year - target.Date.Value.Year);
 
         // Exact year match
         if (yearDiff == 0)
         {
-            // Check month
-            if (source.Month.HasValue && target.Month.HasValue)
+            // Compare based on precision
+            var minPrecision = (DatePrecision)Math.Min((int)source.Precision, (int)target.Precision);
+
+            if (minPrecision >= DatePrecision.Month)
             {
-                if (source.Month == target.Month)
+                if (source.Date.Value.Month == target.Date.Value.Month)
                 {
-                    // Check day
-                    if (source.Day.HasValue && target.Day.HasValue)
+                    if (minPrecision >= DatePrecision.Day)
                     {
-                        return source.Day == target.Day ? 1.0 : 0.95;
+                        return source.Date.Value.Day == target.Date.Value.Day ? 1.0 : 0.95;
                     }
                     return 0.95;
                 }
