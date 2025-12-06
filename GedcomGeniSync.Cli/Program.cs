@@ -15,6 +15,7 @@ class Program
 
         var syncCommand = BuildSyncCommand();
         var analyzeCommand = BuildAnalyzeCommand();
+        var authCommand = BuildAuthCommand();
         var testMatchCommand = new Command("test-match", "Run fuzzy matching tests");
 
         testMatchCommand.SetHandler(async context =>
@@ -35,9 +36,40 @@ class Program
 
         rootCommand.AddCommand(syncCommand);
         rootCommand.AddCommand(analyzeCommand);
+        rootCommand.AddCommand(authCommand);
         rootCommand.AddCommand(testMatchCommand);
 
         return await rootCommand.InvokeAsync(args);
+    }
+
+    private static Command BuildAuthCommand()
+    {
+        var authCommand = new Command("auth", "Authenticate with Geni and save access token");
+
+        var appKeyOption = new Option<string?>("--app-key", description: "Geni app key (or set GENI_APP_KEY env var)");
+        var appSecretOption = new Option<string?>("--app-secret", description: "Geni app secret (or set GENI_APP_SECRET env var)");
+        var tokenFileOption = new Option<string>("--token-file", () => "geni_token.json", description: "Path to save token");
+        var portOption = new Option<int>("--port", () => 5333, description: "Port for local OAuth callback");
+        var verboseOption = new Option<bool?>("--verbose", description: "Enable verbose logging");
+
+        authCommand.AddOption(appKeyOption);
+        authCommand.AddOption(appSecretOption);
+        authCommand.AddOption(tokenFileOption);
+        authCommand.AddOption(portOption);
+        authCommand.AddOption(verboseOption);
+
+        authCommand.SetHandler(async context =>
+        {
+            var appKey = context.ParseResult.GetValueForOption(appKeyOption);
+            var appSecret = context.ParseResult.GetValueForOption(appSecretOption);
+            var tokenFile = context.ParseResult.GetValueForOption(tokenFileOption)!;
+            var port = context.ParseResult.GetValueForOption(portOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption) ?? false;
+
+            context.ExitCode = await RunAuthAsync(appKey, appSecret, tokenFile, port, verbose, context.GetCancellationToken());
+        });
+
+        return authCommand;
     }
 
     private static Command BuildSyncCommand()
@@ -49,6 +81,7 @@ class Program
         var anchorGedOption = new Option<string>("--anchor-ged", description: "GEDCOM ID of anchor person (e.g., @I123@)") { IsRequired = true };
         var anchorGeniOption = new Option<string>("--anchor-geni", description: "Geni profile ID of anchor person") { IsRequired = true };
         var tokenOption = new Option<string>("--token", description: "Geni API access token (or set GENI_ACCESS_TOKEN env var)");
+        var tokenFileOption = new Option<string>("--token-file", () => "geni_token.json", description: "Path to saved token file from auth command");
         var dryRunOption = new Option<bool?>("--dry-run", description: "Preview changes without creating profiles");
         var thresholdOption = new Option<int?>("--threshold", description: "Match threshold (0-100)");
         var maxDepthOption = new Option<int?>("--max-depth", description: "Maximum BFS depth (null for unlimited)");
@@ -64,6 +97,7 @@ class Program
         syncCommand.AddOption(anchorGedOption);
         syncCommand.AddOption(anchorGeniOption);
         syncCommand.AddOption(tokenOption);
+        syncCommand.AddOption(tokenFileOption);
         syncCommand.AddOption(dryRunOption);
         syncCommand.AddOption(thresholdOption);
         syncCommand.AddOption(maxDepthOption);
@@ -94,6 +128,7 @@ class Program
             var anchorGed = context.ParseResult.GetValueForOption(anchorGedOption)!;
             var anchorGeni = context.ParseResult.GetValueForOption(anchorGeniOption)!;
             var token = context.ParseResult.GetValueForOption(tokenOption);
+            var tokenFile = context.ParseResult.GetValueForOption(tokenFileOption)!;
             var dryRunCli = context.ParseResult.GetValueForOption(dryRunOption);
             var thresholdCli = context.ParseResult.GetValueForOption(thresholdOption);
             var maxDepthCli = context.ParseResult.GetValueForOption(maxDepthOption);
@@ -116,6 +151,18 @@ class Program
             var syncPhotos = syncPhotosCli ?? config.Sync.SyncPhotos;
 
             token ??= Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
+
+            GeniAuthToken? storedToken = null;
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                storedToken = await GeniAuthClient.LoadTokenFromFileAsync(tokenFile);
+
+                if (storedToken != null && !storedToken.IsExpired)
+                {
+                    token = storedToken.AccessToken;
+                }
+            }
             await using var provider = BuildServiceProvider(verbose, services =>
             {
                 // Use configuration with CLI override for threshold
@@ -157,9 +204,21 @@ class Program
 
             try
             {
+                if (storedToken != null)
+                {
+                    if (storedToken.IsExpired)
+                    {
+                        logger.LogError("Stored token at {Path} is expired. Run the auth command to refresh it.", tokenFile);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Using stored token from {Path}", tokenFile);
+                    }
+                }
+
                 if (string.IsNullOrWhiteSpace(token))
                 {
-                    logger.LogError("Geni access token required. Use --token or set GENI_ACCESS_TOKEN");
+                    logger.LogError("Geni access token required. Use --token, set GENI_ACCESS_TOKEN, or load from --token-file.");
                     context.ExitCode = 1;
                     return;
                 }
@@ -276,6 +335,65 @@ class Program
         });
 
         return analyzeCommand;
+    }
+
+    private static async Task<int> RunAuthAsync(
+        string? appKey,
+        string? appSecret,
+        string tokenFile,
+        int port,
+        bool verbose,
+        CancellationToken cancellationToken)
+    {
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.AddSimpleConsole(options =>
+            {
+                options.TimestampFormat = "HH:mm:ss ";
+                options.SingleLine = true;
+            });
+            builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+        });
+
+        var logger = loggerFactory.CreateLogger("Auth");
+
+        appKey ??= Environment.GetEnvironmentVariable("GENI_APP_KEY");
+        appSecret ??= Environment.GetEnvironmentVariable("GENI_APP_SECRET");
+
+        if (string.IsNullOrEmpty(appKey) || string.IsNullOrEmpty(appSecret))
+        {
+            logger.LogError("App key and secret required. Use --app-key/--app-secret or set GENI_APP_KEY/GENI_APP_SECRET");
+            return 1;
+        }
+
+        logger.LogInformation("=== Geni Authentication ===");
+
+        var authClient = new GeniAuthClient(appKey, appSecret, logger);
+
+        var existingToken = await authClient.LoadTokenAsync(tokenFile);
+        if (existingToken != null && !existingToken.IsExpired)
+        {
+            logger.LogInformation("Valid token already exists at {Path}", tokenFile);
+            logger.LogInformation("Access token: {Token}...", existingToken.AccessToken[..Math.Min(20, existingToken.AccessToken.Length)]);
+            logger.LogInformation("Expires at: {ExpiresAt}", existingToken.ExpiresAt);
+            return 0;
+        }
+
+        var token = await authClient.LoginInteractiveAsync(port, 120, cancellationToken);
+
+        if (token == null)
+        {
+            logger.LogError("Authentication failed");
+            return 1;
+        }
+
+        await authClient.SaveTokenAsync(token, tokenFile);
+
+        logger.LogInformation("Access token: {Token}...", token.AccessToken[..Math.Min(20, token.AccessToken.Length)]);
+        logger.LogInformation("Saved token to {Path}", tokenFile);
+        logger.LogInformation("Use this token with --token option or set GENI_ACCESS_TOKEN env var");
+
+        return 0;
     }
 
     // Helper method to create PersonRecord with normalized names
