@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 
 namespace GedcomGeniSync.Models;
 
@@ -344,12 +345,33 @@ public record DateInfo
 
     private static (int? year, int? month, int? day) ParseDatePart(string dateStr)
     {
-        // Common GEDCOM month names
-        var months = new Dictionary<string, int>
+        // Multi-language month names support (GEDCOM standard + common variations)
+        var months = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
+            // English (GEDCOM standard)
             ["JAN"] = 1, ["FEB"] = 2, ["MAR"] = 3, ["APR"] = 4,
             ["MAY"] = 5, ["JUN"] = 6, ["JUL"] = 7, ["AUG"] = 8,
-            ["SEP"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DEC"] = 12
+            ["SEP"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DEC"] = 12,
+            // English full names
+            ["JANUARY"] = 1, ["FEBRUARY"] = 2, ["MARCH"] = 3, ["APRIL"] = 4,
+            ["JUNE"] = 6, ["JULY"] = 7, ["AUGUST"] = 8,
+            ["SEPTEMBER"] = 9, ["OCTOBER"] = 10, ["NOVEMBER"] = 11, ["DECEMBER"] = 12,
+            // Russian (common in Slavic GEDCOM files)
+            ["ЯНВ"] = 1, ["ФЕВ"] = 2, ["МАР"] = 3, ["АПР"] = 4,
+            ["МАЙ"] = 5, ["ИЮН"] = 6, ["ИЮЛ"] = 7, ["АВГ"] = 8,
+            ["СЕН"] = 9, ["ОКТ"] = 10, ["НОЯ"] = 11, ["ДЕК"] = 12,
+            // Russian full names
+            ["ЯНВАРЬ"] = 1, ["ФЕВРАЛЬ"] = 2, ["МАРТ"] = 3, ["АПРЕЛЬ"] = 4,
+            ["МАЙТ"] = 5, ["ИЮНЬ"] = 6, ["ИЮЛЬ"] = 7, ["АВГУСТ"] = 8,
+            ["СЕНТЯБРЬ"] = 9, ["ОКТЯБРЬ"] = 10, ["НОЯБРЬ"] = 11, ["ДЕКАБРЬ"] = 12,
+            // German
+            ["JAN"] = 1, ["FEB"] = 2, ["MÄR"] = 3, ["APR"] = 4,
+            ["MAI"] = 5, ["JUN"] = 6, ["JUL"] = 7, ["AUG"] = 8,
+            ["SEP"] = 9, ["OKT"] = 10, ["NOV"] = 11, ["DEZ"] = 12,
+            // French
+            ["JANV"] = 1, ["FÉVR"] = 2, ["MARS"] = 3, ["AVR"] = 4,
+            ["JUIN"] = 6, ["JUIL"] = 7, ["AOÛT"] = 8,
+            ["SEPT"] = 9, ["DÉC"] = 12
         };
 
         var parts = dateStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -361,7 +383,7 @@ public record DateInfo
         foreach (var part in parts)
         {
             // Check if it's a month name
-            if (months.TryGetValue(part.ToUpperInvariant(), out var monthValue))
+            if (months.TryGetValue(part, out var monthValue))
             {
                 month = monthValue;
             }
@@ -374,6 +396,30 @@ public record DateInfo
             else if (part.Length <= 2 && int.TryParse(part, out var dayValue) && dayValue >= 1 && dayValue <= 31)
             {
                 day = dayValue;
+            }
+        }
+
+        // If parsing failed with dictionary, try standard date parsing with multiple cultures
+        if (!year.HasValue && !month.HasValue && !day.HasValue)
+        {
+            var cultures = new[]
+            {
+                CultureInfo.InvariantCulture,
+                new CultureInfo("en-US"),
+                new CultureInfo("ru-RU"),
+                new CultureInfo("de-DE"),
+                new CultureInfo("fr-FR")
+            };
+
+            foreach (var culture in cultures)
+            {
+                if (DateTime.TryParse(dateStr, culture, DateTimeStyles.None, out var parsedDate))
+                {
+                    year = parsedDate.Year;
+                    month = parsedDate.Month;
+                    day = parsedDate.Day;
+                    break;
+                }
             }
         }
 
