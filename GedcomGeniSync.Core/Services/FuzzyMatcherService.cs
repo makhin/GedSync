@@ -9,7 +9,7 @@ namespace GedcomGeniSync.Services;
 /// Fuzzy matching service for comparing PersonRecords
 /// Uses Jaro-Winkler algorithm optimized for Slavic languages
 /// </summary>
-public class FuzzyMatcherService
+public class FuzzyMatcherService : IFuzzyMatcherService
 {
     private readonly NameVariantsService _nameVariants;
     private readonly ILogger<FuzzyMatcherService> _logger;

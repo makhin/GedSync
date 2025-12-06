@@ -11,7 +11,7 @@ namespace GedcomGeniSync.Services;
 /// Service for loading configuration from JSON or YAML files
 /// </summary>
 [ExcludeFromCodeCoverage]
-public class ConfigurationLoader
+public class ConfigurationLoader : IConfigurationLoader
 {
     private readonly ILogger<ConfigurationLoader>? _logger;
 

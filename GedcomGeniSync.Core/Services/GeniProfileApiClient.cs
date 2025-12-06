@@ -10,7 +10,7 @@ namespace GedcomGeniSync.Services;
 /// This partial class contains profile-related operations and base functionality.
 /// </summary>
 [ExcludeFromCodeCoverage]
-public partial class GeniApiClient
+public partial class GeniApiClient : IGeniApiClient
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _accessToken;

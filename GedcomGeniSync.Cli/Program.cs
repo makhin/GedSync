@@ -130,27 +130,27 @@ class Program
                     SyncPhotos = syncPhotos
                 });
                 services.AddSingleton<NameVariantsService>();
-                services.AddSingleton(sp => new FuzzyMatcherService(
+                services.AddSingleton<IFuzzyMatcherService>(sp => new FuzzyMatcherService(
                     sp.GetRequiredService<NameVariantsService>(),
                     sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
                     sp.GetRequiredService<MatchingOptions>()));
-                services.AddSingleton(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
-                services.AddSingleton(sp => new GeniApiClient(
+                services.AddSingleton<IGedcomLoader>(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
+                services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
                     sp.GetRequiredService<IHttpClientFactory>(),
                     token ?? string.Empty,
                     dryRun,
                     sp.GetRequiredService<ILogger<GeniApiClient>>()));
-                services.AddSingleton(sp => new MyHeritagePhotoService(
+                services.AddSingleton<IMyHeritagePhotoService>(sp => new MyHeritagePhotoService(
                     sp.GetRequiredService<IHttpClientFactory>(),
                     sp.GetRequiredService<ILogger<MyHeritagePhotoService>>(),
                     dryRun));
-                services.AddSingleton(sp => new SyncService(
-                    sp.GetRequiredService<GedcomLoader>(),
-                    sp.GetRequiredService<GeniApiClient>(),
-                    sp.GetRequiredService<FuzzyMatcherService>(),
+                services.AddSingleton<ISyncService>(sp => new SyncService(
+                    sp.GetRequiredService<IGedcomLoader>(),
+                    sp.GetRequiredService<IGeniApiClient>(),
+                    sp.GetRequiredService<IFuzzyMatcherService>(),
                     sp.GetRequiredService<ILogger<SyncService>>(),
                     sp.GetRequiredService<SyncOptions>(),
-                    syncPhotos ? sp.GetRequiredService<MyHeritagePhotoService>() : null));
+                    syncPhotos ? sp.GetRequiredService<IMyHeritagePhotoService>() : null));
             });
 
             var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Sync");
@@ -175,7 +175,7 @@ class Program
                 logger.LogInformation("Match threshold: {Threshold}%", threshold);
                 logger.LogInformation("Photo sync: {Status}", syncPhotos ? "ENABLED" : "DISABLED");
 
-                var syncService = provider.GetRequiredService<SyncService>();
+                var syncService = provider.GetRequiredService<ISyncService>();
                 var report = await syncService.SyncAsync(
                     gedcomPath, anchorGed, anchorGeni, context.GetCancellationToken());
 
