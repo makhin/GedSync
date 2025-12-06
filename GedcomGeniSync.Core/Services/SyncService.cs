@@ -1,4 +1,5 @@
 using GedcomGeniSync.Models;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
@@ -391,6 +392,8 @@ public class SyncService
             Source = PersonSource.Geni,
             FirstName = node.FirstName,
             LastName = node.LastName,
+            NormalizedFirstName = NameNormalizer.Normalize(node.FirstName),
+            NormalizedLastName = NameNormalizer.Normalize(node.LastName),
             Gender = node.Gender?.ToLowerInvariant() switch
             {
                 "male" => Gender.Male,

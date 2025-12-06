@@ -1,5 +1,6 @@
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -262,6 +263,22 @@ class Program
         return analyzeCommand;
     }
 
+    // Helper method to create PersonRecord with normalized names
+    private static PersonRecord CreateTestPerson(string id, PersonSource source, string? firstName, string? lastName, string? maidenName = null, string? birthDate = null)
+    {
+        return new PersonRecord
+        {
+            Id = id,
+            Source = source,
+            FirstName = firstName,
+            LastName = lastName,
+            MaidenName = maidenName,
+            NormalizedFirstName = NameNormalizer.Normalize(firstName),
+            NormalizedLastName = NameNormalizer.Normalize(lastName),
+            BirthDate = DateInfo.Parse(birthDate)
+        };
+    }
+
     private static async Task RunTestMatchAsync(
         ILogger logger,
         NameVariantsService nameVariants,
@@ -271,26 +288,26 @@ class Program
 
         var testCases = new[]
         {
-            (new PersonRecord { Id = "TEST1", Source = PersonSource.Gedcom, FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
-             new PersonRecord { Id = "TEST1", Source = PersonSource.Geni, FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
+            (CreateTestPerson("TEST1", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
+             CreateTestPerson("TEST1", PersonSource.Geni, "Иван", "Петров", null, "1885"),
              "Exact match"),
-            (new PersonRecord { Id = "TEST2", Source = PersonSource.Gedcom, FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
-             new PersonRecord { Id = "TEST2", Source = PersonSource.Geni, FirstName = "Ivan", LastName = "Petrov", BirthDate = DateInfo.Parse("1885") },
+            (CreateTestPerson("TEST2", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
+             CreateTestPerson("TEST2", PersonSource.Geni, "Ivan", "Petrov", null, "1885"),
              "Cyrillic vs Latin"),
-            (new PersonRecord { Id = "TEST3", Source = PersonSource.Gedcom, FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
-             new PersonRecord { Id = "TEST3", Source = PersonSource.Geni, FirstName = "John", LastName = "Petrov", BirthDate = DateInfo.Parse("1885") },
+            (CreateTestPerson("TEST3", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
+             CreateTestPerson("TEST3", PersonSource.Geni, "John", "Petrov", null, "1885"),
              "Ivan = John equivalent"),
-            (new PersonRecord { Id = "TEST4", Source = PersonSource.Gedcom, FirstName = "Мария", LastName = "Сидорова", BirthDate = DateInfo.Parse("1890") },
-             new PersonRecord { Id = "TEST4", Source = PersonSource.Geni, FirstName = "Maria", LastName = "Sidorova", BirthDate = DateInfo.Parse("1892") },
+            (CreateTestPerson("TEST4", PersonSource.Gedcom, "Мария", "Сидорова", null, "1890"),
+             CreateTestPerson("TEST4", PersonSource.Geni, "Maria", "Sidorova", null, "1892"),
              "Date ±2 years"),
-            (new PersonRecord { Id = "TEST5", Source = PersonSource.Gedcom, FirstName = "Анна", LastName = "Петрова", MaidenName = "Иванова", BirthDate = DateInfo.Parse("1888") },
-             new PersonRecord { Id = "TEST5", Source = PersonSource.Geni, FirstName = "Anna", LastName = "Иванова", BirthDate = DateInfo.Parse("1888") },
+            (CreateTestPerson("TEST5", PersonSource.Gedcom, "Анна", "Петрова", "Иванова", "1888"),
+             CreateTestPerson("TEST5", PersonSource.Geni, "Anna", "Иванова", null, "1888"),
              "Maiden name match"),
-            (new PersonRecord { Id = "TEST6", Source = PersonSource.Gedcom, FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
-             new PersonRecord { Id = "TEST6", Source = PersonSource.Geni, FirstName = "Пётр", LastName = "Сидоров", BirthDate = DateInfo.Parse("1920") },
+            (CreateTestPerson("TEST6", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
+             CreateTestPerson("TEST6", PersonSource.Geni, "Пётр", "Сидоров", null, "1920"),
              "Different persons"),
-            (new PersonRecord { Id = "TEST7", Source = PersonSource.Gedcom, FirstName = "Александр", LastName = "Смирнов", BirthDate = DateInfo.Parse("1900") },
-             new PersonRecord { Id = "TEST7", Source = PersonSource.Geni, FirstName = "Саша", LastName = "Смирнов", BirthDate = DateInfo.Parse("1900") },
+            (CreateTestPerson("TEST7", PersonSource.Gedcom, "Александр", "Смирнов", null, "1900"),
+             CreateTestPerson("TEST7", PersonSource.Geni, "Саша", "Смирнов", null, "1900"),
              "Александр = Саша")
         };
 
