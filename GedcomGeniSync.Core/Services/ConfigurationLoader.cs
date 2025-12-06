@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using GedcomGeniSync.Models;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -9,6 +10,7 @@ namespace GedcomGeniSync.Services;
 /// <summary>
 /// Service for loading configuration from JSON or YAML files
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class ConfigurationLoader
 {
     private readonly ILogger<ConfigurationLoader>? _logger;

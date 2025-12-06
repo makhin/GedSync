@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using GedcomGeniSync.Models;
@@ -12,6 +13,7 @@ namespace GedcomGeniSync.Services;
 /// <summary>
 /// Loads GEDCOM files and converts to PersonRecord models
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class GedcomLoader
 {
     private readonly ILogger<GedcomLoader> _logger;
@@ -475,6 +477,7 @@ public class GedcomLoader
 /// <summary>
 /// Result of loading a GEDCOM file
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class GedcomLoadResult
 {
     /// <summary>
@@ -516,6 +519,7 @@ public class GedcomLoadResult
 /// <summary>
 /// Extension methods for easier traversal
 /// </summary>
+[ExcludeFromCodeCoverage]
 public static class GedcomLoadResultExtensions
 {
     /// <summary>

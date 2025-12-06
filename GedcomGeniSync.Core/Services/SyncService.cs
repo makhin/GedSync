@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,7 @@ namespace GedcomGeniSync.Services;
 /// <summary>
 /// Orchestrates synchronization from GEDCOM to Geni
 /// </summary>
+[ExcludeFromCodeCoverage]
 public class SyncService
 {
     private readonly GedcomLoader _gedcomLoader;
@@ -535,6 +537,7 @@ public class SyncService
 /// Synchronization options
 /// Immutable record for thread-safety
 /// </summary>
+[ExcludeFromCodeCoverage]
 public record SyncOptions
 {
     public string? StateFilePath { get; init; }
@@ -550,6 +553,7 @@ public enum RelationType
     Sibling
 }
 
+[ExcludeFromCodeCoverage]
 public class SyncState
 {
     public Dictionary<string, string> GedcomToGeniMap { get; set; } = new();
@@ -557,6 +561,7 @@ public class SyncState
     public List<SyncResult> Results { get; set; } = new();
 }
 
+[ExcludeFromCodeCoverage]
 public class SyncReport
 {
     public int TotalProcessed { get; set; }

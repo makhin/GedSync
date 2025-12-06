@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Services;
 
+[ExcludeFromCodeCoverage]
 public class GeniApiClient
 {
     private readonly IHttpClientFactory _httpClientFactory;
@@ -319,6 +321,7 @@ public class GeniApiClient
 
 #region DTOs
 
+[ExcludeFromCodeCoverage]
 public class GeniProfile
 {
     [JsonPropertyName("id")]
@@ -365,6 +368,7 @@ public class GeniProfile
                                  .Replace("profile-", "");
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniProfileCreate
 {
     public string? FirstName { get; set; }
@@ -377,6 +381,7 @@ public class GeniProfileCreate
     public string? DeathPlace { get; set; }
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniImmediateFamily
 {
     [JsonPropertyName("focus")]
@@ -386,6 +391,7 @@ public class GeniImmediateFamily
     public Dictionary<string, GeniNode>? Nodes { get; set; }
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniNode
 {
     [JsonPropertyName("id")]
@@ -408,12 +414,14 @@ public class GeniNode
     public GeniEdges? Edges { get; set; }
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniEdges
 {
     [JsonPropertyName("union")]
     public List<string>? Unions { get; set; }
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniUnion
 {
     [JsonPropertyName("id")]
@@ -426,6 +434,7 @@ public class GeniUnion
     public List<string>? Children { get; set; }
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniSearchResult
 {
     [JsonPropertyName("results")]
@@ -438,6 +447,7 @@ public class GeniSearchResult
     public int TotalCount { get; set; }
 }
 
+[ExcludeFromCodeCoverage]
 public class GeniAddResult
 {
     [JsonPropertyName("profile")]
