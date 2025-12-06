@@ -1,6 +1,7 @@
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
+using System.Net.Http;
 using System.Text.Json;
 
 namespace GedcomGeniSync.Services;
@@ -283,7 +284,7 @@ public class SyncService
         else
         {
             // Need to create new profile
-            var createdProfile = await CreateProfileAsync(
+            var (createdProfile, errorMessage) = await CreateProfileAsync(
                 relativePerson,
                 currentGeniId,
                 relationType);
@@ -312,13 +313,16 @@ public class SyncService
             }
             else
             {
+                _logger.LogWarning("Failed to create profile for {Name}: {Error}",
+                    relativePerson.FullName, errorMessage ?? "Unknown error");
+
                 _results.Add(new SyncResult
                 {
                     GedcomId = relativeGedId,
                     PersonName = relativePerson.FullName,
                     Action = SyncAction.Error,
                     RelationType = relationType.ToString(),
-                    ErrorMessage = "Failed to create profile"
+                    ErrorMessage = errorMessage ?? "Failed to create profile"
                 });
             }
         }
@@ -417,7 +421,7 @@ public class SyncService
         return (int)Math.Round(match.Score);
     }
 
-    private async Task<GeniProfile?> CreateProfileAsync(
+    private async Task<(GeniProfile? Profile, string? ErrorMessage)> CreateProfileAsync(
         PersonRecord person,
         string relativeGeniId,
         RelationType relationType)
@@ -441,18 +445,35 @@ public class SyncService
 
         try
         {
-            return relationType switch
+            var profile = relationType switch
             {
                 RelationType.Parent => await _geniClient.AddParentAsync(relativeGeniId, profileCreate),
                 RelationType.Child => await _geniClient.AddChildAsync(relativeGeniId, profileCreate),
                 RelationType.Partner => await _geniClient.AddPartnerAsync(relativeGeniId, profileCreate),
                 _ => null
             };
+            return (profile, null);
+        }
+        catch (HttpRequestException ex)
+        {
+            var errorMsg = $"HTTP {ex.StatusCode}: {ex.Message}";
+            _logger.LogError(ex, "Failed to create {RelType} for {Name} - {Error}",
+                relationType, person.FullName, errorMsg);
+            return (null, errorMsg);
+        }
+        catch (TaskCanceledException ex)
+        {
+            var errorMsg = "Request timeout";
+            _logger.LogError(ex, "Timeout creating {RelType} for {Name}",
+                relationType, person.FullName);
+            return (null, errorMsg);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create {RelType} for {Name}", relationType, person.FullName);
-            return null;
+            var errorMsg = $"{ex.GetType().Name}: {ex.Message}";
+            _logger.LogError(ex, "Failed to create {RelType} for {Name} - {Error}",
+                relationType, person.FullName, errorMsg);
+            return (null, errorMsg);
         }
     }
 
