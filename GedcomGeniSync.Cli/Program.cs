@@ -115,8 +115,8 @@ class Program
             await using var provider = BuildServiceProvider(verbose, services =>
             {
                 // Use configuration with CLI override for threshold
-                var matchingOptions = config.Matching.ToMatchingOptions();
-                matchingOptions.MatchThreshold = threshold;
+                var matchingOptions = config.Matching
+                    .ToMatchingOptions() with { MatchThreshold = threshold };
                 services.AddSingleton(matchingOptions);
                 services.AddSingleton(sp => new SyncOptions
                 {
