@@ -1,146 +1,149 @@
+using System.Collections.Immutable;
+
 namespace GedcomGeniSync.Models;
 
 /// <summary>
 /// Unified person record for matching between GEDCOM and Geni
+/// Immutable record for thread-safety and predictable state management
 /// </summary>
-public class PersonRecord
+public record PersonRecord
 {
     /// <summary>
     /// Source-specific ID (GEDCOM: "@I123@", Geni: "6000000012345678901")
     /// </summary>
-    public string Id { get; set; } = string.Empty;
-    
+    public required string Id { get; init; }
+
     /// <summary>
     /// Source of the record
     /// </summary>
-    public PersonSource Source { get; set; }
-    
+    public required PersonSource Source { get; init; }
+
     #region Names
-    
-    public string? FirstName { get; set; }
-    public string? LastName { get; set; }
-    public string? MaidenName { get; set; }
-    public string? MiddleName { get; set; }
-    public string? Suffix { get; set; } // Jr., Sr., III, etc.
-    public string? Nickname { get; set; }
-    
+
+    public string? FirstName { get; init; }
+    public string? LastName { get; init; }
+    public string? MaidenName { get; init; }
+    public string? MiddleName { get; init; }
+    public string? Suffix { get; init; } // Jr., Sr., III, etc.
+    public string? Nickname { get; init; }
+
     /// <summary>
     /// All name variants found in source (for fuzzy matching)
     /// </summary>
-    public List<string> NameVariants { get; set; } = new();
-    
-    public string FullName => string.Join(" ", 
+    public ImmutableList<string> NameVariants { get; init; } = ImmutableList<string>.Empty;
+
+    public string FullName => string.Join(" ",
         new[] { FirstName, MiddleName, LastName }
         .Where(s => !string.IsNullOrWhiteSpace(s)));
-    
+
     #endregion
-    
+
     #region Dates
-    
-    public DateInfo? BirthDate { get; set; }
-    public DateInfo? DeathDate { get; set; }
-    public DateInfo? BurialDate { get; set; }
-    
+
+    public DateInfo? BirthDate { get; init; }
+    public DateInfo? DeathDate { get; init; }
+    public DateInfo? BurialDate { get; init; }
+
     #endregion
-    
+
     #region Places
-    
-    public string? BirthPlace { get; set; }
-    public string? DeathPlace { get; set; }
-    public string? BurialPlace { get; set; }
-    
+
+    public string? BirthPlace { get; init; }
+    public string? DeathPlace { get; init; }
+    public string? BurialPlace { get; init; }
+
     #endregion
-    
+
     #region Personal Info
-    
-    public Gender Gender { get; set; } = Gender.Unknown;
-    public bool? IsLiving { get; set; }
-    public string? Occupation { get; set; }
-    
+
+    public Gender Gender { get; init; } = Gender.Unknown;
+    public bool? IsLiving { get; init; }
+    public string? Occupation { get; init; }
+
     #endregion
-    
+
     #region Relations (IDs)
-    
+
     /// <summary>
     /// Father's ID in same source
     /// </summary>
-    public string? FatherId { get; set; }
-    
+    public string? FatherId { get; init; }
+
     /// <summary>
     /// Mother's ID in same source
     /// </summary>
-    public string? MotherId { get; set; }
-    
+    public string? MotherId { get; init; }
+
     /// <summary>
     /// Spouse IDs in same source
     /// </summary>
-    public List<string> SpouseIds { get; set; } = new();
-    
+    public ImmutableList<string> SpouseIds { get; init; } = ImmutableList<string>.Empty;
+
     /// <summary>
     /// Children IDs in same source
     /// </summary>
-    public List<string> ChildrenIds { get; set; } = new();
-    
+    public ImmutableList<string> ChildrenIds { get; init; } = ImmutableList<string>.Empty;
+
     /// <summary>
     /// Sibling IDs in same source
     /// </summary>
-    public List<string> SiblingIds { get; set; } = new();
-    
+    public ImmutableList<string> SiblingIds { get; init; } = ImmutableList<string>.Empty;
+
     /// <summary>
     /// Family/Union IDs this person belongs to (as child)
     /// </summary>
-    public List<string> ChildOfFamilyIds { get; set; } = new();
-    
+    public ImmutableList<string> ChildOfFamilyIds { get; init; } = ImmutableList<string>.Empty;
+
     /// <summary>
     /// Family/Union IDs this person belongs to (as spouse)
     /// </summary>
-    public List<string> SpouseOfFamilyIds { get; set; } = new();
-    
+    public ImmutableList<string> SpouseOfFamilyIds { get; init; } = ImmutableList<string>.Empty;
+
     #endregion
-    
+
     #region Matching Helpers
-    
+
     /// <summary>
     /// Normalized first name for matching (lowercase, transliterated)
     /// </summary>
-    public string? NormalizedFirstName { get; set; }
-    
+    public string? NormalizedFirstName { get; init; }
+
     /// <summary>
     /// Normalized last name for matching
     /// </summary>
-    public string? NormalizedLastName { get; set; }
-    
+    public string? NormalizedLastName { get; init; }
+
     /// <summary>
     /// Birth year extracted from date (for quick filtering)
     /// </summary>
     public int? BirthYear => BirthDate?.Year;
-    
+
     /// <summary>
     /// Death year extracted from date
     /// </summary>
     public int? DeathYear => DeathDate?.Year;
-    
+
     #endregion
-    
+
     #region Sync State
-    
+
     /// <summary>
     /// Matched ID in other system (GEDCOM ID → Geni ID or vice versa)
     /// </summary>
-    public string? MatchedId { get; set; }
-    
+    public string? MatchedId { get; init; }
+
     /// <summary>
     /// Match confidence score (0-100)
     /// </summary>
-    public int? MatchScore { get; set; }
-    
+    public int? MatchScore { get; init; }
+
     /// <summary>
     /// Sync status
     /// </summary>
-    public SyncStatus SyncStatus { get; set; } = SyncStatus.Pending;
-    
+    public SyncStatus SyncStatus { get; init; } = SyncStatus.Pending;
+
     #endregion
-    
+
     public override string ToString()
     {
         var birth = BirthYear.HasValue ? $" (*{BirthYear})" : "";
@@ -151,46 +154,47 @@ public class PersonRecord
 
 /// <summary>
 /// Flexible date representation handling GEDCOM date formats
+/// Immutable record for thread-safety
 /// </summary>
-public class DateInfo
+public record DateInfo
 {
-    public int? Year { get; set; }
-    public int? Month { get; set; }
-    public int? Day { get; set; }
-    
+    public int? Year { get; init; }
+    public int? Month { get; init; }
+    public int? Day { get; init; }
+
     /// <summary>
     /// Original date string from source
     /// </summary>
-    public string? Original { get; set; }
-    
+    public string? Original { get; init; }
+
     /// <summary>
     /// Date precision/modifier
     /// </summary>
-    public DateModifier Modifier { get; set; } = DateModifier.Exact;
-    
+    public DateModifier Modifier { get; init; } = DateModifier.Exact;
+
     /// <summary>
     /// For date ranges (BETWEEN x AND y)
     /// </summary>
-    public DateInfo? RangeEnd { get; set; }
-    
+    public DateInfo? RangeEnd { get; init; }
+
     public bool HasValue => Year.HasValue || Month.HasValue || Day.HasValue;
-    
+
     /// <summary>
     /// Format for Geni API: "YYYY-MM-DD", "YYYY-MM", or "YYYY"
     /// </summary>
     public string? ToGeniFormat()
     {
         if (!Year.HasValue) return null;
-        
+
         if (Day.HasValue && Month.HasValue)
             return $"{Year:D4}-{Month:D2}-{Day:D2}";
-        
+
         if (Month.HasValue)
             return $"{Year:D4}-{Month:D2}";
-        
+
         return Year.ToString();
     }
-    
+
     public override string ToString()
     {
         var prefix = Modifier switch
@@ -203,20 +207,20 @@ public class DateInfo
             DateModifier.Between => "BET ",
             _ => ""
         };
-        
+
         if (!string.IsNullOrEmpty(Original))
             return $"{prefix}{Original}";
-        
+
         if (!HasValue)
             return string.Empty;
-        
+
         var date = Year.HasValue ? Year.ToString() : "";
         if (Month.HasValue) date = $"{Month:D2}/{date}";
         if (Day.HasValue) date = $"{Day:D2}/{date}";
-        
+
         return $"{prefix}{date}";
     }
-    
+
     /// <summary>
     /// Parse GEDCOM date string
     /// </summary>
@@ -224,54 +228,67 @@ public class DateInfo
     {
         if (string.IsNullOrWhiteSpace(dateString))
             return null;
-        
-        var result = new DateInfo { Original = dateString };
+
+        var original = dateString;
         var upper = dateString.ToUpperInvariant().Trim();
-        
+        var modifier = DateModifier.Exact;
+        DateInfo? rangeEnd = null;
+
         // Handle modifiers
         if (upper.StartsWith("ABT ") || upper.StartsWith("ABOUT "))
         {
-            result.Modifier = DateModifier.About;
+            modifier = DateModifier.About;
             upper = upper.Replace("ABT ", "").Replace("ABOUT ", "").Trim();
         }
         else if (upper.StartsWith("BEF ") || upper.StartsWith("BEFORE "))
         {
-            result.Modifier = DateModifier.Before;
+            modifier = DateModifier.Before;
             upper = upper.Replace("BEF ", "").Replace("BEFORE ", "").Trim();
         }
         else if (upper.StartsWith("AFT ") || upper.StartsWith("AFTER "))
         {
-            result.Modifier = DateModifier.After;
+            modifier = DateModifier.After;
             upper = upper.Replace("AFT ", "").Replace("AFTER ", "").Trim();
         }
         else if (upper.StartsWith("EST "))
         {
-            result.Modifier = DateModifier.Estimated;
+            modifier = DateModifier.Estimated;
             upper = upper.Replace("EST ", "").Trim();
         }
         else if (upper.StartsWith("CAL "))
         {
-            result.Modifier = DateModifier.Calculated;
+            modifier = DateModifier.Calculated;
             upper = upper.Replace("CAL ", "").Trim();
         }
         else if (upper.StartsWith("BET "))
         {
-            result.Modifier = DateModifier.Between;
+            modifier = DateModifier.Between;
             var parts = upper.Replace("BET ", "").Split(" AND ");
             if (parts.Length == 2)
             {
                 upper = parts[0].Trim();
-                result.RangeEnd = Parse(parts[1].Trim());
+                rangeEnd = Parse(parts[1].Trim());
             }
         }
-        
+
         // Parse the actual date
-        ParseDatePart(upper, result);
-        
-        return result.HasValue ? result : null;
+        var (year, month, day) = ParseDatePart(upper);
+
+        if (!year.HasValue && !month.HasValue && !day.HasValue)
+            return null;
+
+        return new DateInfo
+        {
+            Year = year,
+            Month = month,
+            Day = day,
+            Original = original,
+            Modifier = modifier,
+            RangeEnd = rangeEnd
+        };
     }
-    
-    private static void ParseDatePart(string dateStr, DateInfo result)
+
+    private static (int? year, int? month, int? day) ParseDatePart(string dateStr)
     {
         // Common GEDCOM month names
         var months = new Dictionary<string, int>
@@ -280,27 +297,33 @@ public class DateInfo
             ["MAY"] = 5, ["JUN"] = 6, ["JUL"] = 7, ["AUG"] = 8,
             ["SEP"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DEC"] = 12
         };
-        
+
         var parts = dateStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        
+
+        int? year = null;
+        int? month = null;
+        int? day = null;
+
         foreach (var part in parts)
         {
             // Check if it's a month name
-            if (months.TryGetValue(part.ToUpperInvariant(), out var month))
+            if (months.TryGetValue(part.ToUpperInvariant(), out var monthValue))
             {
-                result.Month = month;
+                month = monthValue;
             }
             // Check if it's a year (4 digits)
-            else if (part.Length == 4 && int.TryParse(part, out var year))
+            else if (part.Length == 4 && int.TryParse(part, out var yearValue))
             {
-                result.Year = year;
+                year = yearValue;
             }
             // Check if it's a day (1-2 digits)
-            else if (part.Length <= 2 && int.TryParse(part, out var day) && day >= 1 && day <= 31)
+            else if (part.Length <= 2 && int.TryParse(part, out var dayValue) && dayValue >= 1 && dayValue <= 31)
             {
-                result.Day = day;
+                day = dayValue;
             }
         }
+
+        return (year, month, day);
     }
 }
 
@@ -339,38 +362,40 @@ public enum SyncStatus
 
 /// <summary>
 /// Result of duplicate/match search
+/// Immutable record for thread-safety
 /// </summary>
-public class MatchCandidate
+public record MatchCandidate
 {
-    public PersonRecord Source { get; set; } = null!;
-    public PersonRecord Target { get; set; } = null!;
-    public int Score { get; set; }
-    public List<MatchReason> Reasons { get; set; } = new();
-    
-    public override string ToString() => 
+    public required PersonRecord Source { get; init; }
+    public required PersonRecord Target { get; init; }
+    public int Score { get; init; }
+    public ImmutableList<MatchReason> Reasons { get; init; } = ImmutableList<MatchReason>.Empty;
+
+    public override string ToString() =>
         $"{Source.FullName} ↔ {Target.FullName} (Score: {Score}%)";
 }
 
-public class MatchReason
+public record MatchReason
 {
-    public string Field { get; set; } = string.Empty;
-    public int Points { get; set; }
-    public string Details { get; set; } = string.Empty;
+    public required string Field { get; init; }
+    public int Points { get; init; }
+    public string Details { get; init; } = string.Empty;
 }
 
 /// <summary>
 /// Sync operation result for reporting
+/// Immutable record for thread-safety
 /// </summary>
-public class SyncResult
+public record SyncResult
 {
-    public string GedcomId { get; set; } = string.Empty;
-    public string? GeniId { get; set; }
-    public string PersonName { get; set; } = string.Empty;
-    public SyncAction Action { get; set; }
-    public int? MatchScore { get; set; }
-    public string? RelationType { get; set; } // "child", "parent", "partner"
-    public string? RelativeGeniId { get; set; } // Parent/child to link to
-    public string? ErrorMessage { get; set; }
+    public required string GedcomId { get; init; }
+    public string? GeniId { get; init; }
+    public required string PersonName { get; init; }
+    public SyncAction Action { get; init; }
+    public int? MatchScore { get; init; }
+    public string? RelationType { get; init; } // "child", "parent", "partner"
+    public string? RelativeGeniId { get; init; } // Parent/child to link to
+    public string? ErrorMessage { get; init; }
 }
 
 public enum SyncAction

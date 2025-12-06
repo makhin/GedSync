@@ -528,11 +528,15 @@ public class SyncService
 
 #region Supporting Types
 
-public class SyncOptions
+/// <summary>
+/// Synchronization options
+/// Immutable record for thread-safety
+/// </summary>
+public record SyncOptions
 {
-    public string? StateFilePath { get; set; }
-    public int? MaxDepth { get; set; }
-    public MatchingOptions MatchingOptions { get; set; } = new();
+    public string? StateFilePath { get; init; }
+    public int? MaxDepth { get; init; }
+    public MatchingOptions MatchingOptions { get; init; } = new();
 }
 
 public enum RelationType
