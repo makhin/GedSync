@@ -22,6 +22,24 @@ public class FuzzyMatcherService
         _nameVariants = nameVariants;
         _logger = logger;
         _options = options ?? new MatchingOptions();
+
+        // Validate and warn if weights are not normalized
+        if (!_options.AreWeightsNormalized)
+        {
+            _logger.LogWarning(
+                "Matching weights sum to {TotalWeight} instead of 100. " +
+                "Scores will be automatically normalized using factor {NormalizationFactor:F2}. " +
+                "Consider adjusting weights: FirstName={FirstName}, LastName={LastName}, " +
+                "BirthDate={BirthDate}, BirthPlace={BirthPlace}, DeathDate={DeathDate}, Gender={Gender}",
+                _options.TotalWeight,
+                _options.NormalizationFactor,
+                _options.FirstNameWeight,
+                _options.LastNameWeight,
+                _options.BirthDateWeight,
+                _options.BirthPlaceWeight,
+                _options.DeathDateWeight,
+                _options.GenderWeight);
+        }
     }
 
     /// <summary>
@@ -38,7 +56,7 @@ public class FuzzyMatcherService
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "FirstName",
-                Points = (int)(firstNameScore * _options.FirstNameWeight),
+                Points = firstNameScore * _options.FirstNameWeight,
                 Details = $"{source.FirstName} ↔ {target.FirstName} ({firstNameScore:P0})"
             });
         }
@@ -50,7 +68,7 @@ public class FuzzyMatcherService
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "LastName",
-                Points = (int)(lastNameScore * _options.LastNameWeight),
+                Points = lastNameScore * _options.LastNameWeight,
                 Details = $"{source.LastName} ↔ {target.LastName} ({lastNameScore:P0})"
             });
         }
@@ -62,7 +80,7 @@ public class FuzzyMatcherService
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "BirthDate",
-                Points = (int)(birthDateScore * _options.BirthDateWeight),
+                Points = birthDateScore * _options.BirthDateWeight,
                 Details = $"{source.BirthDate} ↔ {target.BirthDate} ({birthDateScore:P0})"
             });
         }
@@ -74,7 +92,7 @@ public class FuzzyMatcherService
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "BirthPlace",
-                Points = (int)(birthPlaceScore * _options.BirthPlaceWeight),
+                Points = birthPlaceScore * _options.BirthPlaceWeight,
                 Details = $"{source.BirthPlace} ↔ {target.BirthPlace} ({birthPlaceScore:P0})"
             });
         }
@@ -86,7 +104,7 @@ public class FuzzyMatcherService
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "Gender",
-                Points = (int)(genderScore * _options.GenderWeight) - _options.GenderWeight,
+                Points = (genderScore * _options.GenderWeight) - _options.GenderWeight,
                 Details = $"{source.Gender} ↔ {target.Gender} (penalty)"
             });
         }
@@ -98,13 +116,17 @@ public class FuzzyMatcherService
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "DeathDate",
-                Points = (int)(deathDateScore * _options.DeathDateWeight),
+                Points = deathDateScore * _options.DeathDateWeight,
                 Details = $"{source.DeathDate} ↔ {target.DeathDate} ({deathDateScore:P0})"
             });
         }
 
         var reasons = reasonsBuilder.ToImmutable();
-        var score = Math.Min(100, Math.Max(0, reasons.Sum(r => r.Points)));
+        var rawScore = reasons.Sum(r => r.Points);
+
+        // Apply normalization if weights don't sum to 100
+        var normalizedScore = rawScore * _options.NormalizationFactor;
+        var score = Math.Min(100, Math.Max(0, normalizedScore));
 
         return new MatchCandidate
         {
@@ -421,6 +443,22 @@ public record MatchingOptions
     public int MatchThreshold { get; init; } = 70;
     public int AutoMatchThreshold { get; init; } = 90;
     public int MaxBirthYearDifference { get; init; } = 10;
+
+    /// <summary>
+    /// Total weight (sum of all weights)
+    /// </summary>
+    public int TotalWeight => FirstNameWeight + LastNameWeight + BirthDateWeight +
+                              BirthPlaceWeight + DeathDateWeight + GenderWeight;
+
+    /// <summary>
+    /// Check if weights are normalized (sum to 100)
+    /// </summary>
+    public bool AreWeightsNormalized => TotalWeight == 100;
+
+    /// <summary>
+    /// Get weight normalization factor to scale to 100
+    /// </summary>
+    public double NormalizationFactor => TotalWeight > 0 ? 100.0 / TotalWeight : 1.0;
 }
 
 /// <summary>
