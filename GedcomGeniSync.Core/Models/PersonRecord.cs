@@ -63,6 +63,15 @@ public record PersonRecord
 
     #endregion
 
+    #region Media
+
+    /// <summary>
+    /// Photo URLs from GEDCOM (FILE tags in OBJE records)
+    /// </summary>
+    public ImmutableList<string> PhotoUrls { get; init; } = ImmutableList<string>.Empty;
+
+    #endregion
+
     #region Relations (IDs)
 
     /// <summary>

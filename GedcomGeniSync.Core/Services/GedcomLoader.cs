@@ -206,6 +206,17 @@ public class GedcomLoader
             spouseOfFamilyIdsBuilder.Add(familyLink.XRefID);
         }
 
+        // Extract photo URLs from multimedia records
+        var photoUrlsBuilder = ImmutableList.CreateBuilder<string>();
+        foreach (var multimediaLink in individual.Multimedia)
+        {
+            var photoUrl = ExtractPhotoUrl(multimediaLink);
+            if (!string.IsNullOrEmpty(photoUrl))
+            {
+                photoUrlsBuilder.Add(photoUrl);
+            }
+        }
+
         return new PersonRecord
         {
             Id = individual.XRefID,
@@ -227,8 +238,35 @@ public class GedcomLoader
             BurialPlace = burialPlace,
             IsLiving = isLiving,
             ChildOfFamilyIds = childOfFamilyIdsBuilder.ToImmutable(),
-            SpouseOfFamilyIds = spouseOfFamilyIdsBuilder.ToImmutable()
+            SpouseOfFamilyIds = spouseOfFamilyIdsBuilder.ToImmutable(),
+            PhotoUrls = photoUrlsBuilder.ToImmutable()
         };
+    }
+
+    private string? ExtractPhotoUrl(GedcomMultimediaRecord multimedia)
+    {
+        if (multimedia == null)
+            return null;
+
+        // Try to get file reference from multimedia record
+        var file = multimedia.Files?.FirstOrDefault();
+        if (file != null && !string.IsNullOrWhiteSpace(file.Filename))
+        {
+            var filename = file.Filename.Trim();
+
+            // Check if it's a URL (http/https)
+            if (filename.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                filename.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return filename;
+            }
+
+            // Check if it's a local file path that we should keep
+            // Some GEDCOM files store relative or absolute paths
+            return filename;
+        }
+
+        return null;
     }
 
     private void ProcessFamily(GedcomFamilyRecord family, Dictionary<string, PersonRecord> persons)
