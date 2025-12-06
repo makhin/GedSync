@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.RegularExpressions;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using GeneGenie.Gedcom;
@@ -410,10 +411,14 @@ public class GedcomLoader
         if (string.IsNullOrWhiteSpace(name))
             return null;
 
-        // Remove GEDCOM-specific markers like slashes around surname
-        return name
-            .Replace("/", "")
-            .Trim();
+        // Remove GEDCOM-specific markers and special characters
+        // Keep only letters (Latin and Cyrillic), digits, spaces, and hyphens
+        name = Regex.Replace(name, @"[^A-Za-zА-Яа-яЁё0-9 -]", "");
+
+        // Normalize multiple spaces to single space
+        name = Regex.Replace(name, @"\s+", " ");
+
+        return name.Trim();
     }
 
     /// <summary>
