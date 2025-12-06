@@ -315,12 +315,40 @@ public class GedcomLoader
             return DateInfo.Parse(gedcomDate.Date1);
         }
 
+        // Determine precision and create DateOnly
+        DatePrecision precision;
+        DateOnly date;
+
+        if (day.HasValue && month.HasValue)
+        {
+            precision = DatePrecision.Day;
+            try
+            {
+                date = new DateOnly(year.Value, month.Value, day.Value);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Invalid date (e.g., Feb 31), fall back to month precision
+                precision = DatePrecision.Month;
+                date = new DateOnly(year.Value, month.Value, 1);
+            }
+        }
+        else if (month.HasValue)
+        {
+            precision = DatePrecision.Month;
+            date = new DateOnly(year.Value, month.Value, 1);
+        }
+        else
+        {
+            precision = DatePrecision.Year;
+            date = new DateOnly(year.Value, 1, 1);
+        }
+
         return new DateInfo
         {
             Original = gedcomDate.Date1,
-            Year = year,
-            Month = month,
-            Day = day
+            Date = date,
+            Precision = precision
         };
     }
 
