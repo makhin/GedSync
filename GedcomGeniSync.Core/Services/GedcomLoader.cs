@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using GedcomGeniSync.Models;
 using GeneGenie.Gedcom;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,7 @@ namespace GedcomGeniSync.Services;
 public class GedcomLoader
 {
     private readonly ILogger<GedcomLoader> _logger;
-    
+
     public GedcomLoader(ILogger<GedcomLoader> logger)
     {
         _logger = logger;
@@ -31,9 +32,9 @@ public class GedcomLoader
         _logger.LogInformation("Loading GEDCOM file: {Path}", filePath);
 
         var result = new GedcomLoadResult();
-        
+
         var gedcomReader = GedcomRecordReader.CreateReader(filePath);
-        
+
         if (gedcomReader.Parser.ErrorState != GedcomErrorState.NoError)
         {
             throw new InvalidOperationException(
@@ -41,7 +42,7 @@ public class GedcomLoader
         }
 
         var db = gedcomReader.Database;
-        
+
         _logger.LogInformation("Found {Individuals} individuals and {Families} families",
             db.Individuals.Count, db.Families.Count);
 
@@ -63,40 +64,41 @@ public class GedcomLoader
         CalculateSiblings(result.Persons);
 
         _logger.LogInformation("Loaded {Count} persons", result.Persons.Count);
-        
+
         return result;
     }
 
     private PersonRecord ConvertIndividual(GedcomIndividualRecord individual)
     {
-        var person = new PersonRecord
-        {
-            Id = individual.XRefID,
-            Source = PersonSource.Gedcom
-        };
+        string? firstName = null;
+        string? lastName = null;
+        string? maidenName = null;
+        string? nickname = null;
+        string? suffix = null;
+        var nameVariantsBuilder = ImmutableList.CreateBuilder<string>();
 
         // Names
         var primaryName = individual.Names.FirstOrDefault();
         if (primaryName != null)
         {
-            person.FirstName = CleanName(primaryName.Given);
-            person.LastName = CleanName(primaryName.Surname);
-            person.MaidenName = CleanName(primaryName.SurnamePrefix); // Sometimes used for maiden name
-            person.Nickname = CleanName(primaryName.Nick);
-            person.Suffix = CleanName(primaryName.Suffix);
-            
+            firstName = CleanName(primaryName.Given);
+            lastName = CleanName(primaryName.Surname);
+            maidenName = CleanName(primaryName.SurnamePrefix); // Sometimes used for maiden name
+            nickname = CleanName(primaryName.Nick);
+            suffix = CleanName(primaryName.Suffix);
+
             // Store all name variants
             foreach (var name in individual.Names)
             {
                 if (!string.IsNullOrEmpty(name.Given))
-                    person.NameVariants.Add(name.Given);
+                    nameVariantsBuilder.Add(name.Given);
                 if (!string.IsNullOrEmpty(name.Surname))
-                    person.NameVariants.Add(name.Surname);
+                    nameVariantsBuilder.Add(name.Surname);
             }
         }
 
         // Gender
-        person.Gender = individual.Sex switch
+        var gender = individual.Sex switch
         {
             GedcomSex.Male => Gender.Male,
             GedcomSex.Female => Gender.Female,
@@ -104,50 +106,82 @@ public class GedcomLoader
         };
 
         // Events (Birth, Death, Burial)
+        DateInfo? birthDate = null;
+        string? birthPlace = null;
+        DateInfo? deathDate = null;
+        string? deathPlace = null;
+        DateInfo? burialDate = null;
+        string? burialPlace = null;
+        bool? isLiving = null;
+
         foreach (var evt in individual.Events)
         {
             switch (evt.EventType)
             {
                 case GedcomEventType.Birth:
-                    person.BirthDate = ConvertDate(evt.Date);
-                    person.BirthPlace = GetPlace(evt.Place);
+                    birthDate = ConvertDate(evt.Date);
+                    birthPlace = GetPlace(evt.Place);
                     break;
 
                 case GedcomEventType.DEAT:
-                    person.DeathDate = ConvertDate(evt.Date);
-                    person.DeathPlace = GetPlace(evt.Place);
-                    person.IsLiving = false;
+                    deathDate = ConvertDate(evt.Date);
+                    deathPlace = GetPlace(evt.Place);
+                    isLiving = false;
                     break;
 
                 case GedcomEventType.BURI:
-                    person.BurialDate = ConvertDate(evt.Date);
-                    person.BurialPlace = GetPlace(evt.Place);
+                    burialDate = ConvertDate(evt.Date);
+                    burialPlace = GetPlace(evt.Place);
                     break;
             }
         }
 
         // Check if marked as living
-        if (!person.IsLiving.HasValue)
+        if (!isLiving.HasValue)
         {
             // If no death date and birth year suggests they could be alive
-            if (person.BirthYear.HasValue && person.BirthYear > DateTime.Now.Year - 120)
+            var birthYear = birthDate?.Year;
+            if (birthYear.HasValue && birthYear > DateTime.Now.Year - 120)
             {
-                person.IsLiving = true;
+                isLiving = true;
             }
         }
 
         // Family links (raw IDs, will be resolved later)
+        var childOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
+        var spouseOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
+
         foreach (var familyLink in individual.ChildIn)
         {
-            person.ChildOfFamilyIds.Add(familyLink.XRefID);
-        }
-        
-        foreach (var familyLink in individual.SpouseIn)
-        {
-            person.SpouseOfFamilyIds.Add(familyLink.XRefID);
+            childOfFamilyIdsBuilder.Add(familyLink.XRefID);
         }
 
-        return person;
+        foreach (var familyLink in individual.SpouseIn)
+        {
+            spouseOfFamilyIdsBuilder.Add(familyLink.XRefID);
+        }
+
+        return new PersonRecord
+        {
+            Id = individual.XRefID,
+            Source = PersonSource.Gedcom,
+            FirstName = firstName,
+            LastName = lastName,
+            MaidenName = maidenName,
+            Nickname = nickname,
+            Suffix = suffix,
+            NameVariants = nameVariantsBuilder.ToImmutable(),
+            Gender = gender,
+            BirthDate = birthDate,
+            BirthPlace = birthPlace,
+            DeathDate = deathDate,
+            DeathPlace = deathPlace,
+            BurialDate = burialDate,
+            BurialPlace = burialPlace,
+            IsLiving = isLiving,
+            ChildOfFamilyIds = childOfFamilyIdsBuilder.ToImmutable(),
+            SpouseOfFamilyIds = spouseOfFamilyIdsBuilder.ToImmutable()
+        };
     }
 
     private void ProcessFamily(GedcomFamilyRecord family, Dictionary<string, PersonRecord> persons)
@@ -165,14 +199,18 @@ public class GedcomLoader
         {
             if (persons.TryGetValue(childId, out var child))
             {
+                var updatedChild = child;
+
                 if (!string.IsNullOrEmpty(husbandId))
                 {
-                    child.FatherId = husbandId;
+                    updatedChild = updatedChild with { FatherId = husbandId };
                 }
                 if (!string.IsNullOrEmpty(wifeId))
                 {
-                    child.MotherId = wifeId;
+                    updatedChild = updatedChild with { MotherId = wifeId };
                 }
+
+                persons[childId] = updatedChild;
             }
         }
 
@@ -181,30 +219,53 @@ public class GedcomLoader
         if (!string.IsNullOrEmpty(husbandId) && persons.TryGetValue(husbandId, out var resolvedHusband))
         {
             husband = resolvedHusband;
+            var updatedHusband = husband;
+
             if (!string.IsNullOrEmpty(wifeId))
             {
-                husband.SpouseIds.Add(wifeId);
+                updatedHusband = updatedHusband with
+                {
+                    SpouseIds = updatedHusband.SpouseIds.Add(wifeId)
+                };
             }
-            husband.ChildrenIds.AddRange(childIds);
+
+            updatedHusband = updatedHusband with
+            {
+                ChildrenIds = updatedHusband.ChildrenIds.AddRange(childIds)
+            };
+
+            persons[husbandId] = updatedHusband;
+            husband = updatedHusband; // Update reference for maiden name logic
         }
 
         if (!string.IsNullOrEmpty(wifeId) && persons.TryGetValue(wifeId, out var wife))
         {
+            var updatedWife = wife;
+
             if (!string.IsNullOrEmpty(husbandId))
             {
-                wife.SpouseIds.Add(husbandId);
+                updatedWife = updatedWife with
+                {
+                    SpouseIds = updatedWife.SpouseIds.Add(husbandId)
+                };
             }
-            wife.ChildrenIds.AddRange(childIds);
-            
+
+            updatedWife = updatedWife with
+            {
+                ChildrenIds = updatedWife.ChildrenIds.AddRange(childIds)
+            };
+
             // Try to extract maiden name from family if not set
-            if (string.IsNullOrEmpty(wife.MaidenName) && !string.IsNullOrEmpty(wife.LastName))
+            if (string.IsNullOrEmpty(updatedWife.MaidenName) && !string.IsNullOrEmpty(updatedWife.LastName))
             {
                 // Check if wife has different surname than husband
-                if (husband != null && wife.LastName != husband.LastName)
+                if (husband != null && updatedWife.LastName != husband.LastName)
                 {
-                    wife.MaidenName = wife.LastName;
+                    updatedWife = updatedWife with { MaidenName = updatedWife.LastName };
                 }
             }
+
+            persons[wifeId] = updatedWife;
         }
     }
 
@@ -221,10 +282,17 @@ public class GedcomLoader
             var siblings = group.ToList();
             foreach (var person in siblings)
             {
-                person.SiblingIds.AddRange(
-                    siblings
-                        .Where(s => s.Id != person.Id)
-                        .Select(s => s.Id));
+                var siblingIds = siblings
+                    .Where(s => s.Id != person.Id)
+                    .Select(s => s.Id)
+                    .ToList();
+
+                var updatedPerson = person with
+                {
+                    SiblingIds = person.SiblingIds.AddRange(siblingIds)
+                };
+
+                persons[person.Id] = updatedPerson;
             }
         }
     }
@@ -235,23 +303,25 @@ public class GedcomLoader
             return null;
 
         // GedcomDate has parsed components, use them
-        var result = new DateInfo
-        {
-            Original = gedcomDate.Date1,
-            Year = gedcomDate.DateTime1?.Year,
-            Month = gedcomDate.DateTime1?.Month,
-            Day = gedcomDate.DateTime1?.Day
-        };
+        var year = gedcomDate.DateTime1?.Year;
+        var month = gedcomDate.DateTime1?.Month;
+        var day = gedcomDate.DateTime1?.Day;
 
         // Handle date type/modifier
         // Note: GeneGenie.Gedcom may expose this differently
         // Fallback to parsing if needed
-        if (!result.Year.HasValue)
+        if (!year.HasValue)
         {
             return DateInfo.Parse(gedcomDate.Date1);
         }
 
-        return result;
+        return new DateInfo
+        {
+            Original = gedcomDate.Date1,
+            Year = year,
+            Month = month,
+            Day = day
+        };
     }
 
     private static string? GetPlace(GedcomPlace? place)
@@ -289,17 +359,17 @@ public class GedcomLoader
     public IEnumerable<string> GetRelativeIds(PersonRecord person)
     {
         var relatives = new List<string>();
-        
+
         if (!string.IsNullOrEmpty(person.FatherId))
             relatives.Add(person.FatherId);
-        
+
         if (!string.IsNullOrEmpty(person.MotherId))
             relatives.Add(person.MotherId);
-        
+
         relatives.AddRange(person.SpouseIds);
         relatives.AddRange(person.ChildrenIds);
         relatives.AddRange(person.SiblingIds);
-        
+
         return relatives.Distinct();
     }
 
@@ -334,12 +404,12 @@ public class GedcomLoadResult
     /// All persons keyed by GEDCOM ID (e.g., "@I123@")
     /// </summary>
     public Dictionary<string, PersonRecord> Persons { get; } = new();
-    
+
     /// <summary>
     /// Original family records for reference
     /// </summary>
     public Dictionary<string, GedcomFamilyRecord> Families { get; } = new();
-    
+
     /// <summary>
     /// Statistics
     /// </summary>
@@ -347,17 +417,17 @@ public class GedcomLoadResult
     public int TotalFamilies => Families.Count;
     public int PersonsWithBirthDate => Persons.Values.Count(p => p.BirthDate != null);
     public int PersonsWithBirthPlace => Persons.Values.Count(p => !string.IsNullOrEmpty(p.BirthPlace));
-    
+
     public void PrintStats(ILogger logger)
     {
         logger.LogInformation("=== GEDCOM Statistics ===");
         logger.LogInformation("Total persons: {Count}", TotalPersons);
         logger.LogInformation("Total families: {Count}", TotalFamilies);
-        logger.LogInformation("Persons with birth date: {Count} ({Percent:P0})", 
+        logger.LogInformation("Persons with birth date: {Count} ({Percent:P0})",
             PersonsWithBirthDate, (double)PersonsWithBirthDate / TotalPersons);
-        logger.LogInformation("Persons with birth place: {Count} ({Percent:P0})", 
+        logger.LogInformation("Persons with birth place: {Count} ({Percent:P0})",
             PersonsWithBirthPlace, (double)PersonsWithBirthPlace / TotalPersons);
-        
+
         // Gender distribution
         var males = Persons.Values.Count(p => p.Gender == Gender.Male);
         var females = Persons.Values.Count(p => p.Gender == Gender.Female);
@@ -378,11 +448,11 @@ public static class GedcomLoadResultExtensions
     {
         if (string.IsNullOrEmpty(person.FatherId))
             return null;
-        
+
         result.Persons.TryGetValue(person.FatherId, out var father);
         return father;
     }
-    
+
     /// <summary>
     /// Get mother of a person
     /// </summary>
@@ -390,11 +460,11 @@ public static class GedcomLoadResultExtensions
     {
         if (string.IsNullOrEmpty(person.MotherId))
             return null;
-        
+
         result.Persons.TryGetValue(person.MotherId, out var mother);
         return mother;
     }
-    
+
     /// <summary>
     /// Get all spouses of a person
     /// </summary>
@@ -406,7 +476,7 @@ public static class GedcomLoadResultExtensions
                 yield return spouse;
         }
     }
-    
+
     /// <summary>
     /// Get all children of a person
     /// </summary>
@@ -418,7 +488,7 @@ public static class GedcomLoadResultExtensions
                 yield return child;
         }
     }
-    
+
     /// <summary>
     /// Get all siblings of a person
     /// </summary>
@@ -430,12 +500,12 @@ public static class GedcomLoadResultExtensions
                 yield return sibling;
         }
     }
-    
+
     /// <summary>
     /// BFS traversal from anchor person
     /// </summary>
     public static IEnumerable<PersonRecord> TraverseBfs(
-        this GedcomLoadResult result, 
+        this GedcomLoadResult result,
         string anchorId,
         int? maxDepth = null)
     {
@@ -444,7 +514,7 @@ public static class GedcomLoadResultExtensions
 
         var visited = new HashSet<string>();
         var queue = new Queue<(PersonRecord Person, int Depth)>();
-        
+
         queue.Enqueue((anchor, 0));
         visited.Add(anchorId);
 
@@ -458,12 +528,12 @@ public static class GedcomLoadResultExtensions
 
             // Add all relatives
             var relativeIds = new List<string>();
-            
+
             if (!string.IsNullOrEmpty(current.FatherId))
                 relativeIds.Add(current.FatherId);
             if (!string.IsNullOrEmpty(current.MotherId))
                 relativeIds.Add(current.MotherId);
-            
+
             relativeIds.AddRange(current.SpouseIds);
             relativeIds.AddRange(current.ChildrenIds);
 

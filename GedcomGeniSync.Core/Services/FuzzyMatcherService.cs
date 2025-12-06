@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FuzzySharp;
 using GedcomGeniSync.Models;
 using Microsoft.Extensions.Logging;
@@ -28,19 +29,13 @@ public class FuzzyMatcherService
     /// </summary>
     public MatchCandidate Compare(PersonRecord source, PersonRecord target)
     {
-        var candidate = new MatchCandidate
-        {
-            Source = source,
-            Target = target,
-            Score = 0,
-            Reasons = new List<MatchReason>()
-        };
+        var reasonsBuilder = ImmutableList.CreateBuilder<MatchReason>();
 
         // First name comparison
         var firstNameScore = CompareFirstNames(source, target);
         if (firstNameScore > 0)
         {
-            candidate.Reasons.Add(new MatchReason
+            reasonsBuilder.Add(new MatchReason
             {
                 Field = "FirstName",
                 Points = (int)(firstNameScore * _options.FirstNameWeight),
@@ -52,7 +47,7 @@ public class FuzzyMatcherService
         var lastNameScore = CompareLastNames(source, target);
         if (lastNameScore > 0)
         {
-            candidate.Reasons.Add(new MatchReason
+            reasonsBuilder.Add(new MatchReason
             {
                 Field = "LastName",
                 Points = (int)(lastNameScore * _options.LastNameWeight),
@@ -64,7 +59,7 @@ public class FuzzyMatcherService
         var birthDateScore = CompareDates(source.BirthDate, target.BirthDate);
         if (birthDateScore > 0)
         {
-            candidate.Reasons.Add(new MatchReason
+            reasonsBuilder.Add(new MatchReason
             {
                 Field = "BirthDate",
                 Points = (int)(birthDateScore * _options.BirthDateWeight),
@@ -76,7 +71,7 @@ public class FuzzyMatcherService
         var birthPlaceScore = ComparePlaces(source.BirthPlace, target.BirthPlace);
         if (birthPlaceScore > 0)
         {
-            candidate.Reasons.Add(new MatchReason
+            reasonsBuilder.Add(new MatchReason
             {
                 Field = "BirthPlace",
                 Points = (int)(birthPlaceScore * _options.BirthPlaceWeight),
@@ -88,7 +83,7 @@ public class FuzzyMatcherService
         var genderScore = CompareGender(source.Gender, target.Gender);
         if (genderScore < 1.0)
         {
-            candidate.Reasons.Add(new MatchReason
+            reasonsBuilder.Add(new MatchReason
             {
                 Field = "Gender",
                 Points = (int)(genderScore * _options.GenderWeight) - _options.GenderWeight,
@@ -100,7 +95,7 @@ public class FuzzyMatcherService
         var deathDateScore = CompareDates(source.DeathDate, target.DeathDate);
         if (deathDateScore > 0)
         {
-            candidate.Reasons.Add(new MatchReason
+            reasonsBuilder.Add(new MatchReason
             {
                 Field = "DeathDate",
                 Points = (int)(deathDateScore * _options.DeathDateWeight),
@@ -108,11 +103,16 @@ public class FuzzyMatcherService
             });
         }
 
-        // Calculate total score
-        candidate.Score = Math.Min(100, Math.Max(0, 
-            candidate.Reasons.Sum(r => r.Points)));
+        var reasons = reasonsBuilder.ToImmutable();
+        var score = Math.Min(100, Math.Max(0, reasons.Sum(r => r.Points)));
 
-        return candidate;
+        return new MatchCandidate
+        {
+            Source = source,
+            Target = target,
+            Score = score,
+            Reasons = reasons
+        };
     }
 
     /// <summary>
@@ -400,21 +400,22 @@ public class FuzzyMatcherService
 
 /// <summary>
 /// Options for matching algorithm
+/// Immutable record for thread-safety
 /// </summary>
-public class MatchingOptions
+public record MatchingOptions
 {
     // Weights (should sum to ~100 for intuitive percentage)
-    public int FirstNameWeight { get; set; } = 30;
-    public int LastNameWeight { get; set; } = 25;
-    public int BirthDateWeight { get; set; } = 20;
-    public int BirthPlaceWeight { get; set; } = 15;
-    public int DeathDateWeight { get; set; } = 5;
-    public int GenderWeight { get; set; } = 5;
+    public int FirstNameWeight { get; init; } = 30;
+    public int LastNameWeight { get; init; } = 25;
+    public int BirthDateWeight { get; init; } = 20;
+    public int BirthPlaceWeight { get; init; } = 15;
+    public int DeathDateWeight { get; init; } = 5;
+    public int GenderWeight { get; init; } = 5;
 
     // Thresholds
-    public int MatchThreshold { get; set; } = 70;
-    public int AutoMatchThreshold { get; set; } = 90;
-    public int MaxBirthYearDifference { get; set; } = 10;
+    public int MatchThreshold { get; init; } = 70;
+    public int AutoMatchThreshold { get; init; } = 90;
+    public int MaxBirthYearDifference { get; init; } = 10;
 }
 
 /// <summary>
