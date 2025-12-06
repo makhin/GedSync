@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using FuzzySharp;
+using F23.StringSimilarity;
 using GedcomGeniSync.Models;
 using Microsoft.Extensions.Logging;
 
@@ -7,12 +7,14 @@ namespace GedcomGeniSync.Services;
 
 /// <summary>
 /// Fuzzy matching service for comparing PersonRecords
+/// Uses Jaro-Winkler algorithm optimized for Slavic languages
 /// </summary>
 public class FuzzyMatcherService
 {
     private readonly NameVariantsService _nameVariants;
     private readonly ILogger<FuzzyMatcherService> _logger;
     private readonly MatchingOptions _options;
+    private readonly JaroWinkler _jaroWinkler;
 
     public FuzzyMatcherService(
         NameVariantsService nameVariants,
@@ -22,6 +24,7 @@ public class FuzzyMatcherService
         _nameVariants = nameVariants;
         _logger = logger;
         _options = options ?? new MatchingOptions();
+        _jaroWinkler = new JaroWinkler();
 
         // Validate and warn if weights are not normalized
         if (!_options.AreWeightsNormalized)
@@ -216,13 +219,18 @@ public class FuzzyMatcherService
         var sourceNorm = source.NormalizedFirstName ?? NormalizeForComparison(sourceName);
         var targetNorm = target.NormalizedFirstName ?? NormalizeForComparison(targetName);
 
-        // 4. Levenshtein ratio
-        var ratio = Fuzz.Ratio(sourceNorm, targetNorm) / 100.0;
+        // 4. Jaro-Winkler similarity (better for transliteration and Slavic languages)
+        var similarity = _jaroWinkler.Similarity(sourceNorm, targetNorm);
 
-        // 5. Partial ratio for nicknames (Александр vs Саша)
-        var partialRatio = Fuzz.PartialRatio(sourceNorm, targetNorm) / 100.0;
+        // 5. Check if one name is a substring of the other (for nicknames like Александр vs Саша)
+        // This helps with diminutives common in Slavic languages
+        var isSubstring = sourceNorm.Contains(targetNorm) || targetNorm.Contains(sourceNorm);
+        if (isSubstring && similarity > 0.7)
+        {
+            similarity = Math.Max(similarity, 0.85);
+        }
 
-        return Math.Max(ratio, partialRatio * 0.9);
+        return similarity;
     }
 
     private double CompareLastNames(PersonRecord source, PersonRecord target)
@@ -263,10 +271,10 @@ public class FuzzyMatcherService
         var sourceNormalized = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
         var targetNormalized = target.NormalizedLastName ?? NormalizeForComparison(targetName);
 
-        // 4. Levenshtein ratio with pre-normalized (transliterated) names
-        var ratio = Fuzz.Ratio(sourceNormalized, targetNormalized) / 100.0;
+        // 4. Jaro-Winkler similarity (better for transliteration and declensions in Slavic surnames)
+        var similarity = _jaroWinkler.Similarity(sourceNormalized, targetNormalized);
 
-        return ratio;
+        return similarity;
     }
 
     private IEnumerable<string> GetAllNameVariants(PersonRecord person, bool firstName)

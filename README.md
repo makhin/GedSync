@@ -179,8 +179,8 @@ dotnet run --project GedcomGeniSync.Cli -- sync \
 
 | Поле | Вес | Метод |
 |------|-----|-------|
-| Имя | 30 | Словарь эквивалентов → Транслитерация → Levenshtein |
-| Фамилия | 25 | Девичья фамилия → Транслитерация → Levenshtein |
+| Имя | 30 | Словарь эквивалентов → Транслитерация → Jaro-Winkler |
+| Фамилия | 25 | Девичья фамилия → Транслитерация → Jaro-Winkler |
 | Дата рождения | 20 | Точная=100%, ±1год=80%, ±2года=60%, ±5лет=40% |
 | Место рождения | 15 | Jaccard similarity по токенам |
 | Дата смерти | 5 | Аналогично дате рождения |
@@ -217,7 +217,7 @@ GedcomGeniSync/
 ## Зависимости
 
 - [GeneGenie.Gedcom](https://github.com/TheGeneGenieProject/GeneGenie.Gedcom) — парсинг GEDCOM
-- [FuzzySharp](https://github.com/JakeBayer/FuzzySharp) — Levenshtein distance
+- [F23.StringSimilarity](https://github.com/feature23/StringSimilarity.NET) — Jaro-Winkler и другие алгоритмы (оптимизировано для славянских языков)
 - [System.CommandLine](https://github.com/dotnet/command-line-api) — CLI
 - [YamlDotNet](https://github.com/aaubry/YamlDotNet) — поддержка YAML конфигурации
 
