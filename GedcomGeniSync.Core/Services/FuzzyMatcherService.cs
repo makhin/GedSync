@@ -1,5 +1,6 @@
 using FuzzySharp;
 using GedcomGeniSync.Models;
+using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Services;
 
@@ -9,12 +10,12 @@ namespace GedcomGeniSync.Services;
 public class FuzzyMatcherService
 {
     private readonly NameVariantsService _nameVariants;
-    private readonly ILogger _logger;
+    private readonly ILogger<FuzzyMatcherService> _logger;
     private readonly MatchingOptions _options;
 
     public FuzzyMatcherService(
-        NameVariantsService nameVariants, 
-        ILogger logger,
+        NameVariantsService nameVariants,
+        ILogger<FuzzyMatcherService> logger,
         MatchingOptions? options = null)
     {
         _nameVariants = nameVariants;
@@ -423,7 +424,7 @@ public class NameVariantsService
 {
     private readonly Dictionary<string, HashSet<string>> _givenNameGroups = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> _surnameGroups = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ILogger _logger;
+    private readonly ILogger<NameVariantsService> _logger;
 
     // Cyrillic to Latin transliteration map
     private static readonly Dictionary<char, string> CyrillicToLatin = new()
@@ -448,7 +449,7 @@ public class NameVariantsService
         ['І'] = "I", ['Ї'] = "Yi", ['Є'] = "Ye", ['Ґ'] = "G"
     };
 
-    public NameVariantsService(ILogger logger)
+    public NameVariantsService(ILogger<NameVariantsService> logger)
     {
         _logger = logger;
         LoadBuiltInVariants();

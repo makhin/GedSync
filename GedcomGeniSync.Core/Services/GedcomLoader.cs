@@ -1,5 +1,6 @@
 using GedcomGeniSync.Models;
 using GeneGenie.Gedcom;
+using Microsoft.Extensions.Logging;
 using GeneGenie.Gedcom.Parser;
 using GeneGenie.Gedcom.Enums;
 
@@ -10,9 +11,9 @@ namespace GedcomGeniSync.Services;
 /// </summary>
 public class GedcomLoader
 {
-    private readonly ILogger _logger;
+    private readonly ILogger<GedcomLoader> _logger;
     
-    public GedcomLoader(ILogger logger)
+    public GedcomLoader(ILogger<GedcomLoader> logger)
     {
         _logger = logger;
     }
@@ -31,7 +32,7 @@ public class GedcomLoader
 
         var result = new GedcomLoadResult();
         
-        using var gedcomReader = GedcomRecordReader.CreateReader(filePath);
+        var gedcomReader = GedcomRecordReader.CreateReader(filePath);
         
         if (gedcomReader.Parser.ErrorState != GedcomErrorState.NoError)
         {
@@ -111,14 +112,14 @@ public class GedcomLoader
                     person.BirthDate = ConvertDate(evt.Date);
                     person.BirthPlace = GetPlace(evt.Place);
                     break;
-                    
-                case GedcomEventType.Death:
+
+                case GedcomEventType.DEAT:
                     person.DeathDate = ConvertDate(evt.Date);
                     person.DeathPlace = GetPlace(evt.Place);
                     person.IsLiving = false;
                     break;
-                    
-                case GedcomEventType.Burial:
+
+                case GedcomEventType.BURI:
                     person.BurialDate = ConvertDate(evt.Date);
                     person.BurialPlace = GetPlace(evt.Place);
                     break;
@@ -151,9 +152,13 @@ public class GedcomLoader
 
     private void ProcessFamily(GedcomFamilyRecord family, Dictionary<string, PersonRecord> persons)
     {
-        var husbandId = family.Husband?.XRefID;
-        var wifeId = family.Wife?.XRefID;
-        var childIds = family.Children.Select(c => c.XRefID).ToList();
+        var husbandId = ResolveXRefId(family.Husband);
+        var wifeId = ResolveXRefId(family.Wife);
+        var childIds = family.Children
+            .Select(ResolveXRefId)
+            .Where(id => !string.IsNullOrEmpty(id))
+            .Select(id => id!)
+            .ToList();
 
         // Link children to parents
         foreach (var childId in childIds)
@@ -172,8 +177,10 @@ public class GedcomLoader
         }
 
         // Link spouses to each other
-        if (!string.IsNullOrEmpty(husbandId) && persons.TryGetValue(husbandId, out var husband))
+        PersonRecord? husband = null;
+        if (!string.IsNullOrEmpty(husbandId) && persons.TryGetValue(husbandId, out var resolvedHusband))
         {
+            husband = resolvedHusband;
             if (!string.IsNullOrEmpty(wifeId))
             {
                 husband.SpouseIds.Add(wifeId);
@@ -294,6 +301,27 @@ public class GedcomLoader
         relatives.AddRange(person.SiblingIds);
         
         return relatives.Distinct();
+    }
+
+    private static string? ResolveXRefId(object? link)
+    {
+        if (link == null)
+        {
+            return null;
+        }
+
+        if (link is string id)
+        {
+            return id;
+        }
+
+        var xRefIdProperty = link.GetType().GetProperty("XRefID");
+        if (xRefIdProperty?.GetValue(link) is string xRefId)
+        {
+            return xRefId;
+        }
+
+        return null;
     }
 }
 

@@ -35,19 +35,19 @@ dotnet build
 ### 2. Анализ GEDCOM файла
 
 ```bash
-dotnet run -- analyze --gedcom family.ged --anchor @I123@
+dotnet run --project GedcomGeniSync.Cli -- analyze --gedcom family.ged --anchor @I123@
 ```
 
 ### 3. Тест matching логики
 
 ```bash
-dotnet run -- test-match
+dotnet run --project GedcomGeniSync.Cli -- test-match
 ```
 
 ### 4. Синхронизация (dry-run)
 
 ```bash
-dotnet run -- sync \
+dotnet run --project GedcomGeniSync.Cli -- sync \
   --gedcom family.ged \
   --anchor-ged @I123@ \
   --anchor-geni 6000000012345678901 \
@@ -59,7 +59,7 @@ dotnet run -- sync \
 ### 5. Реальная синхронизация
 
 ```bash
-dotnet run -- sync \
+dotnet run --project GedcomGeniSync.Cli -- sync \
   --gedcom family.ged \
   --anchor-ged @I123@ \
   --anchor-geni 6000000012345678901 \
@@ -105,7 +105,7 @@ dotnet run -- sync \
 - `surname_similar_names.csv` — 200,000 фамилий
 
 ```bash
-dotnet run -- sync \
+dotnet run --project GedcomGeniSync.Cli -- sync \
   --gedcom family.ged \
   --anchor-ged @I123@ \
   --anchor-geni 6000000012345678901 \
@@ -118,14 +118,12 @@ dotnet run -- sync \
 
 ```
 GedcomGeniSync/
-├── Program.cs                    # CLI
-├── Models/
-│   └── PersonRecord.cs           # Модели данных
-└── Services/
-    ├── GeniApiClient.cs          # Geni API
-    ├── GedcomLoader.cs           # Парсинг GEDCOM
-    ├── FuzzyMatcherService.cs    # Matching + транслитерация
-    └── SyncService.cs            # BFS синхронизация
+├── GedcomGeniSync.Core/         # Библиотека с логикой
+│   ├── Models/                   # Модели данных
+│   └── Services/                 # Сервисы (API, matching, sync)
+├── GedcomGeniSync.Cli/           # Отдельный CLI-проект
+│   └── Program.cs                # Консольные команды + DI/логирование
+└── GedcomGeniSync.sln            # Solution файл
 ```
 
 ## Зависимости
