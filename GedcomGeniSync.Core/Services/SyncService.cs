@@ -15,6 +15,7 @@ public class SyncService
     private readonly GedcomLoader _gedcomLoader;
     private readonly GeniApiClient _geniClient;
     private readonly FuzzyMatcherService _matcher;
+    private readonly MyHeritagePhotoService? _photoService;
     private readonly ILogger<SyncService> _logger;
     private readonly SyncOptions _options;
 
@@ -29,13 +30,15 @@ public class SyncService
         GeniApiClient geniClient,
         FuzzyMatcherService matcher,
         ILogger<SyncService> logger,
-        SyncOptions? options = null)
+        SyncOptions? options = null,
+        MyHeritagePhotoService? photoService = null)
     {
         _gedcomLoader = gedcomLoader;
         _geniClient = geniClient;
         _matcher = matcher;
         _logger = logger;
         _options = options ?? new SyncOptions();
+        _photoService = photoService;
     }
 
     /// <summary>
@@ -279,6 +282,12 @@ public class SyncService
             _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
                 relativePerson.FullName, matchedGeniId, matchScore);
 
+            // Sync photos if enabled
+            if (_options.SyncPhotos && _photoService != null)
+            {
+                await SyncPhotosAsync(relativePerson, matchedGeniId);
+            }
+
             // Add to queue for further processing
             queue.Enqueue((relativeGedId, matchedGeniId, currentDepth + 1));
         }
@@ -308,6 +317,12 @@ public class SyncService
 
                 _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
                     relativePerson.FullName, createdGeniId, relationType, currentGeniId);
+
+                // Sync photos if enabled
+                if (_options.SyncPhotos && _photoService != null)
+                {
+                    await SyncPhotosAsync(relativePerson, createdGeniId);
+                }
 
                 // Add to queue for further processing
                 queue.Enqueue((relativeGedId, createdGeniId, currentDepth + 1));
@@ -510,6 +525,111 @@ public class SyncService
 
     #endregion
 
+    #region Photo Synchronization
+
+    /// <summary>
+    /// Sync photos from GEDCOM to Geni profile
+    /// Downloads MyHeritage photos and uploads to Geni if profile has no photos
+    /// </summary>
+    private async Task SyncPhotosAsync(PersonRecord gedcomPerson, string geniProfileId)
+    {
+        if (_photoService == null)
+            return;
+
+        // Skip if no photos in GEDCOM
+        if (gedcomPerson.PhotoUrls.Count == 0)
+        {
+            _logger.LogDebug("No photos in GEDCOM for {Name}", gedcomPerson.FullName);
+            return;
+        }
+
+        try
+        {
+            // Check if profile already has photos
+            var existingPhotos = await _geniClient.GetPhotosAsync(geniProfileId);
+
+            if (existingPhotos.Count > 0)
+            {
+                _logger.LogInformation("Profile {GeniId} already has {Count} photo(s), skipping photo sync",
+                    geniProfileId, existingPhotos.Count);
+                return;
+            }
+
+            _logger.LogInformation("Profile {GeniId} has no photos, syncing from GEDCOM ({Count} URLs)",
+                geniProfileId, gedcomPerson.PhotoUrls.Count);
+
+            // Filter MyHeritage URLs
+            var myHeritageUrls = gedcomPerson.PhotoUrls
+                .Where(url => _photoService.IsMyHeritageUrl(url))
+                .ToList();
+
+            if (myHeritageUrls.Count == 0)
+            {
+                _logger.LogInformation("No MyHeritage photo URLs found for {Name}", gedcomPerson.FullName);
+                return;
+            }
+
+            _logger.LogInformation("Found {Count} MyHeritage photo URL(s) for {Name}",
+                myHeritageUrls.Count, gedcomPerson.FullName);
+
+            // Download and upload photos
+            foreach (var url in myHeritageUrls)
+            {
+                var downloadResult = await _photoService.DownloadPhotoAsync(url);
+
+                if (downloadResult == null)
+                {
+                    _logger.LogWarning("Failed to download photo from {Url}", url);
+                    continue;
+                }
+
+                _logger.LogInformation("Downloaded photo from {Url} ({Size} bytes)",
+                    url, downloadResult.Data.Length);
+
+                // Upload to Geni
+                var caption = $"Photo from MyHeritage (originally from GEDCOM)";
+                var uploadedPhoto = await _geniClient.AddPhotoFromBytesAsync(
+                    geniProfileId,
+                    downloadResult.Data,
+                    downloadResult.FileName,
+                    caption);
+
+                if (uploadedPhoto != null)
+                {
+                    _logger.LogInformation("Successfully uploaded photo {PhotoId} to profile {GeniId}",
+                        uploadedPhoto.Id, geniProfileId);
+
+                    // Set as mugshot if it's the first photo
+                    if (existingPhotos.Count == 0)
+                    {
+                        var success = await _geniClient.SetExistingPhotoAsMugshotAsync(
+                            geniProfileId,
+                            uploadedPhoto.NumericId);
+
+                        if (success)
+                        {
+                            _logger.LogInformation("Set photo {PhotoId} as mugshot for profile {GeniId}",
+                                uploadedPhoto.Id, geniProfileId);
+                        }
+                    }
+
+                    existingPhotos.Add(uploadedPhoto);
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to upload photo to profile {GeniId}", geniProfileId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error syncing photos for {Name} (Geni: {GeniId})",
+                gedcomPerson.FullName, geniProfileId);
+        }
+    }
+
+    #endregion
+
     #region Reporting
 
     private SyncReport GenerateReport()
@@ -543,6 +663,11 @@ public record SyncOptions
     public string? StateFilePath { get; init; }
     public int? MaxDepth { get; init; }
     public MatchingOptions MatchingOptions { get; init; } = new();
+
+    /// <summary>
+    /// Enable photo synchronization from GEDCOM to Geni
+    /// </summary>
+    public bool SyncPhotos { get; init; } = true;
 }
 
 public enum RelationType

@@ -57,6 +57,7 @@ class Program
         var givenNamesOption = new Option<string>("--given-names-csv", description: "Path to given names variants CSV");
         var surnamesOption = new Option<string>("--surnames-csv", description: "Path to surnames variants CSV");
         var verboseOption = new Option<bool?>("--verbose", description: "Enable verbose logging");
+        var syncPhotosOption = new Option<bool?>("--sync-photos", description: "Enable photo synchronization from MyHeritage");
 
         syncCommand.AddOption(configOption);
         syncCommand.AddOption(gedcomOption);
@@ -71,6 +72,7 @@ class Program
         syncCommand.AddOption(givenNamesOption);
         syncCommand.AddOption(surnamesOption);
         syncCommand.AddOption(verboseOption);
+        syncCommand.AddOption(syncPhotosOption);
 
         syncCommand.SetHandler(async context =>
         {
@@ -100,6 +102,7 @@ class Program
             var givenNamesCsvCli = context.ParseResult.GetValueForOption(givenNamesOption);
             var surnamesCsvCli = context.ParseResult.GetValueForOption(surnamesOption);
             var verboseCli = context.ParseResult.GetValueForOption(verboseOption);
+            var syncPhotosCli = context.ParseResult.GetValueForOption(syncPhotosOption);
 
             // Merge CLI options with config (CLI takes precedence)
             var dryRun = dryRunCli ?? config.Sync.DryRun;
@@ -110,6 +113,7 @@ class Program
             var givenNamesCsv = givenNamesCsvCli ?? config.NameVariants.GivenNamesCsv;
             var surnamesCsv = surnamesCsvCli ?? config.NameVariants.SurnamesCsv;
             var verbose = verboseCli ?? config.Logging.Verbose;
+            var syncPhotos = syncPhotosCli ?? config.Sync.SyncPhotos;
 
             token ??= Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
             await using var provider = BuildServiceProvider(verbose, services =>
@@ -122,7 +126,8 @@ class Program
                 {
                     StateFilePath = stateFile,
                     MaxDepth = maxDepth,
-                    MatchingOptions = sp.GetRequiredService<MatchingOptions>()
+                    MatchingOptions = sp.GetRequiredService<MatchingOptions>(),
+                    SyncPhotos = syncPhotos
                 });
                 services.AddSingleton<NameVariantsService>();
                 services.AddSingleton(sp => new FuzzyMatcherService(
@@ -135,12 +140,17 @@ class Program
                     token ?? string.Empty,
                     dryRun,
                     sp.GetRequiredService<ILogger<GeniApiClient>>()));
+                services.AddSingleton(sp => new MyHeritagePhotoService(
+                    sp.GetRequiredService<IHttpClientFactory>(),
+                    sp.GetRequiredService<ILogger<MyHeritagePhotoService>>(),
+                    dryRun));
                 services.AddSingleton(sp => new SyncService(
                     sp.GetRequiredService<GedcomLoader>(),
                     sp.GetRequiredService<GeniApiClient>(),
                     sp.GetRequiredService<FuzzyMatcherService>(),
                     sp.GetRequiredService<ILogger<SyncService>>(),
-                    sp.GetRequiredService<SyncOptions>()));
+                    sp.GetRequiredService<SyncOptions>(),
+                    syncPhotos ? sp.GetRequiredService<MyHeritagePhotoService>() : null));
             });
 
             var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Sync");
@@ -163,6 +173,7 @@ class Program
                 logger.LogInformation("=== GEDCOM to Geni Sync ===");
                 logger.LogInformation("Mode: {Mode}", dryRun ? "DRY-RUN (no changes)" : "LIVE");
                 logger.LogInformation("Match threshold: {Threshold}%", threshold);
+                logger.LogInformation("Photo sync: {Status}", syncPhotos ? "ENABLED" : "DISABLED");
 
                 var syncService = provider.GetRequiredService<SyncService>();
                 var report = await syncService.SyncAsync(
@@ -354,6 +365,12 @@ class Program
         services.AddHttpClient("GeniApi", client =>
         {
             client.BaseAddress = new Uri("https://www.geni.com/api");
+        });
+
+        // Configure HttpClient factory for MyHeritagePhotoService
+        services.AddHttpClient("MyHeritagePhoto", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(5); // Longer timeout for photo downloads
         });
 
         configureServices(services);

@@ -142,6 +142,13 @@ public class SyncConfig
     /// </summary>
     [JsonPropertyName("dryRun")]
     public bool DryRun { get; set; } = true;
+
+    /// <summary>
+    /// Enable photo synchronization from GEDCOM to Geni
+    /// Downloads photos from MyHeritage URLs found in GEDCOM and uploads to Geni profiles
+    /// </summary>
+    [JsonPropertyName("syncPhotos")]
+    public bool SyncPhotos { get; set; } = true;
 }
 
 /// <summary>
