@@ -152,9 +152,13 @@ public class GedcomLoader
 
     private void ProcessFamily(GedcomFamilyRecord family, Dictionary<string, PersonRecord> persons)
     {
-        var husbandId = family.Husband;
-        var wifeId = family.Wife;
-        var childIds = family.Children.ToList();
+        var husbandId = ResolveXRefId(family.Husband);
+        var wifeId = ResolveXRefId(family.Wife);
+        var childIds = family.Children
+            .Select(ResolveXRefId)
+            .Where(id => !string.IsNullOrEmpty(id))
+            .Select(id => id!)
+            .ToList();
 
         // Link children to parents
         foreach (var childId in childIds)
@@ -297,6 +301,27 @@ public class GedcomLoader
         relatives.AddRange(person.SiblingIds);
         
         return relatives.Distinct();
+    }
+
+    private static string? ResolveXRefId(object? link)
+    {
+        if (link == null)
+        {
+            return null;
+        }
+
+        if (link is string id)
+        {
+            return id;
+        }
+
+        var xRefIdProperty = link.GetType().GetProperty("XRefID");
+        if (xRefIdProperty?.GetValue(link) is string xRefId)
+        {
+            return xRefId;
+        }
+
+        return null;
     }
 }
 
