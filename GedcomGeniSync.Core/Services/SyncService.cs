@@ -1,4 +1,5 @@
 using GedcomGeniSync.Models;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace GedcomGeniSync.Services;
@@ -11,7 +12,7 @@ public class SyncService
     private readonly GedcomLoader _gedcomLoader;
     private readonly GeniApiClient _geniClient;
     private readonly FuzzyMatcherService _matcher;
-    private readonly ILogger _logger;
+    private readonly ILogger<SyncService> _logger;
     private readonly SyncOptions _options;
 
     // State
@@ -24,7 +25,7 @@ public class SyncService
         GedcomLoader gedcomLoader,
         GeniApiClient geniClient,
         FuzzyMatcherService matcher,
-        ILogger logger,
+        ILogger<SyncService> logger,
         SyncOptions? options = null)
     {
         _gedcomLoader = gedcomLoader;

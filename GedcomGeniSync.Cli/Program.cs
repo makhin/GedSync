@@ -1,0 +1,307 @@
+using GedcomGeniSync.Models;
+using GedcomGeniSync.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using System.CommandLine;
+
+namespace GedcomGeniSync;
+
+class Program
+{
+    static async Task<int> Main(string[] args)
+    {
+        var rootCommand = new RootCommand("GEDCOM to Geni synchronization tool");
+
+        var syncCommand = BuildSyncCommand();
+        var analyzeCommand = BuildAnalyzeCommand();
+        var testMatchCommand = new Command("test-match", "Run fuzzy matching tests");
+
+        testMatchCommand.SetHandler(async context =>
+        {
+            await using var provider = BuildServiceProvider(verbose: true, services =>
+            {
+                services.AddSingleton<NameVariantsService>();
+                services.AddSingleton(sp => new FuzzyMatcherService(
+                    sp.GetRequiredService<NameVariantsService>(),
+                    sp.GetRequiredService<ILogger<FuzzyMatcherService>>()));
+            });
+
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("TestMatch");
+            await RunTestMatchAsync(logger, provider.GetRequiredService<NameVariantsService>(),
+                provider.GetRequiredService<FuzzyMatcherService>());
+            context.ExitCode = 0;
+        });
+
+        rootCommand.AddCommand(syncCommand);
+        rootCommand.AddCommand(analyzeCommand);
+        rootCommand.AddCommand(testMatchCommand);
+
+        return await rootCommand.InvokeAsync(args);
+    }
+
+    private static Command BuildSyncCommand()
+    {
+        var syncCommand = new Command("sync", "Synchronize GEDCOM file to Geni");
+
+        var gedcomOption = new Option<string>("--gedcom", description: "Path to GEDCOM file") { IsRequired = true };
+        var anchorGedOption = new Option<string>("--anchor-ged", description: "GEDCOM ID of anchor person (e.g., @I123@)") { IsRequired = true };
+        var anchorGeniOption = new Option<string>("--anchor-geni", description: "Geni profile ID of anchor person") { IsRequired = true };
+        var tokenOption = new Option<string>("--token", description: "Geni API access token (or set GENI_ACCESS_TOKEN env var)");
+        var dryRunOption = new Option<bool>("--dry-run", description: "Preview changes without creating profiles", getDefaultValue: () => true);
+        var thresholdOption = new Option<int>("--threshold", description: "Match threshold (0-100)", getDefaultValue: () => 70);
+        var maxDepthOption = new Option<int?>("--max-depth", description: "Maximum BFS depth (null for unlimited)");
+        var stateFileOption = new Option<string>("--state-file", description: "Path to state file for resume support", getDefaultValue: () => "sync_state.json");
+        var reportFileOption = new Option<string>("--report", description: "Path to save report", getDefaultValue: () => "sync_report.json");
+        var givenNamesOption = new Option<string>("--given-names-csv", description: "Path to given names variants CSV");
+        var surnamesOption = new Option<string>("--surnames-csv", description: "Path to surnames variants CSV");
+        var verboseOption = new Option<bool>("--verbose", description: "Enable verbose logging", getDefaultValue: () => false);
+
+        syncCommand.AddOption(gedcomOption);
+        syncCommand.AddOption(anchorGedOption);
+        syncCommand.AddOption(anchorGeniOption);
+        syncCommand.AddOption(tokenOption);
+        syncCommand.AddOption(dryRunOption);
+        syncCommand.AddOption(thresholdOption);
+        syncCommand.AddOption(maxDepthOption);
+        syncCommand.AddOption(stateFileOption);
+        syncCommand.AddOption(reportFileOption);
+        syncCommand.AddOption(givenNamesOption);
+        syncCommand.AddOption(surnamesOption);
+        syncCommand.AddOption(verboseOption);
+
+        syncCommand.SetHandler(async context =>
+        {
+            var gedcomPath = context.ParseResult.GetValueForOption(gedcomOption)!;
+            var anchorGed = context.ParseResult.GetValueForOption(anchorGedOption)!;
+            var anchorGeni = context.ParseResult.GetValueForOption(anchorGeniOption)!;
+            var token = context.ParseResult.GetValueForOption(tokenOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var threshold = context.ParseResult.GetValueForOption(thresholdOption);
+            var maxDepth = context.ParseResult.GetValueForOption(maxDepthOption);
+            var stateFile = context.ParseResult.GetValueForOption(stateFileOption);
+            var reportFile = context.ParseResult.GetValueForOption(reportFileOption);
+            var givenNamesCsv = context.ParseResult.GetValueForOption(givenNamesOption);
+            var surnamesCsv = context.ParseResult.GetValueForOption(surnamesOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+
+            token ??= Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
+            await using var provider = BuildServiceProvider(verbose, services =>
+            {
+                var matchingOptions = new MatchingOptions { MatchThreshold = threshold };
+                services.AddSingleton(matchingOptions);
+                services.AddSingleton(sp => new SyncOptions
+                {
+                    StateFilePath = stateFile,
+                    MaxDepth = maxDepth,
+                    MatchingOptions = sp.GetRequiredService<MatchingOptions>()
+                });
+                services.AddSingleton<NameVariantsService>();
+                services.AddSingleton(sp => new FuzzyMatcherService(
+                    sp.GetRequiredService<NameVariantsService>(),
+                    sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
+                    sp.GetRequiredService<MatchingOptions>()));
+                services.AddSingleton(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
+                services.AddSingleton(sp => new GeniApiClient(token ?? string.Empty, dryRun, sp.GetRequiredService<ILogger<GeniApiClient>>()));
+                services.AddSingleton(sp => new SyncService(
+                    sp.GetRequiredService<GedcomLoader>(),
+                    sp.GetRequiredService<GeniApiClient>(),
+                    sp.GetRequiredService<FuzzyMatcherService>(),
+                    sp.GetRequiredService<ILogger<SyncService>>(),
+                    sp.GetRequiredService<SyncOptions>()));
+            });
+
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Sync");
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    logger.LogError("Geni access token required. Use --token or set GENI_ACCESS_TOKEN");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var nameVariants = provider.GetRequiredService<NameVariantsService>();
+                if (!string.IsNullOrEmpty(givenNamesCsv) || !string.IsNullOrEmpty(surnamesCsv))
+                {
+                    nameVariants.LoadFromCsv(givenNamesCsv ?? string.Empty, surnamesCsv ?? string.Empty);
+                }
+
+                logger.LogInformation("=== GEDCOM to Geni Sync ===");
+                logger.LogInformation("Mode: {Mode}", dryRun ? "DRY-RUN (no changes)" : "LIVE");
+                logger.LogInformation("Match threshold: {Threshold}%", threshold);
+
+                var syncService = provider.GetRequiredService<SyncService>();
+                var report = await syncService.SyncAsync(
+                    gedcomPath, anchorGed, anchorGeni, context.GetCancellationToken());
+
+                report.PrintSummary(logger);
+
+                if (verbose)
+                {
+                    report.PrintDetails(logger);
+                }
+
+                if (!string.IsNullOrEmpty(reportFile))
+                {
+                    await report.SaveToFileAsync(reportFile);
+                    logger.LogInformation("Report saved to: {Path}", reportFile);
+                }
+
+                context.ExitCode = report.Errors > 0 ? 1 : 0;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Sync failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return syncCommand;
+    }
+
+    private static Command BuildAnalyzeCommand()
+    {
+        var analyzeCommand = new Command("analyze", "Analyze GEDCOM file without syncing");
+        var analyzeGedcomOption = new Option<string>("--gedcom", description: "Path to GEDCOM file") { IsRequired = true };
+        var analyzeAnchorOption = new Option<string?>("--anchor", description: "GEDCOM ID to start BFS from (optional)");
+
+        analyzeCommand.AddOption(analyzeGedcomOption);
+        analyzeCommand.AddOption(analyzeAnchorOption);
+
+        analyzeCommand.SetHandler(async context =>
+        {
+            var gedcomPath = context.ParseResult.GetValueForOption(analyzeGedcomOption)!;
+            var anchor = context.ParseResult.GetValueForOption(analyzeAnchorOption);
+
+            await using var provider = BuildServiceProvider(verbose: true, services =>
+            {
+                services.AddSingleton(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
+            });
+
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Analyze");
+
+            try
+            {
+                logger.LogInformation("=== GEDCOM Analysis ===");
+
+                var gedcomLoader = provider.GetRequiredService<GedcomLoader>();
+                var result = gedcomLoader.Load(gedcomPath);
+
+                result.PrintStats(logger);
+
+                logger.LogInformation("\n=== Sample Persons ===");
+                foreach (var person in result.Persons.Values.Take(10))
+                {
+                    logger.LogInformation("{Id}: {Name}", person.Id, person);
+                }
+
+                if (!string.IsNullOrEmpty(anchor))
+                {
+                    logger.LogInformation("\n=== BFS from {Anchor} ===", anchor);
+
+                    var count = 0;
+                    foreach (var person in result.TraverseBfs(anchor, maxDepth: 3))
+                    {
+                        var relations = new List<string>();
+                        if (!string.IsNullOrEmpty(person.FatherId)) relations.Add($"father:{person.FatherId}");
+                        if (!string.IsNullOrEmpty(person.MotherId)) relations.Add($"mother:{person.MotherId}");
+                        if (person.SpouseIds.Any()) relations.Add($"spouses:{person.SpouseIds.Count}");
+                        if (person.ChildrenIds.Any()) relations.Add($"children:{person.ChildrenIds.Count}");
+
+                        logger.LogInformation("  {Person} [{Relations}]", person, string.Join(", ", relations));
+
+                        count++;
+                        if (count >= 50)
+                        {
+                            logger.LogInformation("  ... (showing first 50)");
+                            break;
+                        }
+                    }
+                }
+
+                context.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Analysis failed");
+                context.ExitCode = 1;
+            }
+
+            await Task.CompletedTask;
+        });
+
+        return analyzeCommand;
+    }
+
+    private static async Task RunTestMatchAsync(
+        ILogger logger,
+        NameVariantsService nameVariants,
+        FuzzyMatcherService matcher)
+    {
+        logger.LogInformation("=== Testing Fuzzy Matching ===\n");
+
+        var testCases = new[]
+        {
+            (new PersonRecord { FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
+             new PersonRecord { FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
+             "Exact match"),
+            (new PersonRecord { FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
+             new PersonRecord { FirstName = "Ivan", LastName = "Petrov", BirthDate = DateInfo.Parse("1885") },
+             "Cyrillic vs Latin"),
+            (new PersonRecord { FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
+             new PersonRecord { FirstName = "John", LastName = "Petrov", BirthDate = DateInfo.Parse("1885") },
+             "Ivan = John equivalent"),
+            (new PersonRecord { FirstName = "Мария", LastName = "Сидорова", BirthDate = DateInfo.Parse("1890") },
+             new PersonRecord { FirstName = "Maria", LastName = "Sidorova", BirthDate = DateInfo.Parse("1892") },
+             "Date ±2 years"),
+            (new PersonRecord { FirstName = "Анна", LastName = "Петрова", MaidenName = "Иванова", BirthDate = DateInfo.Parse("1888") },
+             new PersonRecord { FirstName = "Anna", LastName = "Иванова", BirthDate = DateInfo.Parse("1888") },
+             "Maiden name match"),
+            (new PersonRecord { FirstName = "Иван", LastName = "Петров", BirthDate = DateInfo.Parse("1885") },
+             new PersonRecord { FirstName = "Пётр", LastName = "Сидоров", BirthDate = DateInfo.Parse("1920") },
+             "Different persons"),
+            (new PersonRecord { FirstName = "Александр", LastName = "Смирнов", BirthDate = DateInfo.Parse("1900") },
+             new PersonRecord { FirstName = "Саша", LastName = "Смирнов", BirthDate = DateInfo.Parse("1900") },
+             "Александр = Саша")
+        };
+
+        foreach (var (source, target, description) in testCases)
+        {
+            var result = matcher.Compare(source, target);
+
+            logger.LogInformation("Test: {Description}", description);
+            logger.LogInformation("  {Source} vs {Target}", source.FullName, target.FullName);
+            logger.LogInformation("  Score: {Score}%", result.Score);
+
+            foreach (var reason in result.Reasons)
+            {
+                logger.LogInformation("    {Field}: +{Points} ({Details})",
+                    reason.Field, reason.Points, reason.Details);
+            }
+
+            logger.LogInformation(string.Empty);
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private static ServiceProvider BuildServiceProvider(bool verbose, Action<IServiceCollection> configureServices)
+    {
+        var services = new ServiceCollection();
+
+        services.AddLogging(builder =>
+        {
+            builder.ClearProviders();
+            builder.AddSimpleConsole(options =>
+            {
+                options.TimestampFormat = "HH:mm:ss ";
+                options.SingleLine = true;
+            });
+            builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+        });
+
+        configureServices(services);
+        return services.BuildServiceProvider();
+    }
+}

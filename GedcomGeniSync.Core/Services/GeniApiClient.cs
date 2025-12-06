@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Services;
 
@@ -10,14 +11,14 @@ public class GeniApiClient : IDisposable
     private readonly HttpClient _httpClient;
     private readonly string _accessToken;
     private readonly bool _dryRun;
-    private readonly ILogger _logger;
+    private readonly ILogger<GeniApiClient> _logger;
     
     private const string BaseUrl = "https://www.geni.com/api";
     private const int RateLimitDelayMs = 1000; // 1 request per second to be safe
     
     private DateTime _lastRequestTime = DateTime.MinValue;
 
-    public GeniApiClient(string accessToken, bool dryRun, ILogger logger)
+    public GeniApiClient(string accessToken, bool dryRun, ILogger<GeniApiClient> logger)
     {
         _accessToken = accessToken;
         _dryRun = dryRun;
@@ -443,29 +444,3 @@ public class GeniAddResult
 
 #endregion
 
-#region Logger Interface (simplified)
-
-public interface ILogger
-{
-    void LogDebug(string message, params object[] args);
-    void LogInformation(string message, params object[] args);
-    void LogWarning(string message, params object[] args);
-    void LogError(Exception ex, string message, params object[] args);
-}
-
-public class ConsoleLogger : ILogger
-{
-    public void LogDebug(string message, params object[] args) 
-        => Console.WriteLine($"[DEBUG] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}");
-    
-    public void LogInformation(string message, params object[] args)
-        => Console.WriteLine($"[INFO] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}");
-    
-    public void LogWarning(string message, params object[] args)
-        => Console.WriteLine($"[WARN] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}");
-    
-    public void LogError(Exception ex, string message, params object[] args)
-        => Console.WriteLine($"[ERROR] {string.Format(message.Replace("{", "{{").Replace("}", "}}"), args)}: {ex.Message}");
-}
-
-#endregion
