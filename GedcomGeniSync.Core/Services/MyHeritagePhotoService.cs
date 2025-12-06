@@ -7,7 +7,7 @@ namespace GedcomGeniSync.Services;
 /// Service for downloading photos from MyHeritage
 /// </summary>
 [ExcludeFromCodeCoverage]
-public class MyHeritagePhotoService
+public class MyHeritagePhotoService : IMyHeritagePhotoService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<MyHeritagePhotoService> _logger;

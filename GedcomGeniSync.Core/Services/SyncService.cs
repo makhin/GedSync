@@ -11,12 +11,12 @@ namespace GedcomGeniSync.Services;
 /// Orchestrates synchronization from GEDCOM to Geni
 /// </summary>
 [ExcludeFromCodeCoverage]
-public class SyncService
+public class SyncService : ISyncService
 {
-    private readonly GedcomLoader _gedcomLoader;
-    private readonly GeniApiClient _geniClient;
-    private readonly FuzzyMatcherService _matcher;
-    private readonly MyHeritagePhotoService? _photoService;
+    private readonly IGedcomLoader _gedcomLoader;
+    private readonly IGeniApiClient _geniClient;
+    private readonly IFuzzyMatcherService _matcher;
+    private readonly IMyHeritagePhotoService? _photoService;
     private readonly ILogger<SyncService> _logger;
     private readonly SyncOptions _options;
 
@@ -27,12 +27,12 @@ public class SyncService
     private readonly List<SyncResult> _results = new();
 
     public SyncService(
-        GedcomLoader gedcomLoader,
-        GeniApiClient geniClient,
-        FuzzyMatcherService matcher,
+        IGedcomLoader gedcomLoader,
+        IGeniApiClient geniClient,
+        IFuzzyMatcherService matcher,
         ILogger<SyncService> logger,
         SyncOptions? options = null,
-        MyHeritagePhotoService? photoService = null)
+        IMyHeritagePhotoService? photoService = null)
     {
         _gedcomLoader = gedcomLoader;
         _geniClient = geniClient;

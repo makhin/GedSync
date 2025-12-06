@@ -14,7 +14,7 @@ namespace GedcomGeniSync.Services;
 /// Loads GEDCOM files and converts to PersonRecord models
 /// </summary>
 [ExcludeFromCodeCoverage]
-public class GedcomLoader
+public class GedcomLoader : IGedcomLoader
 {
     private readonly ILogger<GedcomLoader> _logger;
 
