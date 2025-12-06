@@ -30,7 +30,16 @@ dotnet build
 ### 1. Получение Geni API токена
 
 1. Зарегистрируйте приложение: https://www.geni.com/platform/developer/apps
-2. Получите access token через OAuth2
+2. Запустите интерактивную авторизацию (открывается браузер, идёт редирект на локальный порт):
+
+```bash
+dotnet run --project GedcomGeniSync.Cli -- auth \
+  --app-key YOUR_APP_KEY \
+  --app-secret YOUR_APP_SECRET \
+  --token-file geni_token.json
+```
+
+   Переменные `GENI_APP_KEY` и `GENI_APP_SECRET` можно задать в окружении вместо передачи через параметры. По умолчанию токен сохраняется в `geni_token.json`, затем его можно использовать в других командах через `--token`, `GENI_ACCESS_TOKEN` или просто указав путь к файлу через `--token-file`.
 
 ### 2. Конфигурационный файл (опционально)
 
@@ -95,14 +104,14 @@ dotnet run --project GedcomGeniSync.Cli -- sync \
   --gedcom family.ged \
   --anchor-ged @I123@ \
   --anchor-geni 6000000012345678901 \
-  --token YOUR_GENI_TOKEN
+  --token-file geni_token.json
 
 # Или с явным указанием параметров
 dotnet run --project GedcomGeniSync.Cli -- sync \
   --gedcom family.ged \
   --anchor-ged @I123@ \
   --anchor-geni 6000000012345678901 \
-  --token YOUR_GENI_TOKEN \
+  --token-file geni_token.json \
   --threshold 70 \
   --verbose
 ```
@@ -114,7 +123,7 @@ dotnet run --project GedcomGeniSync.Cli -- sync \
   --gedcom family.ged \
   --anchor-ged @I123@ \
   --anchor-geni 6000000012345678901 \
-  --token YOUR_GENI_TOKEN \
+  --token-file geni_token.json \
   --dry-run false \
   --max-depth 10
 ```
@@ -130,6 +139,7 @@ dotnet run --project GedcomGeniSync.Cli -- sync \
 | `--anchor-ged` | GEDCOM ID якоря (напр. @I123@) | (обязательно) |
 | `--anchor-geni` | Geni ID якоря | (обязательно) |
 | `--token` | Geni API токен (или env GENI_ACCESS_TOKEN) | - |
+| `--token-file` | Путь к сохранённому токену (по умолчанию `geni_token.json`) | geni_token.json |
 | `--dry-run` | Режим предпросмотра | true |
 | `--threshold` | Порог совпадения (0-100) | 70 |
 | `--max-depth` | Максимальная глубина BFS | unlimited |
