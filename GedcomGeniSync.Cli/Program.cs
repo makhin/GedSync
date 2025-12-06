@@ -43,19 +43,21 @@ class Program
     {
         var syncCommand = new Command("sync", "Synchronize GEDCOM file to Geni");
 
+        var configOption = new Option<string>("--config", description: "Path to configuration file (JSON or YAML)");
         var gedcomOption = new Option<string>("--gedcom", description: "Path to GEDCOM file") { IsRequired = true };
         var anchorGedOption = new Option<string>("--anchor-ged", description: "GEDCOM ID of anchor person (e.g., @I123@)") { IsRequired = true };
         var anchorGeniOption = new Option<string>("--anchor-geni", description: "Geni profile ID of anchor person") { IsRequired = true };
         var tokenOption = new Option<string>("--token", description: "Geni API access token (or set GENI_ACCESS_TOKEN env var)");
-        var dryRunOption = new Option<bool>("--dry-run", description: "Preview changes without creating profiles", getDefaultValue: () => true);
-        var thresholdOption = new Option<int>("--threshold", description: "Match threshold (0-100)", getDefaultValue: () => 70);
+        var dryRunOption = new Option<bool?>("--dry-run", description: "Preview changes without creating profiles");
+        var thresholdOption = new Option<int?>("--threshold", description: "Match threshold (0-100)");
         var maxDepthOption = new Option<int?>("--max-depth", description: "Maximum BFS depth (null for unlimited)");
-        var stateFileOption = new Option<string>("--state-file", description: "Path to state file for resume support", getDefaultValue: () => "sync_state.json");
-        var reportFileOption = new Option<string>("--report", description: "Path to save report", getDefaultValue: () => "sync_report.json");
+        var stateFileOption = new Option<string>("--state-file", description: "Path to state file for resume support");
+        var reportFileOption = new Option<string>("--report", description: "Path to save report");
         var givenNamesOption = new Option<string>("--given-names-csv", description: "Path to given names variants CSV");
         var surnamesOption = new Option<string>("--surnames-csv", description: "Path to surnames variants CSV");
-        var verboseOption = new Option<bool>("--verbose", description: "Enable verbose logging", getDefaultValue: () => false);
+        var verboseOption = new Option<bool?>("--verbose", description: "Enable verbose logging");
 
+        syncCommand.AddOption(configOption);
         syncCommand.AddOption(gedcomOption);
         syncCommand.AddOption(anchorGedOption);
         syncCommand.AddOption(anchorGeniOption);
@@ -71,23 +73,49 @@ class Program
 
         syncCommand.SetHandler(async context =>
         {
+            // Load configuration
+            var configPath = context.ParseResult.GetValueForOption(configOption);
+            var configLoader = new ConfigurationLoader();
+            var config = configLoader.LoadWithDefaults(
+                configPath ?? "",
+                "gedsync.json",
+                "gedsync.yaml",
+                "gedsync.yml",
+                ".gedsync.json",
+                ".gedsync.yaml",
+                ".gedsync.yml"
+            );
+
+            // Get CLI options (they override config)
             var gedcomPath = context.ParseResult.GetValueForOption(gedcomOption)!;
             var anchorGed = context.ParseResult.GetValueForOption(anchorGedOption)!;
             var anchorGeni = context.ParseResult.GetValueForOption(anchorGeniOption)!;
             var token = context.ParseResult.GetValueForOption(tokenOption);
-            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            var threshold = context.ParseResult.GetValueForOption(thresholdOption);
-            var maxDepth = context.ParseResult.GetValueForOption(maxDepthOption);
-            var stateFile = context.ParseResult.GetValueForOption(stateFileOption);
-            var reportFile = context.ParseResult.GetValueForOption(reportFileOption);
-            var givenNamesCsv = context.ParseResult.GetValueForOption(givenNamesOption);
-            var surnamesCsv = context.ParseResult.GetValueForOption(surnamesOption);
-            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRunCli = context.ParseResult.GetValueForOption(dryRunOption);
+            var thresholdCli = context.ParseResult.GetValueForOption(thresholdOption);
+            var maxDepthCli = context.ParseResult.GetValueForOption(maxDepthOption);
+            var stateFileCli = context.ParseResult.GetValueForOption(stateFileOption);
+            var reportFileCli = context.ParseResult.GetValueForOption(reportFileOption);
+            var givenNamesCsvCli = context.ParseResult.GetValueForOption(givenNamesOption);
+            var surnamesCsvCli = context.ParseResult.GetValueForOption(surnamesOption);
+            var verboseCli = context.ParseResult.GetValueForOption(verboseOption);
+
+            // Merge CLI options with config (CLI takes precedence)
+            var dryRun = dryRunCli ?? config.Sync.DryRun;
+            var threshold = thresholdCli ?? config.Matching.MatchThreshold;
+            var maxDepth = maxDepthCli ?? config.Sync.MaxDepth;
+            var stateFile = stateFileCli ?? config.Paths.StateFile;
+            var reportFile = reportFileCli ?? config.Paths.ReportFile;
+            var givenNamesCsv = givenNamesCsvCli ?? config.NameVariants.GivenNamesCsv;
+            var surnamesCsv = surnamesCsvCli ?? config.NameVariants.SurnamesCsv;
+            var verbose = verboseCli ?? config.Logging.Verbose;
 
             token ??= Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
             await using var provider = BuildServiceProvider(verbose, services =>
             {
-                var matchingOptions = new MatchingOptions { MatchThreshold = threshold };
+                // Use configuration with CLI override for threshold
+                var matchingOptions = config.Matching.ToMatchingOptions();
+                matchingOptions.MatchThreshold = threshold;
                 services.AddSingleton(matchingOptions);
                 services.AddSingleton(sp => new SyncOptions
                 {

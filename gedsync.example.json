@@ -1,0 +1,55 @@
+{
+  // GedSync Configuration Example (JSON)
+  // Copy this file to gedsync.json and customize for your needs
+
+  "matching": {
+    // Weights for different matching criteria (should sum to ~100)
+    "firstNameWeight": 30,
+    "lastNameWeight": 25,
+    "birthDateWeight": 20,
+    "birthPlaceWeight": 15,
+    "deathDateWeight": 5,
+    "genderWeight": 5,
+
+    // Match threshold (0-100): minimum score to consider a match
+    "matchThreshold": 70,
+
+    // Auto-match threshold (0-100): matches above this are considered certain
+    "autoMatchThreshold": 90,
+
+    // Maximum allowed birth year difference for matching
+    "maxBirthYearDifference": 10
+  },
+
+  "sync": {
+    // Maximum BFS depth (null for unlimited)
+    // Set to a number (e.g., 3) to limit how far from the anchor person to sync
+    "maxDepth": null,
+
+    // Dry-run mode: preview changes without creating profiles
+    "dryRun": true
+  },
+
+  "nameVariants": {
+    // Path to CSV file with given name variants (optional)
+    // Format: "BaseName","Variant1|Variant2|Variant3"
+    "givenNamesCsv": null,
+
+    // Path to CSV file with surname variants (optional)
+    // Format: "BaseName","Variant1|Variant2|Variant3"
+    "surnamesCsv": null
+  },
+
+  "paths": {
+    // Path to state file for resume support
+    "stateFile": "sync_state.json",
+
+    // Path to save sync report
+    "reportFile": "sync_report.json"
+  },
+
+  "logging": {
+    // Enable verbose logging
+    "verbose": false
+  }
+}
