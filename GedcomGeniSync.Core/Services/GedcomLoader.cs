@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using GedcomGeniSync.Models;
+using GedcomGeniSync.Utils;
 using GeneGenie.Gedcom;
 using Microsoft.Extensions.Logging;
 using GeneGenie.Gedcom.Parser;
@@ -171,6 +172,8 @@ public class GedcomLoader
             Nickname = nickname,
             Suffix = suffix,
             NameVariants = nameVariantsBuilder.ToImmutable(),
+            NormalizedFirstName = NameNormalizer.Normalize(firstName),
+            NormalizedLastName = NameNormalizer.Normalize(lastName),
             Gender = gender,
             BirthDate = birthDate,
             BirthPlace = birthPlace,

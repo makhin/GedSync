@@ -167,8 +167,10 @@ public class FuzzyMatcherService
         if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(targetName))
             return 0;
 
-        // 1. Exact match
-        if (NormalizeForComparison(sourceName) == NormalizeForComparison(targetName))
+        // 1. Exact match using pre-normalized names (optimization)
+        if (!string.IsNullOrEmpty(source.NormalizedFirstName) &&
+            !string.IsNullOrEmpty(target.NormalizedFirstName) &&
+            source.NormalizedFirstName == target.NormalizedFirstName)
             return 1.0;
 
         // 2. Check name variants dictionary
@@ -188,15 +190,15 @@ public class FuzzyMatcherService
             }
         }
 
+        // Use pre-normalized names if available, otherwise normalize on-the-fly
+        var sourceNorm = source.NormalizedFirstName ?? NormalizeForComparison(sourceName);
+        var targetNorm = target.NormalizedFirstName ?? NormalizeForComparison(targetName);
+
         // 4. Levenshtein ratio
-        var ratio = Fuzz.Ratio(
-            NormalizeForComparison(sourceName), 
-            NormalizeForComparison(targetName)) / 100.0;
+        var ratio = Fuzz.Ratio(sourceNorm, targetNorm) / 100.0;
 
         // 5. Partial ratio for nicknames (Александр vs Саша)
-        var partialRatio = Fuzz.PartialRatio(
-            NormalizeForComparison(sourceName),
-            NormalizeForComparison(targetName)) / 100.0;
+        var partialRatio = Fuzz.PartialRatio(sourceNorm, targetNorm) / 100.0;
 
         return Math.Max(ratio, partialRatio * 0.9);
     }
@@ -209,19 +211,25 @@ public class FuzzyMatcherService
         if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(targetName))
             return 0;
 
-        // 1. Exact match
-        if (NormalizeForComparison(sourceName) == NormalizeForComparison(targetName))
+        // 1. Exact match using pre-normalized names (optimization)
+        if (!string.IsNullOrEmpty(source.NormalizedLastName) &&
+            !string.IsNullOrEmpty(target.NormalizedLastName) &&
+            source.NormalizedLastName == target.NormalizedLastName)
             return 1.0;
 
         // 2. Check maiden name
         if (!string.IsNullOrEmpty(source.MaidenName))
         {
-            if (NormalizeForComparison(source.MaidenName) == NormalizeForComparison(targetName))
+            var normalizedMaiden = NormalizeForComparison(source.MaidenName);
+            var targetNorm = target.NormalizedLastName ?? NormalizeForComparison(targetName);
+            if (normalizedMaiden == targetNorm)
                 return 0.95;
         }
         if (!string.IsNullOrEmpty(target.MaidenName))
         {
-            if (NormalizeForComparison(target.MaidenName) == NormalizeForComparison(sourceName))
+            var normalizedMaiden = NormalizeForComparison(target.MaidenName);
+            var sourceNorm = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
+            if (normalizedMaiden == sourceNorm)
                 return 0.95;
         }
 
@@ -229,13 +237,12 @@ public class FuzzyMatcherService
         if (_nameVariants.AreEquivalentSurnames(sourceName, targetName))
             return 0.90;
 
-        // 4. Levenshtein ratio with transliteration
-        var sourceTranslit = _nameVariants.Transliterate(sourceName);
-        var targetTranslit = _nameVariants.Transliterate(targetName);
-        
-        var ratio = Fuzz.Ratio(
-            NormalizeForComparison(sourceTranslit), 
-            NormalizeForComparison(targetTranslit)) / 100.0;
+        // Use pre-normalized names if available, otherwise normalize on-the-fly
+        var sourceNormalized = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
+        var targetNormalized = target.NormalizedLastName ?? NormalizeForComparison(targetName);
+
+        // 4. Levenshtein ratio with pre-normalized (transliterated) names
+        var ratio = Fuzz.Ratio(sourceNormalized, targetNormalized) / 100.0;
 
         return ratio;
     }
