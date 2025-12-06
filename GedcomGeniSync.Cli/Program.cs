@@ -130,7 +130,11 @@ class Program
                     sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
                     sp.GetRequiredService<MatchingOptions>()));
                 services.AddSingleton(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
-                services.AddSingleton(sp => new GeniApiClient(token ?? string.Empty, dryRun, sp.GetRequiredService<ILogger<GeniApiClient>>()));
+                services.AddSingleton(sp => new GeniApiClient(
+                    sp.GetRequiredService<IHttpClientFactory>(),
+                    token ?? string.Empty,
+                    dryRun,
+                    sp.GetRequiredService<ILogger<GeniApiClient>>()));
                 services.AddSingleton(sp => new SyncService(
                     sp.GetRequiredService<GedcomLoader>(),
                     sp.GetRequiredService<GeniApiClient>(),
@@ -344,6 +348,12 @@ class Program
                 options.SingleLine = true;
             });
             builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+        });
+
+        // Configure HttpClient factory for GeniApiClient
+        services.AddHttpClient("GeniApi", client =>
+        {
+            client.BaseAddress = new Uri("https://www.geni.com/api");
         });
 
         configureServices(services);

@@ -6,30 +6,31 @@ using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Services;
 
-public class GeniApiClient : IDisposable
+public class GeniApiClient
 {
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _accessToken;
     private readonly bool _dryRun;
     private readonly ILogger<GeniApiClient> _logger;
-    
+
     private const string BaseUrl = "https://www.geni.com/api";
     private const int RateLimitDelayMs = 1000; // 1 request per second to be safe
-    
+
     private DateTime _lastRequestTime = DateTime.MinValue;
 
-    public GeniApiClient(string accessToken, bool dryRun, ILogger<GeniApiClient> logger)
+    public GeniApiClient(IHttpClientFactory httpClientFactory, string accessToken, bool dryRun, ILogger<GeniApiClient> logger)
     {
+        _httpClientFactory = httpClientFactory;
         _accessToken = accessToken;
         _dryRun = dryRun;
         _logger = logger;
-        
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(BaseUrl)
-        };
-        _httpClient.DefaultRequestHeaders.Authorization = 
-            new AuthenticationHeaderValue("Bearer", accessToken);
+    }
+
+    private HttpClient CreateClient()
+    {
+        var client = _httpClientFactory.CreateClient("GeniApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+        return client;
     }
 
     #region Rate Limiting
@@ -51,13 +52,14 @@ public class GeniApiClient : IDisposable
     public async Task<GeniProfile?> GetProfileAsync(string profileId)
     {
         await ThrottleAsync();
-        
-        var url = $"/profile-{profileId}?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/profile-{profileId}?access_token={_accessToken}";
         _logger.LogDebug("GET {Url}", url);
-        
+
         try
         {
-            var response = await _httpClient.GetAsync(url);
+            using var client = CreateClient();
+            var response = await client.GetAsync(url);
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<GeniProfile>();
         }
@@ -71,11 +73,12 @@ public class GeniApiClient : IDisposable
     public async Task<GeniProfile?> GetCurrentUserProfileAsync()
     {
         await ThrottleAsync();
-        
-        var url = $"/profile?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/profile?access_token={_accessToken}";
         _logger.LogDebug("GET {Url}", url);
-        
-        var response = await _httpClient.GetAsync(url);
+
+        using var client = CreateClient();
+        var response = await client.GetAsync(url);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<GeniProfile>();
     }
@@ -83,13 +86,14 @@ public class GeniApiClient : IDisposable
     public async Task<GeniImmediateFamily?> GetImmediateFamilyAsync(string profileId)
     {
         await ThrottleAsync();
-        
-        var url = $"/profile-{profileId}/immediate-family?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/profile-{profileId}/immediate-family?access_token={_accessToken}";
         _logger.LogDebug("GET {Url}", url);
-        
+
         try
         {
-            var response = await _httpClient.GetAsync(url);
+            using var client = CreateClient();
+            var response = await client.GetAsync(url);
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<GeniImmediateFamily>();
         }
@@ -103,20 +107,21 @@ public class GeniApiClient : IDisposable
     public async Task<List<GeniProfile>> SearchProfilesAsync(string name, string? birthYear = null)
     {
         await ThrottleAsync();
-        
+
         var query = Uri.EscapeDataString(name);
-        var url = $"/profile/search?names={query}&access_token={_accessToken}";
-        
+        var url = $"{BaseUrl}/profile/search?names={query}&access_token={_accessToken}";
+
         if (!string.IsNullOrEmpty(birthYear))
         {
             url += $"&birth_year={birthYear}";
         }
-        
+
         _logger.LogDebug("GET {Url}", url);
-        
+
         try
         {
-            var response = await _httpClient.GetAsync(url);
+            using var client = CreateClient();
+            var response = await client.GetAsync(url);
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<GeniSearchResult>();
             return result?.Results ?? new List<GeniProfile>();
@@ -142,17 +147,18 @@ public class GeniApiClient : IDisposable
         }
 
         await ThrottleAsync();
-        
-        var url = $"/profile-{parentProfileId}/add-child?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/profile-{parentProfileId}/add-child?access_token={_accessToken}";
         _logger.LogDebug("POST {Url}", url);
-        
+
+        using var client = CreateClient();
         var content = CreateFormContent(child);
-        var response = await _httpClient.PostAsync(url, content);
+        var response = await client.PostAsync(url, content);
         response.EnsureSuccessStatusCode();
-        
+
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
         _logger.LogInformation("Created child profile {ProfileId}", result?.Profile?.Id);
-        
+
         return result?.Profile;
     }
 
@@ -166,17 +172,18 @@ public class GeniApiClient : IDisposable
         }
 
         await ThrottleAsync();
-        
-        var url = $"/profile-{childProfileId}/add-parent?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/profile-{childProfileId}/add-parent?access_token={_accessToken}";
         _logger.LogDebug("POST {Url}", url);
-        
+
+        using var client = CreateClient();
         var content = CreateFormContent(parent);
-        var response = await _httpClient.PostAsync(url, content);
+        var response = await client.PostAsync(url, content);
         response.EnsureSuccessStatusCode();
-        
+
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
         _logger.LogInformation("Created parent profile {ProfileId}", result?.Profile?.Id);
-        
+
         return result?.Profile;
     }
 
@@ -190,17 +197,18 @@ public class GeniApiClient : IDisposable
         }
 
         await ThrottleAsync();
-        
-        var url = $"/profile-{profileId}/add-partner?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/profile-{profileId}/add-partner?access_token={_accessToken}";
         _logger.LogDebug("POST {Url}", url);
-        
+
+        using var client = CreateClient();
         var content = CreateFormContent(partner);
-        var response = await _httpClient.PostAsync(url, content);
+        var response = await client.PostAsync(url, content);
         response.EnsureSuccessStatusCode();
-        
+
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
         _logger.LogInformation("Created partner profile {ProfileId}", result?.Profile?.Id);
-        
+
         return result?.Profile;
     }
 
@@ -214,18 +222,19 @@ public class GeniApiClient : IDisposable
         }
 
         await ThrottleAsync();
-        
-        var url = $"/union-{unionId}/add-child?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/union-{unionId}/add-child?access_token={_accessToken}";
         _logger.LogDebug("POST {Url}", url);
-        
+
+        using var client = CreateClient();
         var content = CreateFormContent(child);
-        var response = await _httpClient.PostAsync(url, content);
+        var response = await client.PostAsync(url, content);
         response.EnsureSuccessStatusCode();
-        
+
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Created child profile {ProfileId} in union {UnionId}", 
+        _logger.LogInformation("Created child profile {ProfileId} in union {UnionId}",
             result?.Profile?.Id, unionId);
-        
+
         return result?.Profile;
     }
 
@@ -239,18 +248,19 @@ public class GeniApiClient : IDisposable
         }
 
         await ThrottleAsync();
-        
-        var url = $"/union-{unionId}/add-partner?access_token={_accessToken}";
+
+        var url = $"{BaseUrl}/union-{unionId}/add-partner?access_token={_accessToken}";
         _logger.LogDebug("POST {Url}", url);
-        
+
+        using var client = CreateClient();
         var content = CreateFormContent(partner);
-        var response = await _httpClient.PostAsync(url, content);
+        var response = await client.PostAsync(url, content);
         response.EnsureSuccessStatusCode();
-        
+
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Added partner profile {ProfileId} to union {UnionId}", 
+        _logger.LogInformation("Added partner profile {ProfileId} to union {UnionId}",
             result?.Profile?.Id, unionId);
-        
+
         return result?.Profile;
     }
 
@@ -305,11 +315,6 @@ public class GeniApiClient : IDisposable
     }
 
     #endregion
-
-    public void Dispose()
-    {
-        _httpClient.Dispose();
-    }
 }
 
 #region DTOs
