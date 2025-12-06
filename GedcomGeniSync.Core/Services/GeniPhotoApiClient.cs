@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -10,7 +9,6 @@ namespace GedcomGeniSync.Services;
 /// Geni API Client - Photo Operations
 /// This partial class contains photo-related operations.
 /// </summary>
-[ExcludeFromCodeCoverage]
 public partial class GeniApiClient
 {
     #region Photo Operations
