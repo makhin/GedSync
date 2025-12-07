@@ -175,7 +175,8 @@ class Program
                     StateFilePath = stateFile,
                     MaxDepth = maxDepth,
                     MatchingOptions = sp.GetRequiredService<MatchingOptions>(),
-                    SyncPhotos = syncPhotos
+                    SyncPhotos = syncPhotos,
+                    DryRun = dryRun
                 });
                 services.AddSingleton<INameVariantsService, NameVariantsService>();
                 services.AddSingleton<IFuzzyMatcherService>(sp => new FuzzyMatcherService(
@@ -205,6 +206,7 @@ class Program
 
             try
             {
+                logger.LogInformation("Configuration source: {Config}", string.IsNullOrEmpty(configPath) ? "auto-detected defaults" : configPath);
                 if (storedToken != null)
                 {
                     if (storedToken.IsExpired)
@@ -234,6 +236,11 @@ class Program
                 logger.LogInformation("Mode: {Mode}", dryRun ? "DRY-RUN (no changes)" : "LIVE");
                 logger.LogInformation("Match threshold: {Threshold}%", threshold);
                 logger.LogInformation("Photo sync: {Status}", syncPhotos ? "ENABLED" : "DISABLED");
+                logger.LogInformation("Max depth: {Depth}", maxDepth?.ToString() ?? "unlimited");
+                logger.LogInformation("State file: {StateFile} | Report file: {ReportFile}",
+                    stateFile ?? "<not set>", reportFile ?? "<not set>");
+                logger.LogInformation("Name variants: given={GivenNames}, surnames={Surnames}",
+                    givenNamesCsv ?? "<none>", surnamesCsv ?? "<none>");
 
                 var syncService = provider.GetRequiredService<ISyncService>();
                 var report = await syncService.SyncAsync(
