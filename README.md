@@ -30,16 +30,24 @@ dotnet build
 ### 1. Получение Geni API токена
 
 1. Зарегистрируйте приложение: https://www.geni.com/platform/developer/apps
-2. Запустите интерактивную авторизацию (открывается браузер, идёт редирект на локальный порт):
+2. Запустите интерактивную авторизацию (Desktop OAuth flow):
 
 ```bash
 dotnet run --project GedcomGeniSync.Cli -- auth \
   --app-key YOUR_APP_KEY \
-  --app-secret YOUR_APP_SECRET \
   --token-file geni_token.json
 ```
 
-   Переменные `GENI_APP_KEY` и `GENI_APP_SECRET` можно задать в окружении вместо передачи через параметры. По умолчанию токен сохраняется в `geni_token.json`, затем его можно использовать в других командах через `--token`, `GENI_ACCESS_TOKEN` или просто указав путь к файлу через `--token-file`.
+   **Как это работает:**
+   - Откроется браузер с формой авторизации Geni
+   - После входа и подтверждения, вас перенаправит на страницу успеха
+   - Скопируйте **полный URL** из адресной строки браузера
+   - Вставьте URL в консоль приложения
+   - Токен будет автоматически извлечён и сохранён в `geni_token.json`
+
+   **Примечание:** Используется [Desktop OAuth Flow](https://www.geni.com/platform/developer/help/oauth_desktop?version=1) (Implicit Grant). Для этого flow не нужен `app_secret`, только `app_key`.
+
+   Переменную `GENI_APP_KEY` можно задать в окружении вместо передачи через параметры. По умолчанию токен сохраняется в `geni_token.json`, затем его можно использовать в других командах через `--token`, `GENI_ACCESS_TOKEN` или просто указав путь к файлу через `--token-file`.
 
 ### 2. Конфигурационный файл (опционально)
 

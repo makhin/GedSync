@@ -45,29 +45,23 @@ class Program
 
     private static Command BuildAuthCommand()
     {
-        var authCommand = new Command("auth", "Authenticate with Geni and save access token");
+        var authCommand = new Command("auth", "Authenticate with Geni using Desktop OAuth and save access token");
 
         var appKeyOption = new Option<string?>("--app-key", description: "Geni app key (or set GENI_APP_KEY env var)");
-        var appSecretOption = new Option<string?>("--app-secret", description: "Geni app secret (or set GENI_APP_SECRET env var)");
         var tokenFileOption = new Option<string>("--token-file", () => "geni_token.json", description: "Path to save token");
-        var portOption = new Option<int>("--port", () => 5333, description: "Port for local OAuth callback");
         var verboseOption = new Option<bool?>("--verbose", description: "Enable verbose logging");
 
         authCommand.AddOption(appKeyOption);
-        authCommand.AddOption(appSecretOption);
         authCommand.AddOption(tokenFileOption);
-        authCommand.AddOption(portOption);
         authCommand.AddOption(verboseOption);
 
         authCommand.SetHandler(async context =>
         {
             var appKey = context.ParseResult.GetValueForOption(appKeyOption);
-            var appSecret = context.ParseResult.GetValueForOption(appSecretOption);
             var tokenFile = context.ParseResult.GetValueForOption(tokenFileOption)!;
-            var port = context.ParseResult.GetValueForOption(portOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption) ?? false;
 
-            context.ExitCode = await RunAuthAsync(appKey, appSecret, tokenFile, port, verbose, context.GetCancellationToken());
+            context.ExitCode = await RunAuthAsync(appKey, tokenFile, verbose, context.GetCancellationToken());
         });
 
         return authCommand;
@@ -347,9 +341,7 @@ class Program
 
     private static async Task<int> RunAuthAsync(
         string? appKey,
-        string? appSecret,
         string tokenFile,
-        int port,
         bool verbose,
         CancellationToken cancellationToken)
     {
@@ -366,17 +358,16 @@ class Program
         var logger = loggerFactory.CreateLogger("Auth");
 
         appKey ??= Environment.GetEnvironmentVariable("GENI_APP_KEY");
-        appSecret ??= Environment.GetEnvironmentVariable("GENI_APP_SECRET");
 
-        if (string.IsNullOrEmpty(appKey) || string.IsNullOrEmpty(appSecret))
+        if (string.IsNullOrEmpty(appKey))
         {
-            logger.LogError("App key and secret required. Use --app-key/--app-secret or set GENI_APP_KEY/GENI_APP_SECRET");
+            logger.LogError("App key required. Use --app-key or set GENI_APP_KEY environment variable");
             return 1;
         }
 
-        logger.LogInformation("=== Geni Authentication ===");
+        logger.LogInformation("=== Geni Authentication (Desktop OAuth) ===");
 
-        IGeniAuthClient authClient = new GeniAuthClient(appKey, appSecret, logger);
+        IGeniAuthClient authClient = new GeniAuthClient(appKey, logger);
 
         var existingToken = await authClient.LoadTokenAsync(tokenFile);
         if (existingToken != null && !existingToken.IsExpired)
@@ -387,7 +378,7 @@ class Program
             return 0;
         }
 
-        var token = await authClient.LoginInteractiveAsync(port, 120, cancellationToken);
+        var token = await authClient.LoginInteractiveAsync(cancellationToken);
 
         if (token == null)
         {

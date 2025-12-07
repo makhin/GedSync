@@ -17,13 +17,12 @@ public interface IGeniAuthClient
     Task<GeniAuthToken?> LoadTokenAsync(string tokenFile);
 
     /// <summary>
-    /// Performs an interactive login flow and returns the resulting token.
+    /// Performs an interactive login flow using Desktop OAuth (Implicit Grant) and returns the resulting token.
+    /// Opens browser for user to authorize, then prompts user to paste the redirect URL.
     /// </summary>
-    /// <param name="port">Local port for the callback listener.</param>
-    /// <param name="timeoutSeconds">Timeout in seconds for the login flow.</param>
     /// <param name="cancellationToken">Cancellation token to abort the process.</param>
     /// <returns>The authenticated token; otherwise, null when authentication fails.</returns>
-    Task<GeniAuthToken?> LoginInteractiveAsync(int port, int timeoutSeconds, CancellationToken cancellationToken);
+    Task<GeniAuthToken?> LoginInteractiveAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Saves a token to the specified file.

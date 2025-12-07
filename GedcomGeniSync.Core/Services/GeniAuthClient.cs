@@ -1,7 +1,4 @@
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using GedcomGeniSync.Services.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -11,21 +8,21 @@ namespace GedcomGeniSync.Services;
 public class GeniAuthClient : IGeniAuthClient
 {
     private readonly string _appKey;
-    private readonly string _appSecret;
     private readonly HttpClient _httpClient;
     private readonly ILogger? _logger;
+    private readonly Func<string?>? _readLineFunc;
 
-    public GeniAuthClient(string appKey, string appSecret, ILogger? logger = null)
-        : this(appKey, appSecret, new HttpClient { BaseAddress = new Uri("https://www.geni.com") }, logger)
+    public GeniAuthClient(string appKey, ILogger? logger = null)
+        : this(appKey, new HttpClient { BaseAddress = new Uri("https://www.geni.com") }, logger, null)
     {
     }
 
-    public GeniAuthClient(string appKey, string appSecret, HttpClient httpClient, ILogger? logger = null)
+    public GeniAuthClient(string appKey, HttpClient httpClient, ILogger? logger = null, Func<string?>? readLineFunc = null)
     {
         _appKey = appKey;
-        _appSecret = appSecret;
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger;
+        _readLineFunc = readLineFunc ?? Console.ReadLine;
 
         _httpClient.BaseAddress ??= new Uri("https://www.geni.com");
     }
@@ -67,86 +64,125 @@ public class GeniAuthClient : IGeniAuthClient
         await File.WriteAllTextAsync(tokenFile, json);
     }
 
-    public async Task<GeniAuthToken?> LoginInteractiveAsync(int port, int timeoutSeconds, CancellationToken cancellationToken)
+    public async Task<GeniAuthToken?> LoginInteractiveAsync(CancellationToken cancellationToken)
     {
-        var redirectUri = $"http://localhost:{port}/callback";
-        var authUrl =
-            $"https://www.geni.com/platform/oauth/authorize?client_id={_appKey}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code";
+        // Desktop OAuth flow according to https://www.geni.com/platform/developer/help/oauth_desktop?version=1
+        var authUrl = $"https://www.geni.com/platform/oauth/authorize?client_id={Uri.EscapeDataString(_appKey)}&response_type=token&display=desktop";
 
         _logger?.LogInformation("Opening browser for Geni authentication...");
+        _logger?.LogInformation("Please log in and authorize the application.");
+        _logger?.LogInformation("After authorization, you will be redirected to a success page.");
         OpenBrowser(authUrl);
 
-        using var listener = new HttpListener();
-        listener.Prefixes.Add(redirectUri.EndsWith('/') ? redirectUri : redirectUri + "/");
-        listener.Start();
+        _logger?.LogInformation("\nAfter authorization, copy the URL from your browser address bar and paste it here:");
+        _logger?.LogInformation("(The URL should start with https://www.geni.com/platform/oauth/auth_success#...)");
+        _logger?.LogInformation("\nPaste URL: ");
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-
+        string? url = null;
         try
         {
-            var context = await listener.GetContextAsync().WaitAsync(cts.Token);
-            var code = context.Request.QueryString["code"];
-
-            if (string.IsNullOrEmpty(code))
-            {
-                _logger?.LogError("Authorization code not found in callback");
-                await RespondAsync(context.Response, HttpStatusCode.BadRequest, "Authorization failed. You can close this tab.");
-                return null;
-            }
-
-            await RespondAsync(context.Response, HttpStatusCode.OK, "Authentication successful. You can close this tab.");
-            return await ExchangeCodeForTokenAsync(code, redirectUri, cancellationToken);
+            // Read URL from console with cancellation support
+            var readTask = Task.Run(() => _readLineFunc?.Invoke(), cancellationToken);
+            url = await readTask;
         }
         catch (OperationCanceledException)
         {
-            _logger?.LogError("Authentication timed out or was cancelled");
+            _logger?.LogError("Authentication was cancelled");
             return null;
         }
-        finally
+
+        if (string.IsNullOrWhiteSpace(url))
         {
-            listener.Stop();
+            _logger?.LogError("No URL provided");
+            return null;
+        }
+
+        return ParseTokenFromUrl(url);
+    }
+
+    internal GeniAuthToken? ParseTokenFromUrl(string url)
+    {
+        try
+        {
+            // Check if this is an error URL
+            if (url.Contains("/platform/oauth/auth_failed"))
+            {
+                var errorFragment = url.Split('#').LastOrDefault();
+                if (!string.IsNullOrEmpty(errorFragment))
+                {
+                    var errorParams = ParseQueryString(errorFragment);
+                    errorParams.TryGetValue("status", out var status);
+                    errorParams.TryGetValue("message", out var message);
+                    _logger?.LogError("Authorization failed: {Status} - {Message}", status, message);
+                }
+                else
+                {
+                    _logger?.LogError("Authorization failed");
+                }
+                return null;
+            }
+
+            // Parse success URL: https://www.geni.com/platform/oauth/auth_success#access_token=TOKEN&expires_in=SECONDS
+            if (!url.Contains("/platform/oauth/auth_success"))
+            {
+                _logger?.LogError("Invalid authorization URL. Expected URL starting with https://www.geni.com/platform/oauth/auth_success");
+                return null;
+            }
+
+            var fragment = url.Split('#').LastOrDefault();
+            if (string.IsNullOrEmpty(fragment))
+            {
+                _logger?.LogError("No access token found in URL fragment");
+                return null;
+            }
+
+            var parameters = ParseQueryString(fragment);
+            if (!parameters.TryGetValue("access_token", out var accessToken) || string.IsNullOrEmpty(accessToken))
+            {
+                _logger?.LogError("access_token not found in URL");
+                return null;
+            }
+
+            var expiresIn = 0;
+            if (parameters.TryGetValue("expires_in", out var expiresInStr) && int.TryParse(expiresInStr, out var parsed))
+            {
+                expiresIn = parsed;
+            }
+
+            _logger?.LogDebug("Successfully parsed access token from URL (expires in {ExpiresIn} seconds)", expiresIn);
+
+            return new GeniAuthToken
+            {
+                AccessToken = accessToken,
+                RefreshToken = null, // Desktop OAuth flow doesn't provide refresh tokens
+                ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(expiresIn, 0))
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to parse token from URL");
+            return null;
         }
     }
 
-    internal virtual async Task<GeniAuthToken?> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken cancellationToken)
+    private static Dictionary<string, string> ParseQueryString(string queryString)
     {
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["grant_type"] = "authorization_code",
-            ["client_id"] = _appKey,
-            ["client_secret"] = _appSecret,
-            ["code"] = code,
-            ["redirect_uri"] = redirectUri
-        });
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(queryString))
+            return result;
 
-        var response = await _httpClient.PostAsync("/platform/oauth/request_token", content, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        var pairs = queryString.Split('&');
+        foreach (var pair in pairs)
         {
-            _logger?.LogError("Token request failed: {StatusCode}", response.StatusCode);
-            return null;
+            var parts = pair.Split('=', 2);
+            if (parts.Length == 2)
+            {
+                var key = Uri.UnescapeDataString(parts[0]);
+                var value = Uri.UnescapeDataString(parts[1]);
+                result[key] = value;
+            }
         }
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var jsonDoc = JsonDocument.Parse(payload);
-        var root = jsonDoc.RootElement;
-
-        if (!root.TryGetProperty("access_token", out var accessTokenProperty))
-        {
-            _logger?.LogError("Token response missing access_token");
-            return null;
-        }
-
-        var accessToken = accessTokenProperty.GetString() ?? string.Empty;
-        var refreshToken = root.TryGetProperty("refresh_token", out var refresh) ? refresh.GetString() : null;
-        var expiresIn = root.TryGetProperty("expires_in", out var expires) ? expires.GetInt32() : 0;
-
-        return new GeniAuthToken
-        {
-            AccessToken = accessToken,
-            RefreshToken = refreshToken,
-            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(expiresIn, 0))
-        };
+        return result;
     }
 
     private static void OpenBrowser(string url)
@@ -164,15 +200,5 @@ public class GeniAuthClient : IGeniAuthClient
         {
             // Fallback for environments without default browser association
         }
-    }
-
-    private static async Task RespondAsync(HttpListenerResponse response, HttpStatusCode statusCode, string message)
-    {
-        var buffer = Encoding.UTF8.GetBytes(message);
-        response.StatusCode = (int)statusCode;
-        response.ContentType = "text/plain";
-        response.ContentLength64 = buffer.Length;
-        await response.OutputStream.WriteAsync(buffer);
-        response.OutputStream.Close();
     }
 }

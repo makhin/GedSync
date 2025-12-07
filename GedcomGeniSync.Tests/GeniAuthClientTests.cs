@@ -1,9 +1,9 @@
 using System;
-using System.Net;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using GedcomGeniSync.Services;
+using Microsoft.Extensions.Logging;
+using Moq;
 using Xunit;
 
 namespace GedcomGeniSync.Tests;
@@ -11,43 +11,126 @@ namespace GedcomGeniSync.Tests;
 public class GeniAuthClientTests
 {
     [Fact]
-    public async Task ExchangeCodeForTokenAsync_UsesUrlEncodedContent()
+    public void ParseTokenFromUrl_ValidSuccessUrl_ReturnsToken()
     {
-        var handler = new RecordingHttpMessageHandler();
-        var httpClient = new HttpClient(handler)
-        {
-            BaseAddress = new Uri("https://www.geni.com")
-        };
-        var client = new GeniAuthClient("app key", "secret/with+chars", httpClient);
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
 
-        var token = await client.ExchangeCodeForTokenAsync(
-            "abc+def/==",
-            "http://localhost:123/callback path",
-            CancellationToken.None);
+        var url = "https://www.geni.com/platform/oauth/auth_success#access_token=test_token_123&expires_in=3600";
+        var token = client.ParseTokenFromUrl(url);
 
         Assert.NotNull(token);
-        Assert.Equal("access", token!.AccessToken);
-
-        var payload = await handler.LastRequest!.Content!.ReadAsStringAsync();
-        Assert.Contains("grant_type=authorization_code", payload);
-        Assert.Contains("client_id=app+key", payload);
-        Assert.Contains("client_secret=secret%2Fwith%2Bchars", payload);
-        Assert.Contains("code=abc%2Bdef%2F%3D%3D", payload);
-        Assert.Contains("redirect_uri=http%3A%2F%2Flocalhost%3A123%2Fcallback+path", payload);
+        Assert.Equal("test_token_123", token!.AccessToken);
+        Assert.Null(token.RefreshToken); // Desktop OAuth doesn't provide refresh tokens
+        Assert.True(token.ExpiresAt > DateTimeOffset.UtcNow);
+        Assert.True(token.ExpiresAt <= DateTimeOffset.UtcNow.AddSeconds(3610)); // ~1 hour with margin
     }
 
-    private class RecordingHttpMessageHandler : HttpMessageHandler
+    [Fact]
+    public void ParseTokenFromUrl_UrlWithoutExpiresIn_ReturnsTokenWithZeroExpiry()
     {
-        public HttpRequestMessage? LastRequest { get; private set; }
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            LastRequest = request;
+        var url = "https://www.geni.com/platform/oauth/auth_success#access_token=test_token_456";
+        var token = client.ParseTokenFromUrl(url);
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"access_token\":\"access\",\"expires_in\":60}")
-            });
-        }
+        Assert.NotNull(token);
+        Assert.Equal("test_token_456", token!.AccessToken);
+    }
+
+    [Fact]
+    public void ParseTokenFromUrl_ErrorUrl_ReturnsNull()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
+
+        var url = "https://www.geni.com/platform/oauth/auth_failed#status=unauthorized&message=user+canceled";
+        var token = client.ParseTokenFromUrl(url);
+
+        Assert.Null(token);
+    }
+
+    [Fact]
+    public void ParseTokenFromUrl_InvalidUrl_ReturnsNull()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
+
+        var url = "https://example.com/some/random/url";
+        var token = client.ParseTokenFromUrl(url);
+
+        Assert.Null(token);
+    }
+
+    [Fact]
+    public void ParseTokenFromUrl_NoFragment_ReturnsNull()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
+
+        var url = "https://www.geni.com/platform/oauth/auth_success";
+        var token = client.ParseTokenFromUrl(url);
+
+        Assert.Null(token);
+    }
+
+    [Fact]
+    public void ParseTokenFromUrl_NoAccessToken_ReturnsNull()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
+
+        var url = "https://www.geni.com/platform/oauth/auth_success#expires_in=3600";
+        var token = client.ParseTokenFromUrl(url);
+
+        Assert.Null(token);
+    }
+
+    [Fact]
+    public async Task LoginInteractiveAsync_WithValidUrl_ReturnsToken()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var successUrl = "https://www.geni.com/platform/oauth/auth_success#access_token=interactive_token&expires_in=3600";
+
+        // Mock Console.ReadLine to return our test URL
+        Func<string?> readLineFunc = () => successUrl;
+
+        var client = new GeniAuthClient("test_app_key", new System.Net.Http.HttpClient(), mockLogger.Object, readLineFunc);
+
+        var token = await client.LoginInteractiveAsync(CancellationToken.None);
+
+        Assert.NotNull(token);
+        Assert.Equal("interactive_token", token!.AccessToken);
+    }
+
+    [Fact]
+    public async Task LoginInteractiveAsync_WithEmptyInput_ReturnsNull()
+    {
+        var mockLogger = new Mock<ILogger>();
+
+        // Mock Console.ReadLine to return empty string
+        Func<string?> readLineFunc = () => "";
+
+        var client = new GeniAuthClient("test_app_key", new System.Net.Http.HttpClient(), mockLogger.Object, readLineFunc);
+
+        var token = await client.LoginInteractiveAsync(CancellationToken.None);
+
+        Assert.Null(token);
+    }
+
+    [Fact]
+    public async Task LoginInteractiveAsync_WithErrorUrl_ReturnsNull()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var errorUrl = "https://www.geni.com/platform/oauth/auth_failed#status=unauthorized&message=user+denied";
+
+        Func<string?> readLineFunc = () => errorUrl;
+
+        var client = new GeniAuthClient("test_app_key", new System.Net.Http.HttpClient(), mockLogger.Object, readLineFunc);
+
+        var token = await client.LoginInteractiveAsync(CancellationToken.None);
+
+        Assert.Null(token);
     }
 }
