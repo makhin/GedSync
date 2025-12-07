@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Text;
@@ -15,14 +16,18 @@ public class GeniAuthClient : IGeniAuthClient
     private readonly ILogger? _logger;
 
     public GeniAuthClient(string appKey, string appSecret, ILogger? logger = null)
+        : this(appKey, appSecret, new HttpClient { BaseAddress = new Uri("https://www.geni.com") }, logger)
+    {
+    }
+
+    public GeniAuthClient(string appKey, string appSecret, HttpClient httpClient, ILogger? logger = null)
     {
         _appKey = appKey;
         _appSecret = appSecret;
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger;
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri("https://www.geni.com")
-        };
+
+        _httpClient.BaseAddress ??= new Uri("https://www.geni.com");
     }
 
     public Task<GeniAuthToken?> LoadTokenAsync(string tokenFile)
@@ -104,12 +109,16 @@ public class GeniAuthClient : IGeniAuthClient
         }
     }
 
-    private async Task<GeniAuthToken?> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken cancellationToken)
+    internal virtual async Task<GeniAuthToken?> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken cancellationToken)
     {
-        var content = new StringContent(
-            $"grant_type=authorization_code&client_id={_appKey}&client_secret={_appSecret}&code={code}&redirect_uri={Uri.EscapeDataString(redirectUri)}",
-            Encoding.UTF8,
-            "application/x-www-form-urlencoded");
+        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["client_id"] = _appKey,
+            ["client_secret"] = _appSecret,
+            ["code"] = code,
+            ["redirect_uri"] = redirectUri
+        });
 
         var response = await _httpClient.PostAsync("/platform/oauth/request_token", content, cancellationToken);
         if (!response.IsSuccessStatusCode)
