@@ -6,15 +6,16 @@ using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 using Patagames.GedcomNetSdk;
 using Patagames.GedcomNetSdk.Records;
+using Patagames.GedcomNetSdk.Records.Ver551;
 using Patagames.GedcomNetSdk.Structures;
+using Patagames.GedcomNetSdk.Structures.Ver551;
 using Patagames.GedcomNetSdk.Dates;
-using Patagames.GedcomNetSdk.Primitives;
 
 namespace GedcomGeniSync.Services;
 
 /// <summary>
-/// Loads GEDCOM files and converts to PersonRecord models
-/// Uses Gedcom.Net.SDK library for parsing GEDCOM 5.5, 5.5.1, 5.5.5 and 7.0
+/// Loads GEDCOM 5.5.1 files and converts to PersonRecord models
+/// Uses Gedcom.Net.SDK library for parsing
 /// </summary>
 [ExcludeFromCodeCoverage]
 public class GedcomLoader : IGedcomLoader
@@ -55,21 +56,21 @@ public class GedcomLoader : IGedcomLoader
         transmission.Deserialize(parser);
 
         // Extract individuals and families from records
-        var individuals = new List<IndividualRecord>();
-        var families = new List<FamilyRecord>();
-        var multimedia = new Dictionary<string, MultimediaRecord>();
+        var individuals = new List<Individual>();
+        var families = new List<Family>();
+        var multimedia = new Dictionary<string, Multimedia>();
 
         foreach (var record in transmission.Records)
         {
-            if (record is IndividualRecord individual)
+            if (record is Individual individual)
             {
                 individuals.Add(individual);
             }
-            else if (record is FamilyRecord family)
+            else if (record is Family family)
             {
                 families.Add(family);
             }
-            else if (record is MultimediaRecord media)
+            else if (record is Multimedia media)
             {
                 multimedia[media.MultimediaId] = media;
             }
@@ -85,7 +86,7 @@ public class GedcomLoader : IGedcomLoader
             result.Persons[person.Id] = person;
 
             // Build RIN mapping for ID resolution
-            var rin = GetAutomatedRecordId(individual);
+            var rin = individual.AutomatedRecordId;
             if (!string.IsNullOrEmpty(rin))
             {
                 // Extract just the ID part after the colon (e.g., "MH:I500002" -> "I500002")
@@ -118,7 +119,7 @@ public class GedcomLoader : IGedcomLoader
         return result;
     }
 
-    private PersonRecord ConvertIndividual(IndividualRecord individual, Dictionary<string, MultimediaRecord> multimedia)
+    private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia)
     {
         string? firstName = null;
         string? lastName = null;
@@ -130,15 +131,22 @@ public class GedcomLoader : IGedcomLoader
         // Names - use the Name collection from IndividualRecord
         var names = individual.Name;
         var primaryName = names?.FirstOrDefault();
-        if (primaryName != null)
+        if (primaryName is PersonalName pn)
         {
             // Try to extract name pieces
-            ExtractNamePieces(primaryName, out firstName, out lastName, out nickname, out suffix, out _);
+            var pieces = pn.PersonalNamePieces;
+            if (pieces != null)
+            {
+                firstName = CleanName(pieces.GivenName);
+                lastName = CleanName(pieces.Surname);
+                nickname = CleanName(pieces.Nickname);
+                suffix = CleanName(pieces.NameSuffix);
+            }
 
             // If no pieces available, fall back to parsing the full name string
             if (string.IsNullOrEmpty(firstName) && string.IsNullOrEmpty(lastName))
             {
-                ParseFullName(primaryName.Name, out firstName, out lastName);
+                ParseFullName(pn.Name, out firstName, out lastName);
             }
         }
 
@@ -147,20 +155,25 @@ public class GedcomLoader : IGedcomLoader
         {
             foreach (var name in names)
             {
-                string? givenName = null, surname = null, nick = null, suff = null, surnamePrefix = null;
-                ExtractNamePieces(name, out givenName, out surname, out nick, out suff, out surnamePrefix);
+                if (name is not PersonalName personalName)
+                    continue;
 
-                var nameType = GetNameType(name);
+                var pieces = personalName.PersonalNamePieces;
+                var nameType = personalName.Type?.ToUpperInvariant();
 
                 // Store name variants for fuzzy matching
-                if (!string.IsNullOrEmpty(givenName))
-                    nameVariantsBuilder.Add(givenName);
-                if (!string.IsNullOrEmpty(surname))
-                    nameVariantsBuilder.Add(surname);
+                if (pieces != null)
+                {
+                    if (!string.IsNullOrEmpty(pieces.GivenName))
+                        nameVariantsBuilder.Add(pieces.GivenName);
+                    if (!string.IsNullOrEmpty(pieces.Surname))
+                        nameVariantsBuilder.Add(pieces.Surname);
+                }
 
                 // Look for maiden name from TYPE=MAIDEN or TYPE=BIRTH
                 if (nameType == "MAIDEN" || nameType == "BIRTH")
                 {
+                    var surname = pieces != null ? CleanName(pieces.Surname) : null;
                     if (!string.IsNullOrEmpty(surname))
                     {
                         maidenName = surname;
@@ -171,6 +184,7 @@ public class GedcomLoader : IGedcomLoader
                 // If TYPE=MARRIED, update the current last name to married name
                 else if (nameType == "MARRIED")
                 {
+                    var surname = pieces != null ? CleanName(pieces.Surname) : null;
                     if (!string.IsNullOrEmpty(surname))
                     {
                         lastName = surname;
@@ -182,14 +196,18 @@ public class GedcomLoader : IGedcomLoader
         }
 
         // Fallback: if no maiden name found via TYPE, try SurnamePrefix
-        if (string.IsNullOrEmpty(maidenName) && primaryName != null)
+        if (string.IsNullOrEmpty(maidenName) && primaryName is PersonalName pnFallback)
         {
-            ExtractNamePieces(primaryName, out _, out _, out _, out _, out var surnamePrefix);
-            if (!string.IsNullOrEmpty(surnamePrefix))
+            var pieces = pnFallback.PersonalNamePieces;
+            if (pieces != null)
             {
-                maidenName = surnamePrefix;
-                _logger.LogDebug("Using SurnamePrefix '{SurnamePrefix}' as fallback maiden name for {Id}",
-                    maidenName, individual.IndividualId);
+                var surnamePrefix = CleanName(pieces.SurnamePrefix);
+                if (!string.IsNullOrEmpty(surnamePrefix))
+                {
+                    maidenName = surnamePrefix;
+                    _logger.LogDebug("Using SurnamePrefix '{SurnamePrefix}' as fallback maiden name for {Id}",
+                        maidenName, individual.IndividualId);
+                }
             }
         }
 
@@ -210,31 +228,28 @@ public class GedcomLoader : IGedcomLoader
         string? burialPlace = null;
         bool? isLiving = null;
 
-        // Get events from version-specific Individual classes
-        var events = GetIndividualEvents(individual);
-        if (events != null)
+        if (individual.Events != null)
         {
-            foreach (var evt in events)
+            foreach (var evt in individual.Events)
             {
-                var eventType = GetEventType(evt);
-                var (date, place) = GetEventDateAndPlace(evt);
+                var eventType = evt.GetType().Name;
 
                 switch (eventType)
                 {
-                    case "BIRT":
-                        birthDate = ConvertDate(date);
-                        birthPlace = place;
+                    case "EvtBirth":
+                        birthDate = ConvertDate(evt.Date);
+                        birthPlace = evt.Place?.Name;
                         break;
 
-                    case "DEAT":
-                        deathDate = ConvertDate(date);
-                        deathPlace = place;
+                    case "EvtDeath":
+                        deathDate = ConvertDate(evt.Date);
+                        deathPlace = evt.Place?.Name;
                         isLiving = false;
                         break;
 
-                    case "BURI":
-                        burialDate = ConvertDate(date);
-                        burialPlace = place;
+                    case "EvtBurial":
+                        burialDate = ConvertDate(evt.Date);
+                        burialPlace = evt.Place?.Name;
                         break;
                 }
             }
@@ -243,7 +258,6 @@ public class GedcomLoader : IGedcomLoader
         // Check if marked as living
         if (!isLiving.HasValue)
         {
-            // If no death date and birth year suggests they could be alive
             var birthYear = birthDate?.Year;
             if (birthYear.HasValue && birthYear > System.DateTime.Now.Year - 120)
             {
@@ -251,7 +265,7 @@ public class GedcomLoader : IGedcomLoader
             }
         }
 
-        // Family links (raw IDs, will be resolved later)
+        // Family links
         var childOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
         var spouseOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
 
@@ -283,13 +297,15 @@ public class GedcomLoader : IGedcomLoader
         {
             foreach (var multimediaLink in individual.MultimediaLinks)
             {
-                var mediaId = GetMultimediaLinkId(multimediaLink);
-                if (!string.IsNullOrEmpty(mediaId) && multimedia.TryGetValue(mediaId, out var mediaRecord))
+                if (multimediaLink is MultimediaLink ml && !string.IsNullOrEmpty(ml.MultimediaId))
                 {
-                    var photoUrl = ExtractPhotoUrl(mediaRecord);
-                    if (!string.IsNullOrEmpty(photoUrl))
+                    if (multimedia.TryGetValue(ml.MultimediaId, out var mediaRecord))
                     {
-                        photoUrlsBuilder.Add(photoUrl);
+                        var photoUrl = ExtractPhotoUrl(mediaRecord);
+                        if (!string.IsNullOrEmpty(photoUrl))
+                        {
+                            photoUrlsBuilder.Add(photoUrl);
+                        }
                     }
                 }
             }
@@ -321,105 +337,27 @@ public class GedcomLoader : IGedcomLoader
         };
     }
 
-    private static void ExtractNamePieces(PersonalNameStructure name, out string? givenName, out string? surname,
-        out string? nickname, out string? suffix, out string? surnamePrefix)
+    private static string? ExtractPhotoUrl(Multimedia multimedia)
     {
-        givenName = null;
-        surname = null;
-        nickname = null;
-        suffix = null;
-        surnamePrefix = null;
-
-        // Try to get NamePieces from the name structure
-        var namePieces = name.NamePieces;
-        if (namePieces == null)
-            return;
-
-        // Access version-specific PersonalNamePieces properties
-        switch (namePieces)
-        {
-            case Patagames.GedcomNetSdk.Structures.Ver70.PersonalNamePieces p70:
-                // Ver70 uses GedcomCollection<string> for name parts
-                givenName = CleanName(p70.GivenName?.FirstOrDefault());
-                surname = CleanName(p70.Surname?.FirstOrDefault());
-                nickname = CleanName(p70.Nickname?.FirstOrDefault());
-                suffix = CleanName(p70.NameSuffix?.FirstOrDefault());
-                surnamePrefix = CleanName(p70.SurnamePrefix?.FirstOrDefault());
-                break;
-            case Patagames.GedcomNetSdk.Structures.Ver555.PersonalNamePieces p555:
-                givenName = CleanName(p555.GivenName);
-                surname = CleanName(p555.Surname);
-                nickname = CleanName(p555.Nickname);
-                suffix = CleanName(p555.NameSuffix);
-                surnamePrefix = CleanName(p555.SurnamePrefix);
-                break;
-            case Patagames.GedcomNetSdk.Structures.Ver551.PersonalNamePieces p551:
-                givenName = CleanName(p551.GivenName);
-                surname = CleanName(p551.Surname);
-                nickname = CleanName(p551.Nickname);
-                suffix = CleanName(p551.NameSuffix);
-                surnamePrefix = CleanName(p551.SurnamePrefix);
-                break;
-            case Patagames.GedcomNetSdk.Structures.Ver55.PersonalNamePieces p55:
-                givenName = CleanName(p55.GivenName);
-                surname = CleanName(p55.Surname);
-                nickname = CleanName(p55.Nickname);
-                suffix = CleanName(p55.NameSuffix);
-                surnamePrefix = CleanName(p55.SurnamePrefix);
-                break;
-        }
-    }
-
-    private string? ExtractPhotoUrl(MultimediaRecord multimedia)
-    {
-        if (multimedia == null)
+        if (multimedia?.Files == null)
             return null;
 
-        // Try to get file reference from version-specific multimedia records
-        switch (multimedia)
+        var file = multimedia.Files.FirstOrDefault();
+        if (file != null && !string.IsNullOrWhiteSpace(file.File))
         {
-            case Patagames.GedcomNetSdk.Records.Ver70.Multimedia m70:
-                if (m70.Files != null)
-                {
-                    var file = m70.Files.FirstOrDefault();
-                    if (file != null && !string.IsNullOrWhiteSpace(file.File))
-                        return file.File.Trim();
-                }
-                break;
-
-            case Patagames.GedcomNetSdk.Records.Ver555.Multimedia m555:
-                if (m555.File != null && !string.IsNullOrWhiteSpace(m555.File.File))
-                    return m555.File.File.Trim();
-                break;
-
-            case Patagames.GedcomNetSdk.Records.Ver551.Multimedia m551:
-                if (m551.Files != null)
-                {
-                    var file = m551.Files.FirstOrDefault();
-                    if (file != null && !string.IsNullOrWhiteSpace(file.File))
-                        return file.File.Trim();
-                }
-                break;
-
-            case Patagames.GedcomNetSdk.Records.Ver55.Multimedia m55:
-                // Ver55 uses inline Blob, not external files
-                // Title might contain a reference
-                if (!string.IsNullOrWhiteSpace(m55.Title))
-                    return m55.Title.Trim();
-                break;
+            return file.File.Trim();
         }
 
         return null;
     }
 
-    private void ProcessFamily(FamilyRecord family, Dictionary<string, PersonRecord> persons)
+    private void ProcessFamily(Family family, Dictionary<string, PersonRecord> persons)
     {
         var husbandId = family.HusbandId;
         var wifeId = family.WifeId;
-        var childIds = GetFamilyChildren(family)
+        var childIds = family.Children?
             .Where(id => !string.IsNullOrEmpty(id))
-            .Select(id => id!)
-            .ToList();
+            .ToList() ?? new List<string>();
 
         // Link children to parents
         foreach (var childId in childIds)
@@ -532,7 +470,6 @@ public class GedcomLoader : IGedcomLoader
         int? day = null;
         string? originalText = null;
 
-        // Extract date components based on date type
         if (gedcomDate is DateExact exactDate)
         {
             year = exactDate.Year;
@@ -746,121 +683,4 @@ public class GedcomLoader : IGedcomLoader
 
         return relatives.Distinct();
     }
-
-    #region Helper methods for accessing version-specific properties
-
-    private static string? GetNameType(PersonalNameStructure name)
-    {
-        // Get Type from version-specific PersonalName classes
-        // Ver70 uses NameType enum, Ver551/Ver555 use string
-        return name switch
-        {
-            Patagames.GedcomNetSdk.Structures.Ver70.PersonalName n70 => n70.Type?.ToString()?.ToUpperInvariant(),
-            Patagames.GedcomNetSdk.Structures.Ver555.PersonalName n555 => n555.Type?.ToUpperInvariant(),
-            Patagames.GedcomNetSdk.Structures.Ver551.PersonalName n551 => n551.Type?.ToUpperInvariant(),
-            _ => null
-        };
-    }
-
-    private static string? GetAutomatedRecordId(IndividualRecord individual)
-    {
-        // Ver70 uses Identifiers collection instead of AutomatedRecordId
-        return individual switch
-        {
-            Patagames.GedcomNetSdk.Records.Ver70.Individual i70 => i70.Identifiers?.FirstOrDefault()?.Id,
-            Patagames.GedcomNetSdk.Records.Ver555.Individual i555 => i555.AutomatedRecordId,
-            Patagames.GedcomNetSdk.Records.Ver551.Individual i551 => i551.AutomatedRecordId,
-            Patagames.GedcomNetSdk.Records.Ver55.Individual i55 => i55.AutomatedRecordId,
-            _ => null
-        };
-    }
-
-    private static IEnumerable<object>? GetIndividualEvents(IndividualRecord individual)
-    {
-        return individual switch
-        {
-            Patagames.GedcomNetSdk.Records.Ver70.Individual i70 => i70.Events?.Cast<object>(),
-            Patagames.GedcomNetSdk.Records.Ver555.Individual i555 => i555.Events?.Cast<object>(),
-            Patagames.GedcomNetSdk.Records.Ver551.Individual i551 => i551.Events?.Cast<object>(),
-            Patagames.GedcomNetSdk.Records.Ver55.Individual i55 => i55.Events?.Cast<object>(),
-            _ => null
-        };
-    }
-
-    private static string? GetEventType(object evt)
-    {
-        var typeName = evt.GetType().Name;
-
-        return typeName switch
-        {
-            "EvtBirth" => "BIRT",
-            "EvtDeath" => "DEAT",
-            "EvtBurial" => "BURI",
-            "EvtChristening" => "CHR",
-            "EvtBaptism" => "BAPM",
-            "EvtAdoption" => "ADOP",
-            "EvtCremation" => "CREM",
-            "EvtEmigration" => "EMIG",
-            "EvtImmigration" => "IMMI",
-            "EvtNaturalization" => "NATU",
-            "EvtCensusIndividual" => "CENS",
-            "EvtGraduation" => "GRAD",
-            "EvtRetirement" => "RETI",
-            "EvtProbate" => "PROB",
-            "EvtWill" => "WILL",
-            _ => null
-        };
-    }
-
-    private static (DateBase? date, string? place) GetEventDateAndPlace(object evt)
-    {
-        // Events inherit from EventDetailStructure which has Date and Place
-        if (evt is EventDetailStructure eventDetail)
-        {
-            var place = eventDetail.Place?.Name;
-            return (eventDetail.Date, place);
-        }
-
-        // Fallback: use reflection
-        var type = evt.GetType();
-        var dateProp = type.GetProperty("Date");
-        var placeProp = type.GetProperty("Place");
-
-        var date = dateProp?.GetValue(evt) as DateBase;
-        var placeObj = placeProp?.GetValue(evt);
-        var place2 = placeObj is PlaceStructure ps ? ps.Name : null;
-
-        return (date, place2);
-    }
-
-    private static IEnumerable<string> GetFamilyChildren(FamilyRecord family)
-    {
-        return family switch
-        {
-            Patagames.GedcomNetSdk.Records.Ver70.Family f70 =>
-                f70.Children?.Select(c => c.Child) ?? Enumerable.Empty<string>(),
-            Patagames.GedcomNetSdk.Records.Ver555.Family f555 =>
-                f555.Children ?? Enumerable.Empty<string>(),
-            Patagames.GedcomNetSdk.Records.Ver551.Family f551 =>
-                f551.Children ?? Enumerable.Empty<string>(),
-            Patagames.GedcomNetSdk.Records.Ver55.Family f55 =>
-                f55.Children ?? Enumerable.Empty<string>(),
-            _ => Enumerable.Empty<string>()
-        };
-    }
-
-    private static string? GetMultimediaLinkId(MultimediaLinkStructure link)
-    {
-        // Get MultimediaId from version-specific MultimediaLink classes
-        return link switch
-        {
-            Patagames.GedcomNetSdk.Structures.Ver70.MultimediaLink ml70 => ml70.MultimediaId,
-            Patagames.GedcomNetSdk.Structures.Ver555.MultimediaLink ml555 => ml555.MultimediaId,
-            Patagames.GedcomNetSdk.Structures.Ver551.MultimediaLink ml551 => ml551.MultimediaId,
-            Patagames.GedcomNetSdk.Structures.Ver55.MultimediaLink ml55 => ml55.MultimediaId,
-            _ => null
-        };
-    }
-
-    #endregion
 }
