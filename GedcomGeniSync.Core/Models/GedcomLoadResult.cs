@@ -81,6 +81,21 @@ public static class GedcomLoadResultExtensions
     }
 
     /// <summary>
+    /// Get all parents of a person.
+    /// </summary>
+    public static IEnumerable<PersonRecord> GetParents(this GedcomLoadResult result, PersonRecord person)
+    {
+        var father = result.GetFather(person);
+        var mother = result.GetMother(person);
+
+        if (father != null)
+            yield return father;
+
+        if (mother != null)
+            yield return mother;
+    }
+
+    /// <summary>
     /// Get all spouses of a person.
     /// </summary>
     public static IEnumerable<PersonRecord> GetSpouses(this GedcomLoadResult result, PersonRecord person)
@@ -127,6 +142,48 @@ public static class GedcomLoadResultExtensions
             {
                 if (child.Id != person.Id)
                     yield return child;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Traverse the family graph using breadth-first search starting from the given anchor.
+    /// </summary>
+    /// <param name="result">The loaded GEDCOM data.</param>
+    /// <param name="anchorId">Starting person ID.</param>
+    /// <param name="maxDepth">Maximum depth to explore (0 = just anchor).</param>
+    /// <returns>Sequence of persons visited in BFS order.</returns>
+    public static IEnumerable<PersonRecord> TraverseBfs(this GedcomLoadResult result, string anchorId, int maxDepth = 3)
+    {
+        if (!result.Persons.TryGetValue(anchorId, out var anchor))
+            yield break;
+
+        var visited = new HashSet<string>();
+        var queue = new Queue<(PersonRecord person, int depth)>();
+
+        queue.Enqueue((anchor, 0));
+        visited.Add(anchor.Id);
+
+        while (queue.Count > 0)
+        {
+            var (person, depth) = queue.Dequeue();
+            yield return person;
+
+            if (depth >= maxDepth)
+                continue;
+
+            IEnumerable<PersonRecord> neighbors =
+                result.GetParents(person)
+                    .Concat(result.GetSpouses(person))
+                    .Concat(result.GetChildren(person))
+                    .Concat(result.GetSiblings(person));
+
+            foreach (var neighbor in neighbors)
+            {
+                if (visited.Add(neighbor.Id))
+                {
+                    queue.Enqueue((neighbor, depth + 1));
+                }
             }
         }
     }
