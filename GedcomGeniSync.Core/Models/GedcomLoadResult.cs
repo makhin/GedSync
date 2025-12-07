@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using PersonRecord = GedcomGeniSync.Models.PersonRecord;
-using GedcomFamilyRecord = GeneGenie.Gedcom.GedcomFamilyRecord;
+using GedcomFamilyRecord = Patagames.GedcomNetSdk.Records.FamilyRecord;
 using Gender = GedcomGeniSync.Models.Gender;
 using Microsoft.Extensions.Logging;
 
