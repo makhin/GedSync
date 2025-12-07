@@ -64,11 +64,38 @@ public class SyncService : ISyncService
         _statistics.GedcomPersonsTotal = gedcomData.TotalPersons;
         _statistics.GedcomFamiliesTotal = gedcomData.TotalFamilies;
 
+        // Normalize anchor ID (remove @ symbols and quotes if present)
+        var normalizedAnchorId = anchorGedcomId.Trim('@', '\'', '"');
+
         // Verify anchor exists in GEDCOM
-        var anchorPerson = gedcomData.Persons.GetValueOrDefault(anchorGedcomId);
+        // First try direct lookup
+        var anchorPerson = gedcomData.Persons.GetValueOrDefault(normalizedAnchorId);
+
+        // If not found, try RIN mapping
+        if (anchorPerson == null && gedcomData.RinToXRefMapping.TryGetValue(normalizedAnchorId, out var xrefId))
+        {
+            anchorPerson = gedcomData.Persons.GetValueOrDefault(xrefId);
+            if (anchorPerson != null)
+            {
+                _logger.LogInformation("Resolved anchor ID '{Input}' via RIN mapping to '{XRef}'",
+                    anchorGedcomId, xrefId);
+            }
+        }
+
         if (anchorPerson == null)
         {
-            throw new ArgumentException($"Anchor person {anchorGedcomId} not found in GEDCOM file");
+            // Debug: list available IDs to help user
+            var availableIds = gedcomData.Persons.Keys
+                .Where(k => k.Contains("500002", StringComparison.OrdinalIgnoreCase))
+                .Take(5)
+                .ToList();
+
+            var debugInfo = availableIds.Any()
+                ? $"Similar IDs found: {string.Join(", ", availableIds)}"
+                : $"First 5 IDs in GEDCOM: {string.Join(", ", gedcomData.Persons.Keys.Take(5))}";
+
+            throw new ArgumentException(
+                $"Anchor person '{anchorGedcomId}' (normalized: '{normalizedAnchorId}') not found in GEDCOM file. {debugInfo}");
         }
 
         // Verify anchor exists in Geni

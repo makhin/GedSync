@@ -17,7 +17,7 @@ public partial class GeniApiClient
     {
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/photos?access_token={_accessToken}";
+        var url = $"{BaseUrl}/profile-{profileId}/photos";
         _logger.LogDebug("GET {Url}", url);
 
         try
@@ -52,7 +52,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-photo?access_token={_accessToken}";
+        var url = $"{BaseUrl}/profile-{profileId}/add-photo";
         _logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
@@ -99,7 +99,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-photo?access_token={_accessToken}";
+        var url = $"{BaseUrl}/profile-{profileId}/add-photo";
         _logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
@@ -146,7 +146,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-mugshot?access_token={_accessToken}";
+        var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
         _logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
@@ -184,7 +184,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-mugshot?access_token={_accessToken}";
+        var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
         _logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
@@ -220,7 +220,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/photo-{photoId}/update?access_token={_accessToken}";
+        var url = $"{BaseUrl}/photo-{photoId}/update";
         _logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
@@ -254,7 +254,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/photo-{photoId}/update?access_token={_accessToken}";
+        var url = $"{BaseUrl}/photo-{photoId}/update";
         _logger.LogDebug("POST {Url}", url);
 
         var values = new Dictionary<string, string>();
@@ -294,7 +294,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/photo-{photoId}/delete?access_token={_accessToken}";
+        var url = $"{BaseUrl}/photo-{photoId}/delete";
         _logger.LogDebug("POST {Url}", url);
 
         try
@@ -323,7 +323,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/photo-{photoId}/tag?access_token={_accessToken}";
+        var url = $"{BaseUrl}/photo-{photoId}/tag";
         _logger.LogDebug("POST {Url}", url);
 
         var values = new Dictionary<string, string>
@@ -367,7 +367,7 @@ public partial class GeniApiClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/photo-{photoId}/untag?access_token={_accessToken}";
+        var url = $"{BaseUrl}/photo-{photoId}/untag";
         _logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
@@ -395,7 +395,7 @@ public partial class GeniApiClient
     {
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/photo-{photoId}/tags?access_token={_accessToken}";
+        var url = $"{BaseUrl}/photo-{photoId}/tags";
         _logger.LogDebug("GET {Url}", url);
 
         try

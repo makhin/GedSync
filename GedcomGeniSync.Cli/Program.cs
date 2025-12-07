@@ -35,10 +35,13 @@ class Program
             context.ExitCode = 0;
         });
 
+        var profileCommand = BuildProfileCommand();
+
         rootCommand.AddCommand(syncCommand);
         rootCommand.AddCommand(analyzeCommand);
         rootCommand.AddCommand(authCommand);
         rootCommand.AddCommand(testMatchCommand);
+        rootCommand.AddCommand(profileCommand);
 
         return await rootCommand.InvokeAsync(args);
     }
@@ -301,12 +304,33 @@ class Program
                     logger.LogInformation("{Id}: {Name}", person.Id, person);
                 }
 
+                logger.LogInformation("\n=== RIN Mapping Count ===");
+                logger.LogInformation("Total RIN mappings: {Count}", result.RinToXRefMapping.Count);
+                if (result.RinToXRefMapping.ContainsKey("I500002"))
+                {
+                    logger.LogInformation("I500002 maps to: {XRef}", result.RinToXRefMapping["I500002"]);
+                }
+                else
+                {
+                    logger.LogInformation("I500002 NOT found in RIN mapping");
+                    logger.LogInformation("Sample RIN mappings: {Samples}",
+                        string.Join(", ", result.RinToXRefMapping.Take(5).Select(kvp => $"{kvp.Key}->{kvp.Value}")));
+                }
+
                 if (!string.IsNullOrEmpty(anchor))
                 {
+                    // Resolve anchor ID via RIN mapping if needed
+                    var resolvedAnchor = anchor;
+                    if (result.RinToXRefMapping.TryGetValue(anchor, out var xrefId))
+                    {
+                        resolvedAnchor = xrefId;
+                        logger.LogInformation("Resolved anchor '{Input}' to '{XRef}' via RIN", anchor, xrefId);
+                    }
+
                     logger.LogInformation("\n=== BFS from {Anchor} ===", anchor);
 
                     var count = 0;
-                    foreach (var person in result.TraverseBfs(anchor, maxDepth: 3))
+                    foreach (var person in result.TraverseBfs(resolvedAnchor, maxDepth: 3))
                     {
                         var relations = new List<string>();
                         if (!string.IsNullOrEmpty(person.FatherId)) relations.Add($"father:{person.FatherId}");
@@ -337,6 +361,87 @@ class Program
         });
 
         return analyzeCommand;
+    }
+
+    private static Command BuildProfileCommand()
+    {
+        var profileCommand = new Command("profile", "Get current user's Geni profile information");
+
+        var tokenOption = new Option<string?>("--token", description: "Geni API access token (or set GENI_ACCESS_TOKEN env var)");
+        var tokenFileOption = new Option<string>("--token-file", () => "geni_token.json", description: "Path to saved token file from auth command");
+        var verboseOption = new Option<bool?>("--verbose", description: "Enable verbose logging");
+
+        profileCommand.AddOption(tokenOption);
+        profileCommand.AddOption(tokenFileOption);
+        profileCommand.AddOption(verboseOption);
+
+        profileCommand.SetHandler(async context =>
+        {
+            var token = context.ParseResult.GetValueForOption(tokenOption);
+            var tokenFile = context.ParseResult.GetValueForOption(tokenFileOption)!;
+            var verbose = context.ParseResult.GetValueForOption(verboseOption) ?? false;
+
+            await using var provider = BuildServiceProvider(verbose, services =>
+            {
+                services.AddSingleton<IGeniApiClient>(sp =>
+                {
+                    var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
+
+                    if (string.IsNullOrWhiteSpace(resolvedToken))
+                    {
+                        var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile).Result;
+                        if (storedToken != null && !storedToken.IsExpired)
+                        {
+                            resolvedToken = storedToken.AccessToken;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(resolvedToken))
+                    {
+                        throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
+                    }
+
+                    return new GeniApiClient(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        resolvedToken,
+                        dryRun: false,
+                        sp.GetRequiredService<ILogger<GeniApiClient>>());
+                });
+            });
+
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Profile");
+
+            try
+            {
+                var geniClient = provider.GetRequiredService<IGeniApiClient>();
+                var profile = await geniClient.GetCurrentUserProfileAsync();
+
+                if (profile == null)
+                {
+                    logger.LogError("Failed to get profile");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                logger.LogInformation("");
+                logger.LogInformation("=== Your Geni Profile ===");
+                logger.LogInformation("Name: {Name}", profile.FirstName + " " + profile.LastName);
+                logger.LogInformation("Numeric ID: {Id}", profile.Id.Replace("profile-", ""));
+                logger.LogInformation("GUID: {Guid}", profile.Guid);
+                logger.LogInformation("");
+                logger.LogInformation("For sync command use:");
+                logger.LogInformation("  --anchor-geni {Id}", profile.Id.Replace("profile-", ""));
+
+                context.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to get profile");
+                context.ExitCode = 1;
+            }
+        });
+
+        return profileCommand;
     }
 
     private static async Task<int> RunAuthAsync(

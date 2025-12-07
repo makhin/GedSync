@@ -40,6 +40,38 @@ public class GeniAuthClientTests
     }
 
     [Fact]
+    public void ParseTokenFromUrl_UrlWithDoubleSlash_ReturnsToken()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
+
+        // Real-world URL format from Geni with double slash
+        var url = "https://www.geni.com//oauth/auth_success#access_token=test_token_789&expires_in=86400";
+        var token = client.ParseTokenFromUrl(url);
+
+        Assert.NotNull(token);
+        Assert.Equal("test_token_789", token!.AccessToken);
+        Assert.Null(token.RefreshToken);
+        Assert.True(token.ExpiresAt > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public void ParseTokenFromUrl_UrlEncodedFragment_ReturnsToken()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var client = new GeniAuthClient("test_app_key", logger: mockLogger.Object);
+
+        // Real-world URL with URL-encoded fragment (as pasted from browser)
+        var url = "https://www.geni.com//oauth/auth_success#access_token%3Dno3gDiAFWECxzm0NfJxYNDQg8rWbIkDCw5za8WGf%26expires_in%3D85533";
+        var token = client.ParseTokenFromUrl(url);
+
+        Assert.NotNull(token);
+        Assert.Equal("no3gDiAFWECxzm0NfJxYNDQg8rWbIkDCw5za8WGf", token!.AccessToken);
+        Assert.Null(token.RefreshToken);
+        Assert.True(token.ExpiresAt > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
     public void ParseTokenFromUrl_ErrorUrl_ReturnsNull()
     {
         var mockLogger = new Mock<ILogger>();

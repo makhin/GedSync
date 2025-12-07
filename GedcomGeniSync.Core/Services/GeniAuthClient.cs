@@ -75,7 +75,7 @@ public class GeniAuthClient : IGeniAuthClient
         OpenBrowser(authUrl);
 
         _logger?.LogInformation("\nAfter authorization, copy the URL from your browser address bar and paste it here:");
-        _logger?.LogInformation("(The URL should start with https://www.geni.com/platform/oauth/auth_success#...)");
+        _logger?.LogInformation("(The URL should start with https://www.geni.com/oauth/auth_success#... or https://www.geni.com//oauth/auth_success#...)");
         _logger?.LogInformation("\nPaste URL: ");
 
         string? url = null;
@@ -122,10 +122,11 @@ public class GeniAuthClient : IGeniAuthClient
                 return null;
             }
 
-            // Parse success URL: https://www.geni.com/platform/oauth/auth_success#access_token=TOKEN&expires_in=SECONDS
-            if (!url.Contains("/platform/oauth/auth_success"))
+            // Parse success URL: https://www.geni.com/oauth/auth_success#access_token=TOKEN&expires_in=SECONDS
+            // or: https://www.geni.com//oauth/auth_success#access_token=TOKEN&expires_in=SECONDS
+            if (!url.Contains("/oauth/auth_success"))
             {
-                _logger?.LogError("Invalid authorization URL. Expected URL starting with https://www.geni.com/platform/oauth/auth_success");
+                _logger?.LogError("Invalid authorization URL. Expected URL containing '/oauth/auth_success'");
                 return null;
             }
 
@@ -135,6 +136,10 @@ public class GeniAuthClient : IGeniAuthClient
                 _logger?.LogError("No access token found in URL fragment");
                 return null;
             }
+
+            // Decode the fragment if it's URL-encoded
+            fragment = Uri.UnescapeDataString(fragment);
+            _logger?.LogDebug("Parsing fragment: {Fragment}", fragment);
 
             var parameters = ParseQueryString(fragment);
             if (!parameters.TryGetValue("access_token", out var accessToken) || string.IsNullOrEmpty(accessToken))

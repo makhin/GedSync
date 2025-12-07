@@ -55,6 +55,25 @@ public class GedcomLoader : IGedcomLoader
         {
             var person = ConvertIndividual(individual, db);
             result.Persons[person.Id] = person;
+
+            // Build RIN mapping for ID resolution
+            // AutomatedRecordId (RIN field in GEDCOM) often contains the original ID like "MH:I500002"
+            var rin = individual.AutomatedRecordId;
+            if (!string.IsNullOrEmpty(rin))
+            {
+                // Extract just the ID part after the colon (e.g., "MH:I500002" -> "I500002")
+                var idPart = rin.Contains(':') ? rin.Split(':').Last() : rin;
+                result.RinToXRefMapping[idPart] = person.Id;
+
+                // Also map without @ symbols for flexibility
+                var normalizedId = idPart.Trim('@');
+                if (normalizedId != idPart)
+                {
+                    result.RinToXRefMapping[normalizedId] = person.Id;
+                }
+
+                _logger.LogDebug("RIN mapping: {RIN} -> {XRef}", rin, person.Id);
+            }
         }
 
         // Second pass: resolve family relationships
