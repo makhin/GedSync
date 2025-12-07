@@ -339,11 +339,12 @@ public class GedcomLoader : IGedcomLoader
         switch (namePieces)
         {
             case Patagames.GedcomNetSdk.Structures.Ver70.PersonalNamePieces p70:
-                givenName = CleanName(p70.GivenName);
-                surname = CleanName(p70.Surname);
-                nickname = CleanName(p70.Nickname);
-                suffix = CleanName(p70.NameSuffix);
-                surnamePrefix = CleanName(p70.SurnamePrefix);
+                // Ver70 uses GedcomCollection<string> for name parts
+                givenName = CleanName(p70.GivenName?.FirstOrDefault());
+                surname = CleanName(p70.Surname?.FirstOrDefault());
+                nickname = CleanName(p70.Nickname?.FirstOrDefault());
+                suffix = CleanName(p70.NameSuffix?.FirstOrDefault());
+                surnamePrefix = CleanName(p70.SurnamePrefix?.FirstOrDefault());
                 break;
             case Patagames.GedcomNetSdk.Structures.Ver555.PersonalNamePieces p555:
                 givenName = CleanName(p555.GivenName);
@@ -751,23 +752,22 @@ public class GedcomLoader : IGedcomLoader
     private static string? GetNameType(PersonalNameStructure name)
     {
         // Get Type from version-specific PersonalName classes
-        Patagames.GedcomNetSdk.Enums.NameType? nameType = name switch
+        // Ver70 uses NameType enum, Ver551/Ver555 use string
+        return name switch
         {
-            Patagames.GedcomNetSdk.Structures.Ver70.PersonalName n70 => n70.Type,
-            Patagames.GedcomNetSdk.Structures.Ver555.PersonalName n555 => n555.Type,
-            Patagames.GedcomNetSdk.Structures.Ver551.PersonalName n551 => n551.Type,
+            Patagames.GedcomNetSdk.Structures.Ver70.PersonalName n70 => n70.Type?.ToString()?.ToUpperInvariant(),
+            Patagames.GedcomNetSdk.Structures.Ver555.PersonalName n555 => n555.Type?.ToUpperInvariant(),
+            Patagames.GedcomNetSdk.Structures.Ver551.PersonalName n551 => n551.Type?.ToUpperInvariant(),
             _ => null
         };
-
-        // Convert enum to string for comparison
-        return nameType?.ToString()?.ToUpperInvariant();
     }
 
     private static string? GetAutomatedRecordId(IndividualRecord individual)
     {
+        // Ver70 uses Identifiers collection instead of AutomatedRecordId
         return individual switch
         {
-            Patagames.GedcomNetSdk.Records.Ver70.Individual i70 => i70.AutomatedRecordId,
+            Patagames.GedcomNetSdk.Records.Ver70.Individual i70 => i70.Identifiers?.FirstOrDefault()?.Id,
             Patagames.GedcomNetSdk.Records.Ver555.Individual i555 => i555.AutomatedRecordId,
             Patagames.GedcomNetSdk.Records.Ver551.Individual i551 => i551.AutomatedRecordId,
             Patagames.GedcomNetSdk.Records.Ver55.Individual i55 => i55.AutomatedRecordId,
