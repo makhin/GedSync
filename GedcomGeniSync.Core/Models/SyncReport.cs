@@ -15,6 +15,7 @@ public class SyncReport
     public int Errors { get; set; }
     public List<SyncResult> Results { get; set; } = new();
     public Dictionary<string, string> GedcomToGeniMap { get; set; } = new();
+    public SyncStatistics? Statistics { get; set; }
 
     public void PrintSummary(ILogger logger)
     {
@@ -24,6 +25,8 @@ public class SyncReport
         logger.LogInformation("Created: {Count} ({Percent:P0})", Created, (double)Created / TotalProcessed);
         logger.LogInformation("Skipped: {Count} ({Percent:P0})", Skipped, (double)Skipped / TotalProcessed);
         logger.LogInformation("Errors: {Count} ({Percent:P0})", Errors, (double)Errors / TotalProcessed);
+
+        Statistics?.LogSummary(logger);
     }
 
     public void PrintDetails(ILogger logger)

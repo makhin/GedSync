@@ -25,6 +25,7 @@ public class SyncService : ISyncService
     private readonly Dictionary<string, string> _geniToGedcomMap = new(); // Geni ID → GED ID
     private readonly HashSet<string> _processedGedcomIds = new();
     private readonly List<SyncResult> _results = new();
+    private readonly SyncStatistics _statistics = new();
 
     public SyncService(
         IGedcomLoader gedcomLoader,
@@ -53,10 +54,15 @@ public class SyncService : ISyncService
     {
         _logger.LogInformation("Starting sync: {GedcomPath}", gedcomPath);
         _logger.LogInformation("Anchor: GEDCOM {GedId} → Geni {GeniId}", anchorGedcomId, anchorGeniId);
+        _statistics.StartedAt = DateTime.UtcNow;
+        _logger.LogDebug("Options: maxDepth={MaxDepth}, dryRun={DryRun}, stateFile={StateFile}, syncPhotos={SyncPhotos}",
+            _options.MaxDepth, _options.DryRun, _options.StateFilePath, _options.SyncPhotos);
 
         // Load GEDCOM
         var gedcomData = _gedcomLoader.Load(gedcomPath);
         gedcomData.PrintStats(_logger);
+        _statistics.GedcomPersonsTotal = gedcomData.TotalPersons;
+        _statistics.GedcomFamiliesTotal = gedcomData.TotalFamilies;
 
         // Verify anchor exists in GEDCOM
         var anchorPerson = gedcomData.Persons.GetValueOrDefault(anchorGedcomId);
@@ -81,6 +87,9 @@ public class SyncService : ISyncService
         _geniToGedcomMap[anchorGeniId] = anchorGedcomId;
         _processedGedcomIds.Add(anchorGedcomId);
 
+        _statistics.ProfilesMatched++;
+        _statistics.QueueEnqueued++;
+
         _results.Add(new SyncResult
         {
             GedcomId = anchorGedcomId,
@@ -104,8 +113,12 @@ public class SyncService : ISyncService
         {
             var (currentGedId, currentGeniId, depth) = queue.Dequeue();
 
+            _statistics.QueueDequeued++;
+            _logger.LogDebug("Dequeued GEDCOM:{GedId} / Geni:{GeniId} at depth {Depth}", currentGedId, currentGeniId, depth);
+
             if (_options.MaxDepth.HasValue && depth >= _options.MaxDepth.Value)
             {
+                _logger.LogDebug("Skipping descendants beyond max depth for {GedId}", currentGedId);
                 continue;
             }
 
@@ -115,6 +128,8 @@ public class SyncService : ISyncService
             _logger.LogDebug("Processing: {Name} (depth {Depth})", currentPerson.FullName, depth);
 
             // Get Geni family for current person
+            _statistics.GeniFamilyRequests++;
+            _logger.LogInformation("Requesting immediate family for {GeniId}", currentGeniId);
             var geniFamily = await _geniClient.GetImmediateFamilyAsync(currentGeniId);
 
             // Process all relatives
@@ -140,6 +155,7 @@ public class SyncService : ISyncService
             await SaveStateAsync();
         }
 
+        _statistics.FinishedAt = DateTime.UtcNow;
         return GenerateReport();
     }
 
@@ -228,7 +244,10 @@ public class SyncService : ISyncService
 
         // Skip if already processed
         if (_processedGedcomIds.Contains(relativeGedId))
+        {
+            _logger.LogDebug("Already processed relative {Id}, skipping", relativeGedId);
             return;
+        }
 
         _processedGedcomIds.Add(relativeGedId);
 
@@ -236,13 +255,15 @@ public class SyncService : ISyncService
         if (relativePerson == null)
         {
             _logger.LogWarning("Relative {Id} not found in GEDCOM", relativeGedId);
+            _statistics.ProfileErrors++;
             return;
         }
 
         // Skip if insufficient data
-        if (string.IsNullOrEmpty(relativePerson.FirstName) && 
+        if (string.IsNullOrEmpty(relativePerson.FirstName) &&
             string.IsNullOrEmpty(relativePerson.LastName))
         {
+            _statistics.ProfilesSkipped++;
             _results.Add(new SyncResult
             {
                 GedcomId = relativeGedId,
@@ -250,13 +271,14 @@ public class SyncService : ISyncService
                 Action = SyncAction.Skipped,
                 ErrorMessage = "Insufficient data (no name)"
             });
+            _logger.LogWarning("Skipping {RelType}: {Name} due to missing name data", relationType, relativePerson.FullName);
             return;
         }
 
         _logger.LogInformation("Processing {RelType}: {Name}", relationType, relativePerson.FullName);
 
         // Try to find match in Geni family
-        var matchedGeniId = await FindMatchInGeniFamilyAsync(
+        var matchedGeniId = FindMatchInGeniFamily(
             relativePerson,
             relationType,
             expectedGender,
@@ -280,6 +302,8 @@ public class SyncService : ISyncService
                 RelationType = relationType.ToString()
             });
 
+            _statistics.ProfilesMatched++;
+
             _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
                 relativePerson.FullName, matchedGeniId, matchScore);
 
@@ -291,6 +315,7 @@ public class SyncService : ISyncService
 
             // Add to queue for further processing
             queue.Enqueue((relativeGedId, matchedGeniId, currentDepth + 1));
+            _statistics.QueueEnqueued++;
         }
         else
         {
@@ -316,6 +341,12 @@ public class SyncService : ISyncService
                     RelativeGeniId = currentGeniId
                 });
 
+                _statistics.ProfilesCreated++;
+                if (_options.DryRun)
+                {
+                    _statistics.DryRunProfileCreations++;
+                }
+
                 _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
                     relativePerson.FullName, createdGeniId, relationType, currentGeniId);
 
@@ -327,6 +358,7 @@ public class SyncService : ISyncService
 
                 // Add to queue for further processing
                 queue.Enqueue((relativeGedId, createdGeniId, currentDepth + 1));
+                _statistics.QueueEnqueued++;
             }
             else
             {
@@ -341,16 +373,19 @@ public class SyncService : ISyncService
                     RelationType = relationType.ToString(),
                     ErrorMessage = errorMessage ?? "Failed to create profile"
                 });
+
+                _statistics.ProfileErrors++;
             }
         }
     }
 
-    private async Task<string?> FindMatchInGeniFamilyAsync(
+    private string? FindMatchInGeniFamily(
         PersonRecord gedcomPerson,
         RelationType relationType,
         Gender expectedGender,
         GeniImmediateFamily? geniFamily)
     {
+        _statistics.MatchAttempts++;
         if (geniFamily?.Nodes == null)
             return null;
 
@@ -379,6 +414,7 @@ public class SyncService : ISyncService
 
             var candidatePerson = ConvertGeniNodeToPerson(nodeId, node);
             candidates.Add((nodeId, candidatePerson));
+            _logger.LogDebug("Candidate for {Relation}: {Name} ({GeniId})", relationType, candidatePerson.FullName, nodeId);
         }
 
         if (candidates.Count == 0)
@@ -399,8 +435,13 @@ public class SyncService : ISyncService
         if (bestMatch.Score >= _options.MatchingOptions.MatchThreshold)
         {
             var matchedCandidate = candidates.First(c => c.Person.Id == bestMatch.Target.Id);
+            _logger.LogInformation("Best match for {Name}: {CandidateName} ({Score}%)", gedcomPerson.FullName,
+                matchedCandidate.Person.FullName, Math.Round(bestMatch.Score, 1));
             return matchedCandidate.GeniId;
         }
+
+        _logger.LogInformation("No suitable match found for {Name}. Best score {Score}%", gedcomPerson.FullName,
+            Math.Round(bestMatch.Score, 1));
 
         return null;
     }
@@ -462,6 +503,8 @@ public class SyncService : ISyncService
 
         try
         {
+            _logger.LogInformation("Creating {Relation} profile for {Name} (target Geni {GeniId})", relationType,
+                person.FullName, relativeGeniId);
             var profile = relationType switch
             {
                 RelationType.Parent => await _geniClient.AddParentAsync(relativeGeniId, profileCreate),
@@ -476,6 +519,7 @@ public class SyncService : ISyncService
             var errorMsg = $"HTTP {ex.StatusCode}: {ex.Message}";
             _logger.LogError(ex, "Failed to create {RelType} for {Name} - {Error}",
                 relationType, person.FullName, errorMsg);
+            _statistics.ProfileErrors++;
             return (null, errorMsg);
         }
         catch (TaskCanceledException ex)
@@ -483,6 +527,7 @@ public class SyncService : ISyncService
             var errorMsg = "Request timeout";
             _logger.LogError(ex, "Timeout creating {RelType} for {Name}",
                 relationType, person.FullName);
+            _statistics.ProfileErrors++;
             return (null, errorMsg);
         }
         catch (Exception ex)
@@ -490,6 +535,7 @@ public class SyncService : ISyncService
             var errorMsg = $"{ex.GetType().Name}: {ex.Message}";
             _logger.LogError(ex, "Failed to create {RelType} for {Name} - {Error}",
                 relationType, person.FullName, errorMsg);
+            _statistics.ProfileErrors++;
             return (null, errorMsg);
         }
     }
@@ -534,6 +580,13 @@ public class SyncService : ISyncService
 
                 _results.AddRange(state.Results);
 
+                _statistics.ProfilesMatched = _results.Count(r => r.Action == SyncAction.Matched);
+                _statistics.ProfilesCreated = _results.Count(r => r.Action == SyncAction.Created);
+                _statistics.ProfilesSkipped = _results.Count(r => r.Action == SyncAction.Skipped);
+                _statistics.ProfileErrors = _results.Count(r => r.Action == SyncAction.Error);
+                _statistics.QueueEnqueued = _processedGedcomIds.Count;
+                _statistics.QueueDequeued = _processedGedcomIds.Count;
+
                 _logger.LogInformation("State loaded: {Count} mappings, {Processed} processed",
                     _gedcomToGeniMap.Count, _processedGedcomIds.Count);
             }
@@ -566,6 +619,7 @@ public class SyncService : ISyncService
 
         try
         {
+            _logger.LogInformation("Syncing photos for {Name} into Geni profile {GeniId}", gedcomPerson.FullName, geniProfileId);
             // Check if profile already has photos
             var existingPhotos = await _geniClient.GetPhotosAsync(geniProfileId);
 
@@ -596,6 +650,7 @@ public class SyncService : ISyncService
             // Download and upload photos
             foreach (var url in myHeritageUrls)
             {
+                _statistics.PhotoDownloadAttempts++;
                 var downloadResult = await _photoService.DownloadPhotoAsync(url);
 
                 if (downloadResult == null)
@@ -619,6 +674,7 @@ public class SyncService : ISyncService
                 {
                     _logger.LogInformation("Successfully uploaded photo {PhotoId} to profile {GeniId}",
                         uploadedPhoto.Id, geniProfileId);
+                    _statistics.PhotoUploads++;
 
                     // Set as mugshot if it's the first photo
                     if (existingPhotos.Count == 0)
@@ -663,7 +719,8 @@ public class SyncService : ISyncService
             Skipped = _results.Count(r => r.Action == SyncAction.Skipped),
             Errors = _results.Count(r => r.Action == SyncAction.Error),
             Results = _results,
-            GedcomToGeniMap = new Dictionary<string, string>(_gedcomToGeniMap)
+            GedcomToGeniMap = new Dictionary<string, string>(_gedcomToGeniMap),
+            Statistics = _statistics.Clone()
         };
 
         return report;

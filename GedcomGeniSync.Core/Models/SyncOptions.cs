@@ -16,4 +16,9 @@ public record SyncOptions
     /// Enable photo synchronization from GEDCOM to Geni.
     /// </summary>
     public bool SyncPhotos { get; init; } = true;
+
+    /// <summary>
+    /// Whether the sync is running in dry-run mode.
+    /// </summary>
+    public bool DryRun { get; init; } = true;
 }
