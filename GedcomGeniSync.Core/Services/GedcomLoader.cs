@@ -133,9 +133,8 @@ public class GedcomLoader : IGedcomLoader
         var primaryName = names?.FirstOrDefault();
         if (primaryName is PersonalName pn)
         {
-            // Try to extract name pieces
-            var pieces = pn.PersonalNamePieces;
-            if (pieces != null)
+            // Try to extract name pieces from base class NamePieces property
+            if (pn.NamePieces is PersonalNamePieces pieces)
             {
                 firstName = CleanName(pieces.GivenName);
                 lastName = CleanName(pieces.Surname);
@@ -158,7 +157,7 @@ public class GedcomLoader : IGedcomLoader
                 if (name is not PersonalName personalName)
                     continue;
 
-                var pieces = personalName.PersonalNamePieces;
+                var pieces = personalName.NamePieces as PersonalNamePieces;
                 var nameType = personalName.Type?.ToUpperInvariant();
 
                 // Store name variants for fuzzy matching
@@ -198,10 +197,9 @@ public class GedcomLoader : IGedcomLoader
         // Fallback: if no maiden name found via TYPE, try SurnamePrefix
         if (string.IsNullOrEmpty(maidenName) && primaryName is PersonalName pnFallback)
         {
-            var pieces = pnFallback.PersonalNamePieces;
-            if (pieces != null)
+            if (pnFallback.NamePieces is PersonalNamePieces fallbackPieces)
             {
-                var surnamePrefix = CleanName(pieces.SurnamePrefix);
+                var surnamePrefix = CleanName(fallbackPieces.SurnamePrefix);
                 if (!string.IsNullOrEmpty(surnamePrefix))
                 {
                     maidenName = surnamePrefix;
