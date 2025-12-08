@@ -8,7 +8,8 @@
       "Bash(dotnet nuget:*)",
       "Bash(dotnet add package:*)",
       "Bash(dotnet new:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(./GedcomGeniSync.Cli.exe sync:*)"
     ],
     "deny": [],
     "ask": []

@@ -109,17 +109,20 @@ public class SyncService : ISyncService
             anchorPerson.FullName,
             $"{anchorGeniProfile.FirstName} {anchorGeniProfile.LastName}");
 
+        // Use the resolved internal ID (anchorPerson.Id) for all mappings
+        var anchorInternalId = anchorPerson.Id;
+
         // Initialize mapping with anchor
-        _gedcomToGeniMap[anchorGedcomId] = anchorGeniId;
-        _geniToGedcomMap[anchorGeniId] = anchorGedcomId;
-        _processedGedcomIds.Add(anchorGedcomId);
+        _gedcomToGeniMap[anchorInternalId] = anchorGeniId;
+        _geniToGedcomMap[anchorGeniId] = anchorInternalId;
+        _processedGedcomIds.Add(anchorInternalId);
 
         _statistics.ProfilesMatched++;
         _statistics.QueueEnqueued++;
 
         _results.Add(new SyncResult
         {
-            GedcomId = anchorGedcomId,
+            GedcomId = anchorGedcomId, // Keep original ID for user reporting
             GeniId = anchorGeniId,
             PersonName = anchorPerson.FullName,
             Action = SyncAction.Matched,
@@ -132,9 +135,9 @@ public class SyncService : ISyncService
             await LoadStateAsync();
         }
 
-        // BFS from anchor
+        // BFS from anchor - use internal ID
         var queue = new Queue<(string GedcomId, string GeniId, int Depth)>();
-        queue.Enqueue((anchorGedcomId, anchorGeniId, 0));
+        queue.Enqueue((anchorInternalId, anchorGeniId, 0));
 
         while (queue.Count > 0 && !cancellationToken.IsCancellationRequested)
         {
