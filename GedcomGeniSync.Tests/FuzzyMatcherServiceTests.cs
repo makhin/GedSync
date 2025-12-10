@@ -173,6 +173,66 @@ public class FuzzyMatcherServiceTests
         result.Score.Should().BeLessThan(90);
     }
 
+    [Fact]
+    public void Compare_ShouldReturnHighScore_ForExactMatch()
+    {
+        var source = CreatePerson(
+            first: "Иван",
+            last: "Петров",
+            gender: Gender.Male,
+            birthDate: new DateInfo { Date = new DateOnly(1885, 5, 15) });
+        var target = CreatePerson(
+            first: "Иван",
+            last: "Петров",
+            gender: Gender.Male,
+            birthDate: new DateInfo { Date = new DateOnly(1885, 5, 15) });
+
+        var service = CreateService();
+
+        var result = service.Compare(source, target);
+
+        // Score ~75% (firstName=30 + lastName=25 + birthDate=20)
+        // Gender/birthPlace/deathDate only penalize mismatches, don't add points for matches
+        result.Score.Should().BeGreaterThanOrEqualTo(70);
+    }
+
+    [Fact]
+    public void Compare_ShouldReturnLowScore_ForCompletelyDifferentPersons()
+    {
+        var source = CreatePerson(
+            first: "Иван",
+            last: "Петров",
+            gender: Gender.Male,
+            birthDate: new DateInfo { Date = new DateOnly(1885, 1, 1) });
+        var target = CreatePerson(
+            first: "Пётр",
+            last: "Сидоров",
+            gender: Gender.Male,
+            birthDate: new DateInfo { Date = new DateOnly(1920, 1, 1) });
+
+        var service = CreateService();
+
+        var result = service.Compare(source, target);
+
+        result.Score.Should().BeLessThan(50);
+    }
+
+    [Fact]
+    public void Compare_ShouldMatchCyrillicDiminutives_WhenVariantsConfigured()
+    {
+        _nameVariants.AddGivenNameVariants("александр", new[] { "саша", "шура", "алекс" });
+
+        var source = CreatePerson(first: "Александр", last: "Смирнов");
+        var target = CreatePerson(first: "Саша", last: "Смирнов");
+
+        var service = CreateService();
+
+        var result = service.Compare(source, target);
+
+        result.Score.Should().BeGreaterThan(50);
+        result.Reasons.Should().Contain(r => r.Field == "FirstName");
+    }
+
     private static PersonRecord CreatePerson(
         string first,
         string last,

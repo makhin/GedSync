@@ -17,30 +17,11 @@ class Program
         var syncCommand = BuildSyncCommand();
         var analyzeCommand = BuildAnalyzeCommand();
         var authCommand = BuildAuthCommand();
-        var testMatchCommand = new Command("test-match", "Run fuzzy matching tests");
-
-        testMatchCommand.SetHandler(async context =>
-        {
-            await using var provider = BuildServiceProvider(verbose: true, services =>
-            {
-                services.AddSingleton<INameVariantsService, NameVariantsService>();
-                services.AddSingleton(sp => new FuzzyMatcherService(
-                    sp.GetRequiredService<INameVariantsService>(),
-                    sp.GetRequiredService<ILogger<FuzzyMatcherService>>()));
-            });
-
-            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("TestMatch");
-            await RunTestMatchAsync(logger, provider.GetRequiredService<INameVariantsService>(),
-                provider.GetRequiredService<FuzzyMatcherService>());
-            context.ExitCode = 0;
-        });
-
         var profileCommand = BuildProfileCommand();
 
         rootCommand.AddCommand(syncCommand);
         rootCommand.AddCommand(analyzeCommand);
         rootCommand.AddCommand(authCommand);
-        rootCommand.AddCommand(testMatchCommand);
         rootCommand.AddCommand(profileCommand);
 
         return await rootCommand.InvokeAsync(args);
@@ -498,74 +479,6 @@ class Program
         logger.LogInformation("Use this token with --token option or set GENI_ACCESS_TOKEN env var");
 
         return 0;
-    }
-
-    // Helper method to create PersonRecord with normalized names
-    private static PersonRecord CreateTestPerson(string id, PersonSource source, string? firstName, string? lastName, string? maidenName = null, string? birthDate = null)
-    {
-        return new PersonRecord
-        {
-            Id = id,
-            Source = source,
-            FirstName = firstName,
-            LastName = lastName,
-            MaidenName = maidenName,
-            NormalizedFirstName = NameNormalizer.Normalize(firstName),
-            NormalizedLastName = NameNormalizer.Normalize(lastName),
-            BirthDate = DateInfo.Parse(birthDate)
-        };
-    }
-
-    private static async Task RunTestMatchAsync(
-        ILogger logger,
-        INameVariantsService nameVariants,
-        FuzzyMatcherService matcher)
-    {
-        logger.LogInformation("=== Testing Fuzzy Matching ===\n");
-
-        var testCases = new[]
-        {
-            (CreateTestPerson("TEST1", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
-             CreateTestPerson("TEST1", PersonSource.Geni, "Иван", "Петров", null, "1885"),
-             "Exact match"),
-            (CreateTestPerson("TEST2", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
-             CreateTestPerson("TEST2", PersonSource.Geni, "Ivan", "Petrov", null, "1885"),
-             "Cyrillic vs Latin"),
-            (CreateTestPerson("TEST3", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
-             CreateTestPerson("TEST3", PersonSource.Geni, "John", "Petrov", null, "1885"),
-             "Ivan = John equivalent"),
-            (CreateTestPerson("TEST4", PersonSource.Gedcom, "Мария", "Сидорова", null, "1890"),
-             CreateTestPerson("TEST4", PersonSource.Geni, "Maria", "Sidorova", null, "1892"),
-             "Date ±2 years"),
-            (CreateTestPerson("TEST5", PersonSource.Gedcom, "Анна", "Петрова", "Иванова", "1888"),
-             CreateTestPerson("TEST5", PersonSource.Geni, "Anna", "Иванова", null, "1888"),
-             "Maiden name match"),
-            (CreateTestPerson("TEST6", PersonSource.Gedcom, "Иван", "Петров", null, "1885"),
-             CreateTestPerson("TEST6", PersonSource.Geni, "Пётр", "Сидоров", null, "1920"),
-             "Different persons"),
-            (CreateTestPerson("TEST7", PersonSource.Gedcom, "Александр", "Смирнов", null, "1900"),
-             CreateTestPerson("TEST7", PersonSource.Geni, "Саша", "Смирнов", null, "1900"),
-             "Александр = Саша")
-        };
-
-        foreach (var (source, target, description) in testCases)
-        {
-            var result = matcher.Compare(source, target);
-
-            logger.LogInformation("Test: {Description}", description);
-            logger.LogInformation("  {Source} vs {Target}", source.FullName, target.FullName);
-            logger.LogInformation("  Score: {Score}%", Math.Round(result.Score, 1));
-
-            foreach (var reason in result.Reasons)
-            {
-                logger.LogInformation("    {Field}: +{Points} ({Details})",
-                    reason.Field, Math.Round(reason.Points, 1), reason.Details);
-            }
-
-            logger.LogInformation(string.Empty);
-        }
-
-        await Task.CompletedTask;
     }
 
     private static ServiceProvider BuildServiceProvider(bool verbose, Action<IServiceCollection> configureServices)
