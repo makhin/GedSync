@@ -13,7 +13,10 @@
       "Bash(GedcomGeniSync.Cli.exe analyze:*)",
       "Bash(./GedcomGeniSync.Cli.exe analyze:*)",
       "Bash(GedcomGeniSync.ClibinDebugnet8.0GedcomGeniSync.Cli.exe analyze --gedcom makhin.ged --anchor \"@I1@\")",
-      "Bash(.GedcomGeniSync.ClibinDebugnet8.0GedcomGeniSync.Cli.exe analyze --gedcom makhin.ged --anchor \"@I1@\")"
+      "Bash(.GedcomGeniSync.ClibinDebugnet8.0GedcomGeniSync.Cli.exe analyze --gedcom makhin.ged --anchor \"@I1@\")",
+      "Bash(python -m json.tool:*)",
+      "Bash(./GedcomGeniSync.Cli/bin/Debug/net8.0/GedcomGeniSync.Cli.exe:*)",
+      "Bash(tee:*)"
     ],
     "deny": [],
     "ask": []

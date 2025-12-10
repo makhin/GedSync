@@ -14,8 +14,17 @@ public class GeniProfile
     [JsonPropertyName("guid")]
     public string? Guid { get; set; }
 
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("display_name")]
+    public string? DisplayName { get; set; }
+
     [JsonPropertyName("first_name")]
     public string? FirstName { get; set; }
+
+    [JsonPropertyName("middle_name")]
+    public string? MiddleName { get; set; }
 
     [JsonPropertyName("last_name")]
     public string? LastName { get; set; }
@@ -23,14 +32,25 @@ public class GeniProfile
     [JsonPropertyName("maiden_name")]
     public string? MaidenName { get; set; }
 
+    [JsonPropertyName("suffix")]
+    public string? Suffix { get; set; }
+
     [JsonPropertyName("gender")]
     public string? Gender { get; set; }
+
+    // Birth can be either a simple string or an Event object
+    [JsonPropertyName("birth")]
+    public object? Birth { get; set; }
 
     [JsonPropertyName("birth_date")]
     public string? BirthDate { get; set; }
 
     [JsonPropertyName("birth_location")]
     public string? BirthPlace { get; set; }
+
+    // Death can be either a simple string or an Event object
+    [JsonPropertyName("death")]
+    public object? Death { get; set; }
 
     [JsonPropertyName("death_date")]
     public string? DeathDate { get; set; }
@@ -56,13 +76,49 @@ public class GeniProfile
 public class GeniProfileCreate
 {
     public string? FirstName { get; set; }
+    public string? MiddleName { get; set; }
     public string? LastName { get; set; }
     public string? MaidenName { get; set; }
+    public string? Suffix { get; set; }
     public string? Gender { get; set; } // "male" or "female"
     public string? BirthDate { get; set; } // Format: "YYYY-MM-DD" or "YYYY"
     public string? BirthPlace { get; set; }
     public string? DeathDate { get; set; }
     public string? DeathPlace { get; set; }
+}
+
+[ExcludeFromCodeCoverage]
+public class GeniProfileUpdate
+{
+    [JsonPropertyName("first_name")]
+    public string? FirstName { get; set; }
+
+    [JsonPropertyName("middle_name")]
+    public string? MiddleName { get; set; }
+
+    [JsonPropertyName("last_name")]
+    public string? LastName { get; set; }
+
+    [JsonPropertyName("maiden_name")]
+    public string? MaidenName { get; set; }
+
+    [JsonPropertyName("suffix")]
+    public string? Suffix { get; set; }
+
+    [JsonPropertyName("gender")]
+    public string? Gender { get; set; }
+
+    [JsonPropertyName("birth")]
+    public object? Birth { get; set; }
+
+    [JsonPropertyName("death")]
+    public object? Death { get; set; }
+
+    [JsonPropertyName("occupation")]
+    public string? Occupation { get; set; }
+
+    [JsonPropertyName("about_me")]
+    public string? AboutMe { get; set; }
 }
 
 [ExcludeFromCodeCoverage]
@@ -84,14 +140,26 @@ public class GeniNode
     [JsonPropertyName("first_name")]
     public string? FirstName { get; set; }
 
+    [JsonPropertyName("middle_name")]
+    public string? MiddleName { get; set; }
+
     [JsonPropertyName("last_name")]
     public string? LastName { get; set; }
+
+    [JsonPropertyName("maiden_name")]
+    public string? MaidenName { get; set; }
+
+    [JsonPropertyName("suffix")]
+    public string? Suffix { get; set; }
 
     [JsonPropertyName("gender")]
     public string? Gender { get; set; }
 
     [JsonPropertyName("birth_date")]
     public string? BirthDate { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }  // Sometimes full name is here
 
     // Relations
     [JsonPropertyName("edges")]

@@ -56,6 +56,9 @@ public class GeniApiClient : IGeniApiClient
     public Task<GeniProfile?> AddPartnerToUnionAsync(string unionId, GeniProfileCreate partner)
         => _profileClient.AddPartnerToUnionAsync(unionId, partner);
 
+    public Task<GeniProfile?> UpdateProfileAsync(string profileId, GeniProfileUpdate update)
+        => _profileClient.UpdateProfileAsync(profileId, update);
+
     #endregion
 
     #region Photo Operations - Delegated to IGeniPhotoClient

@@ -510,8 +510,23 @@ public class SyncService : ISyncService
             candidates.Select(c => c.Person),
             _options.MatchingOptions.MatchThreshold);
 
+        _logger.LogDebug("Found {Count} matches above threshold {Threshold}% for {Name}",
+            matches.Count, _options.MatchingOptions.MatchThreshold, gedcomPerson.FullName);
+
+        // Log all match attempts for debugging
+        foreach (var match in matches.Take(5))
+        {
+            var reasons = string.Join(", ", match.Reasons.Select(r => $"{r.Field}:{r.Points:F1}"));
+            _logger.LogDebug("  Match candidate: {Name} - Score: {Score:F1}% ({Reasons})",
+                match.Target.FullName, match.Score, reasons);
+        }
+
         if (matches.Count == 0)
+        {
+            _logger.LogDebug("No matches found above threshold {Threshold}% for {Name}",
+                _options.MatchingOptions.MatchThreshold, gedcomPerson.FullName);
             return null;
+        }
 
         var bestMatch = matches[0];
 
@@ -532,12 +547,27 @@ public class SyncService : ISyncService
 
     private PersonRecord ConvertGeniNodeToPerson(string geniId, GeniNode node)
     {
+        // Log raw Geni data for debugging - include ALL name fields
+        _logger.LogDebug("Converting Geni node {GeniId}: Name='{Name}', FirstName='{FirstName}', MiddleName='{MiddleName}', LastName='{LastName}', " +
+            "MaidenName='{MaidenName}', Suffix='{Suffix}', Gender='{Gender}', BirthDate='{BirthDate}'",
+            geniId,
+            node.Name ?? "(null)",
+            node.FirstName ?? "(null)",
+            node.MiddleName ?? "(null)",
+            node.LastName ?? "(null)",
+            node.MaidenName ?? "(null)",
+            node.Suffix ?? "(null)",
+            node.Gender ?? "(null)",
+            node.BirthDate ?? "(null)");
+
         return new PersonRecord
         {
             Id = geniId,
             Source = PersonSource.Geni,
             FirstName = node.FirstName,
+            MiddleName = node.MiddleName,
             LastName = node.LastName,
+            MaidenName = node.MaidenName,
             NormalizedFirstName = NameNormalizer.Normalize(node.FirstName),
             NormalizedLastName = NameNormalizer.Normalize(node.LastName),
             Gender = node.Gender?.ToLowerInvariant() switch

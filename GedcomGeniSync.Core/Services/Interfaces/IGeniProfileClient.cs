@@ -18,4 +18,5 @@ public interface IGeniProfileClient
     Task<GeniProfile?> AddPartnerAsync(string profileId, GeniProfileCreate partner);
     Task<GeniProfile?> AddChildToUnionAsync(string unionId, GeniProfileCreate child);
     Task<GeniProfile?> AddPartnerToUnionAsync(string unionId, GeniProfileCreate partner);
+    Task<GeniProfile?> UpdateProfileAsync(string profileId, GeniProfileUpdate update);
 }

@@ -68,7 +68,84 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
             using var client = CreateClient();
             var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
             response.EnsureSuccessStatusCode();
-            return await response.Content.ReadFromJsonAsync<GeniImmediateFamily>();
+
+            // Log raw JSON response for debugging
+            var jsonContent = await response.Content.ReadAsStringAsync();
+
+            // Log the full raw JSON response
+            Logger.LogInformation("=== RAW GENI API RESPONSE for immediate-family {ProfileId} ===", profileId);
+            Logger.LogInformation("{Json}", jsonContent);
+            Logger.LogInformation("=== END RAW RESPONSE ===");
+
+            var result = System.Text.Json.JsonSerializer.Deserialize<GeniImmediateFamily>(jsonContent,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            // IMPORTANT: The immediate-family endpoint returns only IDs and basic structure
+            // We need to fetch full profile data for each node
+            if (result?.Nodes != null)
+            {
+                Logger.LogInformation("Found {Count} nodes in immediate family. Fetching full profile data for each...", result.Nodes.Count);
+
+                var enrichedNodes = new Dictionary<string, GeniNode>();
+
+                foreach (var (nodeId, node) in result.Nodes)
+                {
+                    // Extract numeric ID from node ID (e.g., "profile-34829663293" -> "34829663293")
+                    var numericId = nodeId.Replace("profile-", "").Replace("union-", "");
+
+                    // Skip union nodes - they're relationships, not people
+                    if (nodeId.StartsWith("union-"))
+                    {
+                        Logger.LogDebug("Skipping union node {NodeId}", nodeId);
+                        enrichedNodes[nodeId] = node;
+                        continue;
+                    }
+
+                    // Fetch full profile data
+                    Logger.LogDebug("Fetching full profile data for {NodeId}", nodeId);
+                    var fullProfile = await GetProfileAsync(numericId);
+
+                    if (fullProfile != null)
+                    {
+                        // Enrich the node with full profile data
+                        var enrichedNode = new GeniNode
+                        {
+                            Id = node.Id ?? nodeId,
+                            Name = fullProfile.Name,
+                            FirstName = fullProfile.FirstName,
+                            MiddleName = fullProfile.MiddleName, // Now we have middle_name!
+                            LastName = fullProfile.LastName,
+                            MaidenName = fullProfile.MaidenName,
+                            Suffix = fullProfile.Suffix,
+                            Gender = fullProfile.Gender,
+                            BirthDate = fullProfile.BirthDate,
+                            Edges = node.Edges
+                        };
+
+                        Logger.LogDebug("Enriched node {NodeId}: Name='{Name}', FirstName='{FirstName}', MiddleName='{MiddleName}', LastName='{LastName}', MaidenName='{MaidenName}', Suffix='{Suffix}', Gender='{Gender}', BirthDate='{BirthDate}'",
+                            nodeId,
+                            enrichedNode.Name ?? "(null)",
+                            enrichedNode.FirstName ?? "(null)",
+                            enrichedNode.MiddleName ?? "(null)",
+                            enrichedNode.LastName ?? "(null)",
+                            enrichedNode.MaidenName ?? "(null)",
+                            enrichedNode.Suffix ?? "(null)",
+                            enrichedNode.Gender ?? "(null)",
+                            enrichedNode.BirthDate ?? "(null)");
+
+                        enrichedNodes[nodeId] = enrichedNode;
+                    }
+                    else
+                    {
+                        Logger.LogWarning("Failed to fetch full profile for {NodeId}, using basic data", nodeId);
+                        enrichedNodes[nodeId] = node;
+                    }
+                }
+
+                result.Nodes = enrichedNodes;
+            }
+
+            return result;
         }
         catch (HttpRequestException ex)
         {
@@ -237,6 +314,41 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         return result?.Profile;
     }
 
+    public async Task<GeniProfile?> UpdateProfileAsync(string profileId, GeniProfileUpdate update)
+    {
+        if (DryRun)
+        {
+            Logger.LogInformation("[DRY-RUN] Would update profile {ProfileId} with: FirstName={FirstName}, MiddleName={MiddleName}, LastName={LastName}, MaidenName={MaidenName}, Suffix={Suffix}",
+                profileId, update.FirstName, update.MiddleName, update.LastName, update.MaidenName, update.Suffix);
+
+            // In dry-run mode, return the current profile (simulating no change)
+            return await GetProfileAsync(profileId);
+        }
+
+        await ThrottleAsync();
+
+        var url = $"{BaseUrl}/profile-{profileId}/update";
+        Logger.LogDebug("POST {Url}", url);
+
+        try
+        {
+            using var client = CreateClient();
+            var content = CreateFormContent(update);
+            var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<GeniProfile>();
+            Logger.LogInformation("Updated profile {ProfileId}", profileId);
+
+            return result;
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.LogError(ex, "Failed to update profile {ProfileId}", profileId);
+            return null;
+        }
+    }
+
     #endregion
 
     #region Helper Methods
@@ -268,6 +380,40 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
         if (!string.IsNullOrEmpty(profile.DeathPlace))
             values["death_location"] = profile.DeathPlace;
+
+        return new FormUrlEncodedContent(values);
+    }
+
+    private static FormUrlEncodedContent CreateFormContent(GeniProfileUpdate update)
+    {
+        var values = new Dictionary<string, string>();
+
+        if (!string.IsNullOrEmpty(update.FirstName))
+            values["first_name"] = update.FirstName;
+
+        if (!string.IsNullOrEmpty(update.MiddleName))
+            values["middle_name"] = update.MiddleName;
+
+        if (!string.IsNullOrEmpty(update.LastName))
+            values["last_name"] = update.LastName;
+
+        if (!string.IsNullOrEmpty(update.MaidenName))
+            values["maiden_name"] = update.MaidenName;
+
+        if (!string.IsNullOrEmpty(update.Suffix))
+            values["suffix"] = update.Suffix;
+
+        if (!string.IsNullOrEmpty(update.Gender))
+            values["gender"] = update.Gender;
+
+        if (!string.IsNullOrEmpty(update.Occupation))
+            values["occupation"] = update.Occupation;
+
+        if (!string.IsNullOrEmpty(update.AboutMe))
+            values["about_me"] = update.AboutMe;
+
+        // Note: Birth and Death are complex objects and would need special handling
+        // For now, we'll skip them as they require structured data
 
         return new FormUrlEncodedContent(values);
     }

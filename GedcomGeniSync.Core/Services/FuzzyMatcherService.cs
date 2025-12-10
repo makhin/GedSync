@@ -53,27 +53,47 @@ public class FuzzyMatcherService : IFuzzyMatcherService
     {
         var reasonsBuilder = ImmutableList.CreateBuilder<MatchReason>();
 
-        // First name comparison
+        // Check if either has missing last name to adjust weights
+        var missingLastName = string.IsNullOrEmpty(source.LastName) || string.IsNullOrEmpty(target.LastName);
+
+        // First name comparison - give it more weight if last name is missing
+        var firstNameWeight = missingLastName ? _options.FirstNameWeight + (_options.LastNameWeight / 2) : _options.FirstNameWeight;
         var firstNameScore = CompareFirstNames(source, target);
         if (firstNameScore > 0)
         {
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "FirstName",
-                Points = firstNameScore * _options.FirstNameWeight,
+                Points = firstNameScore * firstNameWeight,
                 Details = $"{source.FirstName} ↔ {target.FirstName} ({firstNameScore:P0})"
             });
         }
 
-        // Last name comparison
+        // Last name comparison - reduce weight if missing
+        var lastNameWeight = missingLastName ? _options.LastNameWeight / 2 : _options.LastNameWeight;
         var lastNameScore = CompareLastNames(source, target);
         if (lastNameScore > 0)
         {
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "LastName",
-                Points = lastNameScore * _options.LastNameWeight,
+                Points = lastNameScore * lastNameWeight,
                 Details = $"{source.LastName} ↔ {target.LastName} ({lastNameScore:P0})"
+            });
+        }
+
+        // Maiden name comparison - higher weight than last name as it's more stable
+        // Maiden name is birth surname and doesn't change with marriage
+        var maidenNameScore = CompareMaidenNames(source, target);
+        if (maidenNameScore > 0)
+        {
+            // Give maiden name slightly higher weight than last name (30% more)
+            var maidenNameWeight = lastNameWeight * 1.3;
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "MaidenName",
+                Points = maidenNameScore * maidenNameWeight,
+                Details = $"{source.MaidenName} ↔ {target.MaidenName} ({maidenNameScore:P0})"
             });
         }
 
@@ -145,19 +165,22 @@ public class FuzzyMatcherService : IFuzzyMatcherService
     /// Find best matches for a person from a list of candidates
     /// </summary>
     public List<MatchCandidate> FindMatches(
-        PersonRecord source, 
+        PersonRecord source,
         IEnumerable<PersonRecord> candidates,
         int minScore = 0)
     {
         var matches = new List<MatchCandidate>();
+        var allMatches = new List<MatchCandidate>(); // Track all for debugging
 
         foreach (var candidate in candidates)
         {
             // Quick pre-filter: skip if gender definitely mismatches
-            if (source.Gender != Gender.Unknown && 
+            if (source.Gender != Gender.Unknown &&
                 candidate.Gender != Gender.Unknown &&
                 source.Gender != candidate.Gender)
             {
+                _logger.LogTrace("Skipping candidate {Name} - gender mismatch ({Source} != {Target})",
+                    candidate.FullName, source.Gender, candidate.Gender);
                 continue;
             }
 
@@ -167,11 +190,20 @@ public class FuzzyMatcherService : IFuzzyMatcherService
                 var yearDiff = Math.Abs(source.BirthYear.Value - candidate.BirthYear.Value);
                 if (yearDiff > _options.MaxBirthYearDifference)
                 {
+                    _logger.LogTrace("Skipping candidate {Name} - birth year too different ({SourceYear} vs {TargetYear}, diff: {Diff})",
+                        candidate.FullName, source.BirthYear, candidate.BirthYear, yearDiff);
                     continue;
                 }
             }
 
             var match = Compare(source, candidate);
+            allMatches.Add(match);
+
+            // Log ALL candidates with their scores for debugging
+            var reasons = string.Join(", ", match.Reasons.Select(r => $"{r.Field}:{r.Points:F1}"));
+            _logger.LogDebug("Candidate match: {SourceName} vs {TargetName} - Score: {Score:F1}% ({Reasons})",
+                source.FullName, candidate.FullName, match.Score, reasons);
+
             if (match.Score >= minScore)
             {
                 matches.Add(match);
@@ -220,10 +252,32 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         var sourceNorm = source.NormalizedFirstName ?? NormalizeForComparison(sourceName);
         var targetNorm = target.NormalizedFirstName ?? NormalizeForComparison(targetName);
 
-        // 4. Jaro-Winkler similarity (better for transliteration and Slavic languages)
+        // 4. Check if one name is the first word of the other (e.g., "Владимир" vs "Владимир Витальевич")
+        // This is common when one source has patronymic included and the other doesn't
+        var sourceWords = sourceNorm.Split(new[] { ' ', '-' }, StringSplitOptions.RemoveEmptyEntries);
+        var targetWords = targetNorm.Split(new[] { ' ', '-' }, StringSplitOptions.RemoveEmptyEntries);
+
+        // If first words match exactly, this is likely the same person
+        if (sourceWords.Length > 0 && targetWords.Length > 0 &&
+            sourceWords[0] == targetWords[0])
+        {
+            // Full match if both have just one word
+            if (sourceWords.Length == 1 && targetWords.Length == 1)
+                return 1.0;
+
+            // Strong match if one has patronymic/middle name and the other doesn't
+            // e.g., "Владимир" (1 word) vs "Владимир Витальевич" (2 words)
+            if (Math.Abs(sourceWords.Length - targetWords.Length) == 1)
+                return 0.90; // High confidence - first name matches, just missing patronymic
+
+            // Still good match if both have multiple words but first matches
+            return 0.85;
+        }
+
+        // 5. Jaro-Winkler similarity (better for transliteration and Slavic languages)
         var similarity = _jaroWinkler.Similarity(sourceNorm, targetNorm);
 
-        // 5. Check if one name is a substring of the other (for nicknames like Александр vs Саша)
+        // 6. Check if one name is a substring of the other (for nicknames like Александр vs Саша)
         // This helps with diminutives common in Slavic languages
         var isSubstring = sourceNorm.Contains(targetNorm) || targetNorm.Contains(sourceNorm);
         if (isSubstring && similarity > 0.7)
@@ -239,8 +293,14 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         var sourceName = source.LastName;
         var targetName = target.LastName;
 
+        // If both are empty, consider it neutral (not a mismatch)
+        if (string.IsNullOrEmpty(sourceName) && string.IsNullOrEmpty(targetName))
+            return 0.5; // Neutral score instead of 0
+
+        // If one is empty but the other is not, we can't confirm a match
+        // Return a neutral score instead of 0 to not penalize missing data
         if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(targetName))
-            return 0;
+            return 0.3; // Small positive score - missing data shouldn't be a strong negative
 
         // 1. Exact match using pre-normalized names (optimization)
         if (!string.IsNullOrEmpty(source.NormalizedLastName) &&
@@ -274,6 +334,37 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
         // 4. Jaro-Winkler similarity (better for transliteration and declensions in Slavic surnames)
         var similarity = _jaroWinkler.Similarity(sourceNormalized, targetNormalized);
+
+        return similarity;
+    }
+
+    private double CompareMaidenNames(PersonRecord source, PersonRecord target)
+    {
+        var sourceMaiden = source.MaidenName;
+        var targetMaiden = target.MaidenName;
+
+        // If both are empty, return 0 (not applicable)
+        if (string.IsNullOrEmpty(sourceMaiden) && string.IsNullOrEmpty(targetMaiden))
+            return 0;
+
+        // If one has maiden name and the other doesn't, we can't compare
+        if (string.IsNullOrEmpty(sourceMaiden) || string.IsNullOrEmpty(targetMaiden))
+            return 0;
+
+        // Both have maiden names - compare them
+        var sourceNorm = NormalizeForComparison(sourceMaiden);
+        var targetNorm = NormalizeForComparison(targetMaiden);
+
+        // 1. Exact match
+        if (sourceNorm == targetNorm)
+            return 1.0;
+
+        // 2. Check if they're equivalent surnames in the dictionary
+        if (_nameVariants.AreEquivalentSurnames(sourceMaiden, targetMaiden))
+            return 0.95;
+
+        // 3. Jaro-Winkler similarity
+        var similarity = _jaroWinkler.Similarity(sourceNorm, targetNorm);
 
         return similarity;
     }
