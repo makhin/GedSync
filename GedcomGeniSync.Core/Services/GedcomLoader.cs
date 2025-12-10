@@ -51,9 +51,43 @@ public class GedcomLoader : IGedcomLoader
             // Already activated or activation not required
         }
 
-        using var parser = new Parser(filePath);
-        var transmission = new GedcomTransmission();
-        transmission.Deserialize(parser);
+        GedcomTransmission transmission;
+        try
+        {
+            using var parser = new Parser(filePath);
+            transmission = new GedcomTransmission();
+            transmission.Deserialize(parser);
+        }
+        catch (Patagames.GedcomNetSdk.Exceptions.UnknownTagException ex)
+        {
+            _logger.LogWarning("GEDCOM file contains unknown or non-standard tags. Attempting to load with pre-processing...");
+            _logger.LogDebug("Unknown tag details: {Message}", ex.Message);
+
+            // Pre-process the GEDCOM file to fix common issues
+            var cleanedFilePath = PreprocessGedcomFile(filePath);
+            try
+            {
+                using var parser = new Parser(cleanedFilePath);
+                transmission = new GedcomTransmission();
+                transmission.Deserialize(parser);
+                _logger.LogInformation("Successfully loaded GEDCOM file after pre-processing");
+            }
+            catch (Exception innerEx)
+            {
+                // Clean up temporary file
+                if (File.Exists(cleanedFilePath))
+                {
+                    try { File.Delete(cleanedFilePath); } catch { }
+                }
+
+                throw new InvalidOperationException(
+                    $"The GEDCOM file contains non-standard tags that cannot be parsed even after pre-processing. " +
+                    $"Error at: {ex.Message}. " +
+                    $"Please check the GEDCOM file for compliance with GEDCOM 5.5.1 standard, " +
+                    $"or use a GEDCOM editor to clean up the file before importing.",
+                    innerEx);
+            }
+        }
 
         // Extract individuals and families from records
         var individuals = new List<Individual>();
@@ -563,19 +597,46 @@ public class GedcomLoader : IGedcomLoader
             }
             catch (ArgumentOutOfRangeException)
             {
-                precision = DatePrecision.Month;
-                date = new DateOnly(year.Value, month.Value, 1);
+                // Invalid day for the month, try month precision
+                try
+                {
+                    precision = DatePrecision.Month;
+                    date = new DateOnly(year.Value, month.Value, 1);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // Invalid month or year, fall back to year precision
+                    precision = DatePrecision.Year;
+                    date = new DateOnly(year.Value, 1, 1);
+                }
             }
         }
         else if (month.HasValue)
         {
             precision = DatePrecision.Month;
-            date = new DateOnly(year.Value, month.Value, 1);
+            try
+            {
+                date = new DateOnly(year.Value, month.Value, 1);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Invalid month or year, fall back to year precision
+                precision = DatePrecision.Year;
+                date = new DateOnly(year.Value, 1, 1);
+            }
         }
         else
         {
             precision = DatePrecision.Year;
-            date = new DateOnly(year.Value, 1, 1);
+            try
+            {
+                date = new DateOnly(year.Value, 1, 1);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Invalid year, can't create any valid date - return null
+                return null;
+            }
         }
 
         return new DateInfo
@@ -680,5 +741,103 @@ public class GedcomLoader : IGedcomLoader
         relatives.AddRange(person.SiblingIds);
 
         return relatives.Distinct();
+    }
+
+    /// <summary>
+    /// Pre-process GEDCOM file to fix common formatting issues
+    /// </summary>
+    private string PreprocessGedcomFile(string filePath)
+    {
+        _logger.LogInformation("Pre-processing GEDCOM file to fix formatting issues");
+
+        var tempFilePath = Path.GetTempFileName();
+        var encoding = DetectFileEncoding(filePath);
+
+        using (var reader = new StreamReader(filePath, encoding))
+        using (var writer = new StreamWriter(tempFilePath, false, encoding))
+        {
+            string? line;
+            var lineNumber = 0;
+            int? currentNoteLevel = null;  // Track if we're inside a NOTE block
+            int fixedLines = 0;
+
+            while ((line = reader.ReadLine()) != null)
+            {
+                lineNumber++;
+                var originalLine = line;
+
+                // Handle empty lines - keep them but don't reset NOTE context
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    writer.WriteLine(line);
+                    // Don't reset NOTE context - empty lines can appear within NOTE blocks
+                    continue;
+                }
+
+                // Check if this is a proper GEDCOM line (level + tag)
+                var gedcomLineMatch = Regex.Match(line, @"^(\d+)\s+([A-Z_@][A-Z0-9_@]*)(\s|$)");
+                if (gedcomLineMatch.Success)
+                {
+                    var level = int.Parse(gedcomLineMatch.Groups[1].Value);
+                    var tag = gedcomLineMatch.Groups[2].Value;
+
+                    // Check if we're starting a NOTE block
+                    if (tag == "NOTE" || tag == "CONC" || tag == "CONT")
+                    {
+                        if (tag == "NOTE")
+                        {
+                            currentNoteLevel = level;
+                        }
+                    }
+                    else
+                    {
+                        // New tag at same or lower level ends the NOTE context
+                        if (currentNoteLevel.HasValue && level <= currentNoteLevel.Value)
+                        {
+                            currentNoteLevel = null;
+                        }
+                    }
+
+                    writer.WriteLine(line);
+                    continue;
+                }
+
+                // If we're here, the line doesn't start with a proper GEDCOM level+tag
+                // If we're in a NOTE context, this should be a continuation line
+                if (currentNoteLevel.HasValue)
+                {
+                    // This line is part of a NOTE but doesn't have proper formatting
+                    // Convert it to a CONT (continuation) line at the appropriate level
+                    line = $"{currentNoteLevel.Value + 1} CONT {originalLine}";
+                    fixedLines++;
+                    if (fixedLines <= 10)  // Log first 10 fixes
+                    {
+                        _logger.LogDebug("Fixed untagged NOTE content at line {LineNumber}: {Preview}...",
+                            lineNumber, originalLine.Substring(0, Math.Min(60, originalLine.Length)));
+                    }
+                }
+
+                writer.WriteLine(line);
+            }
+
+            if (fixedLines > 0)
+            {
+                _logger.LogInformation("Fixed {Count} malformed NOTE continuation lines", fixedLines);
+            }
+        }
+
+        _logger.LogInformation("Pre-processing complete. Temporary file: {Path}", tempFilePath);
+        return tempFilePath;
+    }
+
+    /// <summary>
+    /// Detect file encoding (UTF-8, UTF-16, or ANSI)
+    /// </summary>
+    private static System.Text.Encoding DetectFileEncoding(string filePath)
+    {
+        // Read first few bytes to detect BOM
+        using var reader = new StreamReader(filePath, true);
+        reader.Peek(); // Force detection
+        return reader.CurrentEncoding;
     }
 }

@@ -279,25 +279,6 @@ class Program
 
                 result.PrintStats(logger);
 
-                logger.LogInformation("\n=== Sample Persons ===");
-                foreach (var person in result.Persons.Values.Take(10))
-                {
-                    logger.LogInformation("{Id}: {Name}", person.Id, person);
-                }
-
-                logger.LogInformation("\n=== RIN Mapping Count ===");
-                logger.LogInformation("Total RIN mappings: {Count}", result.RinToXRefMapping.Count);
-                if (result.RinToXRefMapping.ContainsKey("I500002"))
-                {
-                    logger.LogInformation("I500002 maps to: {XRef}", result.RinToXRefMapping["I500002"]);
-                }
-                else
-                {
-                    logger.LogInformation("I500002 NOT found in RIN mapping");
-                    logger.LogInformation("Sample RIN mappings: {Samples}",
-                        string.Join(", ", result.RinToXRefMapping.Take(5).Select(kvp => $"{kvp.Key}->{kvp.Value}")));
-                }
-
                 if (!string.IsNullOrEmpty(anchor))
                 {
                     // Resolve anchor ID via RIN mapping if needed

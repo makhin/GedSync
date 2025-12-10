@@ -9,7 +9,9 @@
       "Bash(dotnet add package:*)",
       "Bash(dotnet new:*)",
       "Bash(curl:*)",
-      "Bash(./GedcomGeniSync.Cli.exe sync:*)"
+      "Bash(./GedcomGeniSync.Cli.exe sync:*)",
+      "Bash(GedcomGeniSync.Cli.exe analyze:*)",
+      "Bash(./GedcomGeniSync.Cli.exe analyze:*)"
     ],
     "deny": [],
     "ask": []
