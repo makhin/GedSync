@@ -1,169 +1,24 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Services;
 
 /// <summary>
-/// Geni API Client - Profile Operations
-/// This partial class contains profile-related operations and base functionality.
+/// Geni Profile API Client
+/// Implements profile-related operations for Geni.com
 /// </summary>
 [ExcludeFromCodeCoverage]
-public partial class GeniApiClient : IGeniApiClient
+public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 {
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly string _accessToken;
-    private readonly bool _dryRun;
-    private readonly ILogger<GeniApiClient> _logger;
-
-    private const string BaseUrl = "https://www.geni.com/api";
-    private const int MaxRetries = 3;
-
-    private DateTime _lastRequestTime = DateTime.MinValue;
-    private readonly RateLimitInfo _rateLimitInfo = new();
-
-    public GeniApiClient(IHttpClientFactory httpClientFactory, string accessToken, bool dryRun, ILogger<GeniApiClient> logger)
+    public GeniProfileClient(
+        IHttpClientFactory httpClientFactory,
+        string accessToken,
+        bool dryRun,
+        ILogger<GeniProfileClient> logger)
+        : base(httpClientFactory, accessToken, dryRun, logger)
     {
-        _httpClientFactory = httpClientFactory;
-        _accessToken = accessToken;
-        _dryRun = dryRun;
-        _logger = logger;
     }
-
-    #region Base Infrastructure
-
-    private HttpClient CreateClient()
-    {
-        var client = _httpClientFactory.CreateClient("GeniApi");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-        return client;
-    }
-
-    /// <summary>
-    /// Parse rate limit headers from HTTP response
-    /// </summary>
-    private void UpdateRateLimitInfo(HttpResponseMessage response)
-    {
-        if (response.Headers.TryGetValues("X-API-Rate-Limit", out var limitValues))
-        {
-            if (int.TryParse(limitValues.FirstOrDefault(), out var limit))
-            {
-                _rateLimitInfo.Limit = limit;
-            }
-        }
-
-        if (response.Headers.TryGetValues("X-API-Rate-Remaining", out var remainingValues))
-        {
-            if (int.TryParse(remainingValues.FirstOrDefault(), out var remaining))
-            {
-                _rateLimitInfo.Remaining = remaining;
-            }
-        }
-
-        if (response.Headers.TryGetValues("X-API-Rate-Window", out var windowValues))
-        {
-            if (int.TryParse(windowValues.FirstOrDefault(), out var window))
-            {
-                _rateLimitInfo.WindowSeconds = window;
-            }
-        }
-
-        _rateLimitInfo.UpdatedAt = DateTime.UtcNow;
-
-        if (_rateLimitInfo.IsNearingLimit)
-        {
-            _logger.LogWarning("Approaching rate limit: {RateLimitInfo}", _rateLimitInfo.ToString());
-        }
-    }
-
-    /// <summary>
-    /// Throttle requests based on rate limit information
-    /// </summary>
-    private async Task ThrottleAsync()
-    {
-        var delayMs = _rateLimitInfo.GetRecommendedDelayMs();
-
-        var elapsed = DateTime.UtcNow - _lastRequestTime;
-        if (elapsed.TotalMilliseconds < delayMs)
-        {
-            var waitTime = delayMs - (int)elapsed.TotalMilliseconds;
-            _logger.LogDebug("Throttling request: waiting {WaitTimeMs}ms (Rate limit: {Remaining}/{Limit})",
-                waitTime, _rateLimitInfo.Remaining, _rateLimitInfo.Limit);
-            await Task.Delay(waitTime);
-        }
-
-        _lastRequestTime = DateTime.UtcNow;
-    }
-
-    /// <summary>
-    /// Execute HTTP request with retry logic for 429 (Too Many Requests)
-    /// </summary>
-    private async Task<HttpResponseMessage> ExecuteWithRetryAsync(
-        Func<Task<HttpResponseMessage>> httpCall,
-        int maxRetries = MaxRetries)
-    {
-        int retryCount = 0;
-        int delayMs = 1000;
-
-        while (true)
-        {
-            try
-            {
-                var response = await httpCall();
-
-                // Update rate limit info from response headers
-                UpdateRateLimitInfo(response);
-
-                // Check for 429 Too Many Requests
-                if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                {
-                    if (retryCount >= maxRetries)
-                    {
-                        _logger.LogError("Max retries ({MaxRetries}) exceeded due to rate limiting", maxRetries);
-                        response.EnsureSuccessStatusCode(); // Will throw
-                    }
-
-                    // Check for Retry-After header
-                    int retryAfterSeconds = 0;
-                    if (response.Headers.TryGetValues("Retry-After", out var retryAfterValues))
-                    {
-                        if (int.TryParse(retryAfterValues.FirstOrDefault(), out var seconds))
-                        {
-                            retryAfterSeconds = seconds;
-                        }
-                    }
-
-                    // Use Retry-After if available, otherwise exponential backoff
-                    var waitTimeMs = retryAfterSeconds > 0
-                        ? retryAfterSeconds * 1000
-                        : delayMs * (int)Math.Pow(2, retryCount);
-
-                    _logger.LogWarning(
-                        "Rate limit exceeded (429). Retry {RetryCount}/{MaxRetries} after {WaitTimeMs}ms",
-                        retryCount + 1, maxRetries, waitTimeMs);
-
-                    await Task.Delay(waitTimeMs);
-                    retryCount++;
-                    delayMs = waitTimeMs;
-                    continue;
-                }
-
-                return response;
-            }
-            catch (HttpRequestException ex) when (retryCount < maxRetries)
-            {
-                _logger.LogWarning(ex, "HTTP request failed. Retry {RetryCount}/{MaxRetries}",
-                    retryCount + 1, maxRetries);
-                await Task.Delay(delayMs);
-                retryCount++;
-                delayMs *= 2;
-            }
-        }
-    }
-
-    #endregion
 
     #region Read Operations
 
@@ -172,7 +27,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}";
-        _logger.LogDebug("GET {Url}", url);
+        Logger.LogDebug("GET {Url}", url);
 
         try
         {
@@ -183,7 +38,7 @@ public partial class GeniApiClient : IGeniApiClient
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to get profile {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to get profile {ProfileId}", profileId);
             return null;
         }
     }
@@ -193,7 +48,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile";
-        _logger.LogDebug("GET {Url}", url);
+        Logger.LogDebug("GET {Url}", url);
 
         using var client = CreateClient();
         var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
@@ -206,7 +61,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/immediate-family";
-        _logger.LogDebug("GET {Url}", url);
+        Logger.LogDebug("GET {Url}", url);
 
         try
         {
@@ -217,7 +72,7 @@ public partial class GeniApiClient : IGeniApiClient
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to get immediate family for {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to get immediate family for {ProfileId}", profileId);
             return null;
         }
     }
@@ -234,7 +89,7 @@ public partial class GeniApiClient : IGeniApiClient
             url += $"&birth_year={birthYear}";
         }
 
-        _logger.LogDebug("GET {Url}", url);
+        Logger.LogDebug("GET {Url}", url);
 
         try
         {
@@ -246,7 +101,7 @@ public partial class GeniApiClient : IGeniApiClient
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to search profiles for {Name}", name);
+            Logger.LogError(ex, "Failed to search profiles for {Name}", name);
             return new List<GeniProfile>();
         }
     }
@@ -257,9 +112,9 @@ public partial class GeniApiClient : IGeniApiClient
 
     public async Task<GeniProfile?> AddChildAsync(string parentProfileId, GeniProfileCreate child)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would create child {FirstName} {LastName} for parent {ParentId}",
+            Logger.LogInformation("[DRY-RUN] Would create child {FirstName} {LastName} for parent {ParentId}",
                 child.FirstName, child.LastName, parentProfileId);
             return CreateDryRunProfile(child);
         }
@@ -267,7 +122,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{parentProfileId}/add-child";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         var content = CreateFormContent(child);
@@ -275,16 +130,16 @@ public partial class GeniApiClient : IGeniApiClient
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Created child profile {ProfileId}", result?.Profile?.Id);
+        Logger.LogInformation("Created child profile {ProfileId}", result?.Profile?.Id);
 
         return result?.Profile;
     }
 
     public async Task<GeniProfile?> AddParentAsync(string childProfileId, GeniProfileCreate parent)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would create parent {FirstName} {LastName} for child {ChildId}",
+            Logger.LogInformation("[DRY-RUN] Would create parent {FirstName} {LastName} for child {ChildId}",
                 parent.FirstName, parent.LastName, childProfileId);
             return CreateDryRunProfile(parent);
         }
@@ -292,7 +147,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{childProfileId}/add-parent";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         var content = CreateFormContent(parent);
@@ -300,16 +155,16 @@ public partial class GeniApiClient : IGeniApiClient
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Created parent profile {ProfileId}", result?.Profile?.Id);
+        Logger.LogInformation("Created parent profile {ProfileId}", result?.Profile?.Id);
 
         return result?.Profile;
     }
 
     public async Task<GeniProfile?> AddPartnerAsync(string profileId, GeniProfileCreate partner)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would create partner {FirstName} {LastName} for {ProfileId}",
+            Logger.LogInformation("[DRY-RUN] Would create partner {FirstName} {LastName} for {ProfileId}",
                 partner.FirstName, partner.LastName, profileId);
             return CreateDryRunProfile(partner);
         }
@@ -317,7 +172,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/add-partner";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         var content = CreateFormContent(partner);
@@ -325,16 +180,16 @@ public partial class GeniApiClient : IGeniApiClient
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Created partner profile {ProfileId}", result?.Profile?.Id);
+        Logger.LogInformation("Created partner profile {ProfileId}", result?.Profile?.Id);
 
         return result?.Profile;
     }
 
     public async Task<GeniProfile?> AddChildToUnionAsync(string unionId, GeniProfileCreate child)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would create child {FirstName} {LastName} in union {UnionId}",
+            Logger.LogInformation("[DRY-RUN] Would create child {FirstName} {LastName} in union {UnionId}",
                 child.FirstName, child.LastName, unionId);
             return CreateDryRunProfile(child);
         }
@@ -342,7 +197,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/union-{unionId}/add-child";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         var content = CreateFormContent(child);
@@ -350,7 +205,7 @@ public partial class GeniApiClient : IGeniApiClient
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Created child profile {ProfileId} in union {UnionId}",
+        Logger.LogInformation("Created child profile {ProfileId} in union {UnionId}",
             result?.Profile?.Id, unionId);
 
         return result?.Profile;
@@ -358,9 +213,9 @@ public partial class GeniApiClient : IGeniApiClient
 
     public async Task<GeniProfile?> AddPartnerToUnionAsync(string unionId, GeniProfileCreate partner)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would add partner {FirstName} {LastName} to union {UnionId}",
+            Logger.LogInformation("[DRY-RUN] Would add partner {FirstName} {LastName} to union {UnionId}",
                 partner.FirstName, partner.LastName, unionId);
             return CreateDryRunProfile(partner);
         }
@@ -368,7 +223,7 @@ public partial class GeniApiClient : IGeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/union-{unionId}/add-partner";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         var content = CreateFormContent(partner);
@@ -376,7 +231,7 @@ public partial class GeniApiClient : IGeniApiClient
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        _logger.LogInformation("Added partner profile {ProfileId} to union {UnionId}",
+        Logger.LogInformation("Added partner profile {ProfileId} to union {UnionId}",
             result?.Profile?.Id, unionId);
 
         return result?.Profile;

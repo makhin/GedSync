@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -6,11 +7,21 @@ using Microsoft.Extensions.Logging;
 namespace GedcomGeniSync.Services;
 
 /// <summary>
-/// Geni API Client - Photo Operations
-/// This partial class contains photo-related operations.
+/// Geni Photo API Client
+/// Implements photo-related operations for Geni.com
 /// </summary>
-public partial class GeniApiClient
+[ExcludeFromCodeCoverage]
+public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
 {
+    public GeniPhotoClient(
+        IHttpClientFactory httpClientFactory,
+        string accessToken,
+        bool dryRun,
+        ILogger<GeniPhotoClient> logger)
+        : base(httpClientFactory, accessToken, dryRun, logger)
+    {
+    }
+
     #region Photo Operations
 
     public async Task<List<GeniPhoto>> GetPhotosAsync(string profileId)
@@ -18,7 +29,7 @@ public partial class GeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/photos";
-        _logger.LogDebug("GET {Url}", url);
+        Logger.LogDebug("GET {Url}", url);
 
         try
         {
@@ -30,7 +41,7 @@ public partial class GeniApiClient
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to get photos for profile {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to get photos for profile {ProfileId}", profileId);
             return new List<GeniPhoto>();
         }
     }
@@ -39,13 +50,13 @@ public partial class GeniApiClient
     {
         if (!File.Exists(filePath))
         {
-            _logger.LogError(null!, "Photo file not found: {Path}", filePath);
+            Logger.LogError(null!, "Photo file not found: {Path}", filePath);
             return null;
         }
 
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would upload photo {Path} to profile {ProfileId}",
+            Logger.LogInformation("[DRY-RUN] Would upload photo {Path} to profile {ProfileId}",
                 filePath, profileId);
             return CreateDryRunPhoto(filePath);
         }
@@ -53,7 +64,7 @@ public partial class GeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/add-photo";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         using var content = new MultipartFormDataContent();
@@ -74,12 +85,12 @@ public partial class GeniApiClient
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
 
-            _logger.LogInformation("Uploaded photo {PhotoId} to profile {ProfileId}", result?.Id, profileId);
+            Logger.LogInformation("Uploaded photo {PhotoId} to profile {ProfileId}", result?.Id, profileId);
             return result;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to upload photo to profile {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to upload photo to profile {ProfileId}", profileId);
             return null;
         }
     }
@@ -90,9 +101,9 @@ public partial class GeniApiClient
         string fileName,
         string? caption = null)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would upload photo {FileName} ({Size} bytes) to profile {ProfileId}",
+            Logger.LogInformation("[DRY-RUN] Would upload photo {FileName} ({Size} bytes) to profile {ProfileId}",
                 fileName, imageData.Length, profileId);
             return CreateDryRunPhoto(fileName);
         }
@@ -100,7 +111,7 @@ public partial class GeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/add-photo";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         using var content = new MultipartFormDataContent();
@@ -120,12 +131,12 @@ public partial class GeniApiClient
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
 
-            _logger.LogInformation("Uploaded photo {PhotoId} to profile {ProfileId}", result?.Id, profileId);
+            Logger.LogInformation("Uploaded photo {PhotoId} to profile {ProfileId}", result?.Id, profileId);
             return result;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to upload photo to profile {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to upload photo to profile {ProfileId}", profileId);
             return null;
         }
     }
@@ -134,20 +145,20 @@ public partial class GeniApiClient
     {
         if (!File.Exists(filePath))
         {
-            _logger.LogError(null!, "Photo file not found: {Path}", filePath);
+            Logger.LogError(null!, "Photo file not found: {Path}", filePath);
             return null;
         }
 
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would set mugshot {Path} for profile {ProfileId}", filePath, profileId);
+            Logger.LogInformation("[DRY-RUN] Would set mugshot {Path} for profile {ProfileId}", filePath, profileId);
             return CreateDryRunPhoto(filePath);
         }
 
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         using var content = new MultipartFormDataContent();
@@ -163,21 +174,21 @@ public partial class GeniApiClient
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
 
-            _logger.LogInformation("Set mugshot {PhotoId} for profile {ProfileId}", result?.Id, profileId);
+            Logger.LogInformation("Set mugshot {PhotoId} for profile {ProfileId}", result?.Id, profileId);
             return result;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to set mugshot for profile {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to set mugshot for profile {ProfileId}", profileId);
             return null;
         }
     }
 
     public async Task<GeniPhoto?> SetMugshotFromBytesAsync(string profileId, byte[] imageData, string fileName)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would set mugshot {FileName} ({Size} bytes) for profile {ProfileId}",
+            Logger.LogInformation("[DRY-RUN] Would set mugshot {FileName} ({Size} bytes) for profile {ProfileId}",
                 fileName, imageData.Length, profileId);
             return CreateDryRunPhoto(fileName);
         }
@@ -185,7 +196,7 @@ public partial class GeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         using var content = new MultipartFormDataContent();
@@ -200,28 +211,28 @@ public partial class GeniApiClient
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
 
-            _logger.LogInformation("Set mugshot {PhotoId} for profile {ProfileId}", result?.Id, profileId);
+            Logger.LogInformation("Set mugshot {PhotoId} for profile {ProfileId}", result?.Id, profileId);
             return result;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to set mugshot for profile {ProfileId}", profileId);
+            Logger.LogError(ex, "Failed to set mugshot for profile {ProfileId}", profileId);
             return null;
         }
     }
 
     public async Task<bool> SetExistingPhotoAsMugshotAsync(string profileId, string photoId)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would set photo {PhotoId} as mugshot for profile {ProfileId}", photoId, profileId);
+            Logger.LogInformation("[DRY-RUN] Would set photo {PhotoId} as mugshot for profile {ProfileId}", photoId, profileId);
             return true;
         }
 
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/photo-{photoId}/update";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         using var formContent = new FormUrlEncodedContent(new[]
@@ -234,28 +245,28 @@ public partial class GeniApiClient
             var response = await client.PostAsync(url, formContent);
             response.EnsureSuccessStatusCode();
 
-            _logger.LogInformation("Set photo {PhotoId} as mugshot for profile {ProfileId}", photoId, profileId);
+            Logger.LogInformation("Set photo {PhotoId} as mugshot for profile {ProfileId}", photoId, profileId);
             return true;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to set photo {PhotoId} as mugshot", photoId);
+            Logger.LogError(ex, "Failed to set photo {PhotoId} as mugshot", photoId);
             return false;
         }
     }
 
     public async Task<GeniPhoto?> UpdatePhotoAsync(string photoId, GeniPhotoUpdate update)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would update photo {PhotoId}: Title={Title}", photoId, update.Title);
+            Logger.LogInformation("[DRY-RUN] Would update photo {PhotoId}: Title={Title}", photoId, update.Title);
             return new GeniPhoto { Id = photoId, Title = update.Title };
         }
 
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/photo-{photoId}/update";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         var values = new Dictionary<string, string>();
 
@@ -279,23 +290,23 @@ public partial class GeniApiClient
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to update photo {PhotoId}", photoId);
+            Logger.LogError(ex, "Failed to update photo {PhotoId}", photoId);
             return null;
         }
     }
 
     public async Task<bool> DeletePhotoAsync(string photoId)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would delete photo {PhotoId}", photoId);
+            Logger.LogInformation("[DRY-RUN] Would delete photo {PhotoId}", photoId);
             return true;
         }
 
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/photo-{photoId}/delete";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         try
         {
@@ -303,28 +314,28 @@ public partial class GeniApiClient
             var response = await client.PostAsync(url, null);
             response.EnsureSuccessStatusCode();
 
-            _logger.LogInformation("Deleted photo {PhotoId}", photoId);
+            Logger.LogInformation("Deleted photo {PhotoId}", photoId);
             return true;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to delete photo {PhotoId}", photoId);
+            Logger.LogError(ex, "Failed to delete photo {PhotoId}", photoId);
             return false;
         }
     }
 
     public async Task<bool> TagPhotoAsync(string photoId, string profileId, PhotoTagPosition? position = null)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would tag profile {ProfileId} in photo {PhotoId}", profileId, photoId);
+            Logger.LogInformation("[DRY-RUN] Would tag profile {ProfileId} in photo {PhotoId}", profileId, photoId);
             return true;
         }
 
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/photo-{photoId}/tag";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         var values = new Dictionary<string, string>
         {
@@ -347,28 +358,28 @@ public partial class GeniApiClient
             var response = await client.PostAsync(url, content);
             response.EnsureSuccessStatusCode();
 
-            _logger.LogInformation("Tagged profile {ProfileId} in photo {PhotoId}", profileId, photoId);
+            Logger.LogInformation("Tagged profile {ProfileId} in photo {PhotoId}", profileId, photoId);
             return true;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to tag photo {PhotoId}", photoId);
+            Logger.LogError(ex, "Failed to tag photo {PhotoId}", photoId);
             return false;
         }
     }
 
     public async Task<bool> UntagPhotoAsync(string photoId, string profileId)
     {
-        if (_dryRun)
+        if (DryRun)
         {
-            _logger.LogInformation("[DRY-RUN] Would untag profile {ProfileId} from photo {PhotoId}", profileId, photoId);
+            Logger.LogInformation("[DRY-RUN] Would untag profile {ProfileId} from photo {PhotoId}", profileId, photoId);
             return true;
         }
 
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/photo-{photoId}/untag";
-        _logger.LogDebug("POST {Url}", url);
+        Logger.LogDebug("POST {Url}", url);
 
         using var client = CreateClient();
         using var content = new FormUrlEncodedContent(new[]
@@ -381,12 +392,12 @@ public partial class GeniApiClient
             var response = await client.PostAsync(url, content);
             response.EnsureSuccessStatusCode();
 
-            _logger.LogInformation("Untagged profile {ProfileId} from photo {PhotoId}", profileId, photoId);
+            Logger.LogInformation("Untagged profile {ProfileId} from photo {PhotoId}", profileId, photoId);
             return true;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to untag photo {PhotoId}", photoId);
+            Logger.LogError(ex, "Failed to untag photo {PhotoId}", photoId);
             return false;
         }
     }
@@ -396,7 +407,7 @@ public partial class GeniApiClient
         await ThrottleAsync();
 
         var url = $"{BaseUrl}/photo-{photoId}/tags";
-        _logger.LogDebug("GET {Url}", url);
+        Logger.LogDebug("GET {Url}", url);
 
         try
         {
@@ -408,7 +419,7 @@ public partial class GeniApiClient
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to get tags for photo {PhotoId}", photoId);
+            Logger.LogError(ex, "Failed to get tags for photo {PhotoId}", photoId);
             return new List<GeniPhotoTag>();
         }
     }
