@@ -17,13 +17,11 @@ public class SyncService : ISyncService
     private readonly IGeniApiClient _geniClient;
     private readonly IFuzzyMatcherService _matcher;
     private readonly IMyHeritagePhotoService? _photoService;
+    private readonly ISyncStateManager _stateManager;
     private readonly ILogger<SyncService> _logger;
     private readonly SyncOptions _options;
 
     // State
-    private readonly Dictionary<string, string> _gedcomToGeniMap = new(); // GED ID → Geni ID
-    private readonly Dictionary<string, string> _geniToGedcomMap = new(); // Geni ID → GED ID
-    private readonly HashSet<string> _processedGedcomIds = new();
     private readonly List<SyncResult> _results = new();
     private readonly SyncStatistics _statistics = new();
 
@@ -31,6 +29,7 @@ public class SyncService : ISyncService
         IGedcomLoader gedcomLoader,
         IGeniApiClient geniClient,
         IFuzzyMatcherService matcher,
+        ISyncStateManager stateManager,
         ILogger<SyncService> logger,
         SyncOptions? options = null,
         IMyHeritagePhotoService? photoService = null)
@@ -38,6 +37,7 @@ public class SyncService : ISyncService
         _gedcomLoader = gedcomLoader;
         _geniClient = geniClient;
         _matcher = matcher;
+        _stateManager = stateManager;
         _logger = logger;
         _options = options ?? new SyncOptions();
         _photoService = photoService;
@@ -64,23 +64,11 @@ public class SyncService : ISyncService
         _statistics.GedcomPersonsTotal = gedcomData.TotalPersons;
         _statistics.GedcomFamiliesTotal = gedcomData.TotalFamilies;
 
-        // Normalize anchor ID (remove @ symbols and quotes if present)
-        var normalizedAnchorId = anchorGedcomId.Trim('@', '\'', '"');
+        // Normalize anchor ID to standard GEDCOM format with @ delimiters
+        var normalizedAnchorId = GedcomIdNormalizer.Normalize(anchorGedcomId);
 
         // Verify anchor exists in GEDCOM
-        // First try direct lookup
         var anchorPerson = gedcomData.Persons.GetValueOrDefault(normalizedAnchorId);
-
-        // If not found, try RIN mapping
-        if (anchorPerson == null && gedcomData.RinToXRefMapping.TryGetValue(normalizedAnchorId, out var xrefId))
-        {
-            anchorPerson = gedcomData.Persons.GetValueOrDefault(xrefId);
-            if (anchorPerson != null)
-            {
-                _logger.LogInformation("Resolved anchor ID '{Input}' via RIN mapping to '{XRef}'",
-                    anchorGedcomId, xrefId);
-            }
-        }
 
         if (anchorPerson == null)
         {
@@ -113,9 +101,8 @@ public class SyncService : ISyncService
         var anchorInternalId = anchorPerson.Id;
 
         // Initialize mapping with anchor
-        _gedcomToGeniMap[anchorInternalId] = anchorGeniId;
-        _geniToGedcomMap[anchorGeniId] = anchorInternalId;
-        _processedGedcomIds.Add(anchorInternalId);
+        _stateManager.AddMapping(anchorInternalId, anchorGeniId);
+        _stateManager.MarkAsProcessed(anchorInternalId);
 
         _statistics.ProfilesMatched++;
         _statistics.QueueEnqueued++;
@@ -273,13 +260,13 @@ public class SyncService : ISyncService
             return;
 
         // Skip if already processed
-        if (_processedGedcomIds.Contains(relativeGedId))
+        if (_stateManager.IsProcessed(relativeGedId))
         {
             _logger.LogDebug("Already processed relative {Id}, skipping", relativeGedId);
             return;
         }
 
-        _processedGedcomIds.Add(relativeGedId);
+        _stateManager.MarkAsProcessed(relativeGedId);
 
         var relativePerson = gedcomData.Persons.GetValueOrDefault(relativeGedId);
         if (relativePerson == null)
@@ -317,8 +304,7 @@ public class SyncService : ISyncService
         if (matchedGeniId != null)
         {
             // Found existing match
-            _gedcomToGeniMap[relativeGedId] = matchedGeniId;
-            _geniToGedcomMap[matchedGeniId] = relativeGedId;
+            _stateManager.AddMapping(relativeGedId, matchedGeniId);
 
             var matchScore = CalculateMatchScore(relativePerson, geniFamily, matchedGeniId);
 
@@ -358,8 +344,7 @@ public class SyncService : ISyncService
             if (createdProfile != null)
             {
                 var createdGeniId = createdProfile.NumericId;
-                _gedcomToGeniMap[relativeGedId] = createdGeniId;
-                _geniToGedcomMap[createdGeniId] = relativeGedId;
+                _stateManager.AddMapping(relativeGedId, createdGeniId);
 
                 _results.Add(new SyncResult
                 {
@@ -425,7 +410,7 @@ public class SyncService : ISyncService
         foreach (var (nodeId, node) in geniFamily.Nodes)
         {
             // Skip if already mapped
-            if (_geniToGedcomMap.ContainsKey(nodeId))
+            if (_stateManager.IsMappedToGeni(nodeId))
                 continue;
 
             // Filter by expected gender if known
@@ -576,16 +561,16 @@ public class SyncService : ISyncService
     {
         var state = new SyncState
         {
-            GedcomToGeniMap = _gedcomToGeniMap,
-            ProcessedIds = _processedGedcomIds.ToList(),
+            GedcomToGeniMap = new Dictionary<string, string>(_stateManager.GetAllMappings()),
+            ProcessedIds = _stateManager.GetProcessedIds().ToList(),
             Results = _results
         };
 
         var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(_options.StateFilePath!, json);
-        
+
         _logger.LogInformation("State saved: {Count} mappings, {Processed} processed",
-            _gedcomToGeniMap.Count, _processedGedcomIds.Count);
+            _stateManager.GetAllMappings().Count, _stateManager.GetProcessedIds().Count);
     }
 
     private async Task LoadStateAsync()
@@ -597,16 +582,7 @@ public class SyncService : ISyncService
 
             if (state != null)
             {
-                foreach (var (gedId, geniId) in state.GedcomToGeniMap)
-                {
-                    _gedcomToGeniMap[gedId] = geniId;
-                    _geniToGedcomMap[geniId] = gedId;
-                }
-
-                foreach (var id in state.ProcessedIds)
-                {
-                    _processedGedcomIds.Add(id);
-                }
+                _stateManager.LoadState(state.GedcomToGeniMap, state.ProcessedIds);
 
                 _results.AddRange(state.Results);
 
@@ -614,11 +590,11 @@ public class SyncService : ISyncService
                 _statistics.ProfilesCreated = _results.Count(r => r.Action == SyncAction.Created);
                 _statistics.ProfilesSkipped = _results.Count(r => r.Action == SyncAction.Skipped);
                 _statistics.ProfileErrors = _results.Count(r => r.Action == SyncAction.Error);
-                _statistics.QueueEnqueued = _processedGedcomIds.Count;
-                _statistics.QueueDequeued = _processedGedcomIds.Count;
+                _statistics.QueueEnqueued = _stateManager.GetProcessedIds().Count;
+                _statistics.QueueDequeued = _stateManager.GetProcessedIds().Count;
 
                 _logger.LogInformation("State loaded: {Count} mappings, {Processed} processed",
-                    _gedcomToGeniMap.Count, _processedGedcomIds.Count);
+                    _stateManager.GetAllMappings().Count, _stateManager.GetProcessedIds().Count);
             }
         }
         catch (Exception ex)
@@ -749,7 +725,7 @@ public class SyncService : ISyncService
             Skipped = _results.Count(r => r.Action == SyncAction.Skipped),
             Errors = _results.Count(r => r.Action == SyncAction.Error),
             Results = _results,
-            GedcomToGeniMap = new Dictionary<string, string>(_gedcomToGeniMap),
+            GedcomToGeniMap = new Dictionary<string, string>(_stateManager.GetAllMappings()),
             Statistics = _statistics.Clone()
         };
 

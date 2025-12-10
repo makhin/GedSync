@@ -11,7 +11,9 @@
       "Bash(curl:*)",
       "Bash(./GedcomGeniSync.Cli.exe sync:*)",
       "Bash(GedcomGeniSync.Cli.exe analyze:*)",
-      "Bash(./GedcomGeniSync.Cli.exe analyze:*)"
+      "Bash(./GedcomGeniSync.Cli.exe analyze:*)",
+      "Bash(GedcomGeniSync.ClibinDebugnet8.0GedcomGeniSync.Cli.exe analyze --gedcom makhin.ged --anchor \"@I1@\")",
+      "Bash(.GedcomGeniSync.ClibinDebugnet8.0GedcomGeniSync.Cli.exe analyze --gedcom makhin.ged --anchor \"@I1@\")"
     ],
     "deny": [],
     "ask": []
