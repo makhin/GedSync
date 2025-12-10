@@ -64,23 +64,11 @@ public class SyncService : ISyncService
         _statistics.GedcomPersonsTotal = gedcomData.TotalPersons;
         _statistics.GedcomFamiliesTotal = gedcomData.TotalFamilies;
 
-        // Normalize anchor ID (remove @ symbols and quotes if present)
-        var normalizedAnchorId = anchorGedcomId.Trim('@', '\'', '"');
+        // Normalize anchor ID to standard GEDCOM format with @ delimiters
+        var normalizedAnchorId = GedcomIdNormalizer.Normalize(anchorGedcomId);
 
         // Verify anchor exists in GEDCOM
-        // First try direct lookup
         var anchorPerson = gedcomData.Persons.GetValueOrDefault(normalizedAnchorId);
-
-        // If not found, try RIN mapping
-        if (anchorPerson == null && gedcomData.RinToXRefMapping.TryGetValue(normalizedAnchorId, out var xrefId))
-        {
-            anchorPerson = gedcomData.Persons.GetValueOrDefault(xrefId);
-            if (anchorPerson != null)
-            {
-                _logger.LogInformation("Resolved anchor ID '{Input}' via RIN mapping to '{XRef}'",
-                    anchorGedcomId, xrefId);
-            }
-        }
 
         if (anchorPerson == null)
         {

@@ -25,12 +25,6 @@ public class GedcomLoadResult
     public Dictionary<string, GedcomFamilyRecord> Families { get; } = new();
 
     /// <summary>
-    /// Mapping from RIN (Record ID Number) to internal XRef ID.
-    /// Used to resolve user-provided IDs like "I500002" from RIN "MH:I500002" to internal IDs like "XREF1234".
-    /// </summary>
-    public Dictionary<string, string> RinToXRefMapping { get; } = new();
-
-    /// <summary>
     /// Statistics.
     /// </summary>
     public int TotalPersons => Persons.Count;

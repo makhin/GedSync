@@ -281,13 +281,8 @@ class Program
 
                 if (!string.IsNullOrEmpty(anchor))
                 {
-                    // Resolve anchor ID via RIN mapping if needed
-                    var resolvedAnchor = anchor;
-                    if (result.RinToXRefMapping.TryGetValue(anchor, out var xrefId))
-                    {
-                        resolvedAnchor = xrefId;
-                        logger.LogInformation("Resolved anchor '{Input}' to '{XRef}' via RIN", anchor, xrefId);
-                    }
+                    // Normalize anchor ID to standard GEDCOM format
+                    var resolvedAnchor = GedcomIdNormalizer.Normalize(anchor);
 
                     logger.LogInformation("\n=== BFS from {Anchor} ===", anchor);
 
