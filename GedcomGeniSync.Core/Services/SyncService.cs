@@ -8,6 +8,22 @@ using System.Text.Json;
 namespace GedcomGeniSync.Services;
 
 /// <summary>
+/// Context object for relative processing to reduce parameter count
+/// </summary>
+internal class RelativeProcessingContext
+{
+    public required string RelativeGedId { get; init; }
+    public required string CurrentGeniId { get; init; }
+    public required RelationType RelationType { get; init; }
+    public required Gender ExpectedGender { get; init; }
+    public required GeniImmediateFamily? GeniFamily { get; init; }
+    public required GedcomLoadResult GedcomData { get; init; }
+    public required Queue<(string GedcomId, string GeniId, int Depth)> Queue { get; init; }
+    public required int CurrentDepth { get; init; }
+    public PersonRecord? RelativePerson { get; set; }
+}
+
+/// <summary>
 /// Orchestrates synchronization from GEDCOM to Geni
 /// </summary>
 [ExcludeFromCodeCoverage]
@@ -245,6 +261,158 @@ public class SyncService : ISyncService
         }
     }
 
+    /// <summary>
+    /// Validates relative data and determines if processing should continue
+    /// </summary>
+    /// <returns>True if validation passed and processing should continue</returns>
+    private bool ValidateRelativeData(RelativeProcessingContext context)
+    {
+        // Check if relative exists in GEDCOM
+        context.RelativePerson = context.GedcomData.Persons.GetValueOrDefault(context.RelativeGedId);
+        if (context.RelativePerson == null)
+        {
+            _logger.LogWarning("Relative {Id} not found in GEDCOM", context.RelativeGedId);
+            _statistics.ProfileErrors++;
+            return false;
+        }
+
+        // Skip if insufficient data (no name)
+        if (string.IsNullOrEmpty(context.RelativePerson.FirstName) &&
+            string.IsNullOrEmpty(context.RelativePerson.LastName))
+        {
+            _statistics.ProfilesSkipped++;
+            _results.Add(new SyncResult
+            {
+                GedcomId = context.RelativeGedId,
+                PersonName = context.RelativePerson.FullName,
+                Action = SyncAction.Skipped,
+                ErrorMessage = "Insufficient data (no name)"
+            });
+            _logger.LogWarning("Skipping {RelType}: {Name} due to missing name data",
+                context.RelationType, context.RelativePerson.FullName);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Attempts to match existing profile or creates a new one
+    /// </summary>
+    /// <returns>Geni ID of matched or created profile, or null if failed</returns>
+    private async Task<string?> MatchOrCreateProfileAsync(RelativeProcessingContext context)
+    {
+        if (context.RelativePerson == null)
+            return null;
+
+        _logger.LogInformation("Processing {RelType}: {Name}", context.RelationType, context.RelativePerson.FullName);
+
+        // Try to find match in Geni family
+        var matchedGeniId = FindMatchInGeniFamily(
+            context.RelativePerson,
+            context.RelationType,
+            context.ExpectedGender,
+            context.GeniFamily);
+
+        if (matchedGeniId != null)
+        {
+            // Found existing match
+            _stateManager.AddMapping(context.RelativeGedId, matchedGeniId);
+
+            var matchScore = CalculateMatchScore(context.RelativePerson, context.GeniFamily, matchedGeniId);
+
+            _results.Add(new SyncResult
+            {
+                GedcomId = context.RelativeGedId,
+                GeniId = matchedGeniId,
+                PersonName = context.RelativePerson.FullName,
+                Action = SyncAction.Matched,
+                MatchScore = matchScore,
+                RelationType = context.RelationType.ToString()
+            });
+
+            _statistics.ProfilesMatched++;
+
+            _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
+                context.RelativePerson.FullName, matchedGeniId, matchScore);
+
+            // Sync photos if enabled
+            if (_options.SyncPhotos && _photoService != null)
+            {
+                await SyncPhotosAsync(context.RelativePerson, matchedGeniId);
+            }
+
+            return matchedGeniId;
+        }
+        else
+        {
+            // Need to create new profile
+            var (createdProfile, errorMessage) = await CreateProfileAsync(
+                context.RelativePerson,
+                context.CurrentGeniId,
+                context.RelationType);
+
+            if (createdProfile != null)
+            {
+                var createdGeniId = createdProfile.NumericId;
+                _stateManager.AddMapping(context.RelativeGedId, createdGeniId);
+
+                _results.Add(new SyncResult
+                {
+                    GedcomId = context.RelativeGedId,
+                    GeniId = createdGeniId,
+                    PersonName = context.RelativePerson.FullName,
+                    Action = SyncAction.Created,
+                    RelationType = context.RelationType.ToString(),
+                    RelativeGeniId = context.CurrentGeniId
+                });
+
+                _statistics.ProfilesCreated++;
+                if (_options.DryRun)
+                {
+                    _statistics.DryRunProfileCreations++;
+                }
+
+                _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
+                    context.RelativePerson.FullName, createdGeniId, context.RelationType, context.CurrentGeniId);
+
+                // Sync photos if enabled
+                if (_options.SyncPhotos && _photoService != null)
+                {
+                    await SyncPhotosAsync(context.RelativePerson, createdGeniId);
+                }
+
+                return createdGeniId;
+            }
+            else
+            {
+                _logger.LogWarning("Failed to create profile for {Name}: {Error}",
+                    context.RelativePerson.FullName, errorMessage ?? "Unknown error");
+
+                _results.Add(new SyncResult
+                {
+                    GedcomId = context.RelativeGedId,
+                    PersonName = context.RelativePerson.FullName,
+                    Action = SyncAction.Error,
+                    RelationType = context.RelationType.ToString(),
+                    ErrorMessage = errorMessage ?? "Failed to create profile"
+                });
+
+                _statistics.ProfileErrors++;
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Enqueues relative for further processing
+    /// </summary>
+    private void EnqueueRelative(RelativeProcessingContext context, string geniId)
+    {
+        context.Queue.Enqueue((context.RelativeGedId, geniId, context.CurrentDepth + 1));
+        _statistics.QueueEnqueued++;
+    }
+
     private async Task ProcessRelativeAsync(
         string relativeGedId,
         string currentGeniId,
@@ -268,129 +436,30 @@ public class SyncService : ISyncService
 
         _stateManager.MarkAsProcessed(relativeGedId);
 
-        var relativePerson = gedcomData.Persons.GetValueOrDefault(relativeGedId);
-        if (relativePerson == null)
+        // Create context object to encapsulate all parameters
+        var context = new RelativeProcessingContext
         {
-            _logger.LogWarning("Relative {Id} not found in GEDCOM", relativeGedId);
-            _statistics.ProfileErrors++;
+            RelativeGedId = relativeGedId,
+            CurrentGeniId = currentGeniId,
+            RelationType = relationType,
+            ExpectedGender = expectedGender,
+            GeniFamily = geniFamily,
+            GedcomData = gedcomData,
+            Queue = queue,
+            CurrentDepth = currentDepth
+        };
+
+        // Validate relative data
+        if (!ValidateRelativeData(context))
             return;
-        }
 
-        // Skip if insufficient data
-        if (string.IsNullOrEmpty(relativePerson.FirstName) &&
-            string.IsNullOrEmpty(relativePerson.LastName))
+        // Match or create profile
+        var geniId = await MatchOrCreateProfileAsync(context);
+
+        // Enqueue for further processing if successful
+        if (geniId != null)
         {
-            _statistics.ProfilesSkipped++;
-            _results.Add(new SyncResult
-            {
-                GedcomId = relativeGedId,
-                PersonName = relativePerson.FullName,
-                Action = SyncAction.Skipped,
-                ErrorMessage = "Insufficient data (no name)"
-            });
-            _logger.LogWarning("Skipping {RelType}: {Name} due to missing name data", relationType, relativePerson.FullName);
-            return;
-        }
-
-        _logger.LogInformation("Processing {RelType}: {Name}", relationType, relativePerson.FullName);
-
-        // Try to find match in Geni family
-        var matchedGeniId = FindMatchInGeniFamily(
-            relativePerson,
-            relationType,
-            expectedGender,
-            geniFamily);
-
-        if (matchedGeniId != null)
-        {
-            // Found existing match
-            _stateManager.AddMapping(relativeGedId, matchedGeniId);
-
-            var matchScore = CalculateMatchScore(relativePerson, geniFamily, matchedGeniId);
-
-            _results.Add(new SyncResult
-            {
-                GedcomId = relativeGedId,
-                GeniId = matchedGeniId,
-                PersonName = relativePerson.FullName,
-                Action = SyncAction.Matched,
-                MatchScore = matchScore,
-                RelationType = relationType.ToString()
-            });
-
-            _statistics.ProfilesMatched++;
-
-            _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
-                relativePerson.FullName, matchedGeniId, matchScore);
-
-            // Sync photos if enabled
-            if (_options.SyncPhotos && _photoService != null)
-            {
-                await SyncPhotosAsync(relativePerson, matchedGeniId);
-            }
-
-            // Add to queue for further processing
-            queue.Enqueue((relativeGedId, matchedGeniId, currentDepth + 1));
-            _statistics.QueueEnqueued++;
-        }
-        else
-        {
-            // Need to create new profile
-            var (createdProfile, errorMessage) = await CreateProfileAsync(
-                relativePerson,
-                currentGeniId,
-                relationType);
-
-            if (createdProfile != null)
-            {
-                var createdGeniId = createdProfile.NumericId;
-                _stateManager.AddMapping(relativeGedId, createdGeniId);
-
-                _results.Add(new SyncResult
-                {
-                    GedcomId = relativeGedId,
-                    GeniId = createdGeniId,
-                    PersonName = relativePerson.FullName,
-                    Action = SyncAction.Created,
-                    RelationType = relationType.ToString(),
-                    RelativeGeniId = currentGeniId
-                });
-
-                _statistics.ProfilesCreated++;
-                if (_options.DryRun)
-                {
-                    _statistics.DryRunProfileCreations++;
-                }
-
-                _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
-                    relativePerson.FullName, createdGeniId, relationType, currentGeniId);
-
-                // Sync photos if enabled
-                if (_options.SyncPhotos && _photoService != null)
-                {
-                    await SyncPhotosAsync(relativePerson, createdGeniId);
-                }
-
-                // Add to queue for further processing
-                queue.Enqueue((relativeGedId, createdGeniId, currentDepth + 1));
-                _statistics.QueueEnqueued++;
-            }
-            else
-            {
-                _logger.LogWarning("Failed to create profile for {Name}: {Error}",
-                    relativePerson.FullName, errorMessage ?? "Unknown error");
-
-                _results.Add(new SyncResult
-                {
-                    GedcomId = relativeGedId,
-                    PersonName = relativePerson.FullName,
-                    Action = SyncAction.Error,
-                    RelationType = relationType.ToString(),
-                    ErrorMessage = errorMessage ?? "Failed to create profile"
-                });
-
-                _statistics.ProfileErrors++;
-            }
+            EnqueueRelative(context, geniId);
         }
     }
 
