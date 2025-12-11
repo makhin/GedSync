@@ -1,0 +1,67 @@
+{
+  "results": [
+    {
+      "id": "union-118937407",
+      "guid": "6000000207133980751",
+      "status": "ex_spouse",
+      "url": "https://www.geni.com/api/union-118937407",
+      "divorce": {
+        "name": "Divorce of Alexandr Махин and Магдалина Зайцева",
+        "date": {
+          "day": 22,
+          "month": 4,
+          "year": 2013,
+          "formatted_date": "April 22, 2013"
+        },
+        "location": {
+          "place_name": "Днепропетровск",
+          "formatted_location": "Днепропетровск"
+        }
+      },
+      "partners": [
+        "https://www.geni.com/api/profile-34828568625",
+        "https://www.geni.com/api/profile-34829663288"
+      ],
+      "children": [
+        "https://www.geni.com/api/profile-34829663289",
+        "https://www.geni.com/api/profile-34829663292"
+      ]
+    },
+    {
+      "id": "union-118937408",
+      "guid": "6000000207133980755",
+      "status": "spouse",
+      "marriage": {
+        "name": "Marriage of Владимир Махин and Татьяна Рызванович",
+        "date": {
+          "day": 2,
+          "month": 3,
+          "year": 1973,
+          "formatted_date": "March 2, 1973"
+        },
+        "location": {
+          "place_name": "Днепропетровск",
+          "formatted_location": "Днепропетровск"
+        }
+      },
+      "marriage_date": {
+        "formatted_date": "March 2, 1973"
+      },
+      "marriage_location": {
+        "place_name": "Днепропетровск",
+        "formatted_location": "Днепропетровск"
+      }
+    },
+    {
+      "id": "union-118937425",
+      "status": "spouse",
+      "marriage_date": {
+        "formatted_date": "January 21, 2017"
+      },
+      "marriage_location": {
+        "place_name": "Вроцлав",
+        "formatted_location": "Вроцлав"
+      }
+    }
+  ]
+}

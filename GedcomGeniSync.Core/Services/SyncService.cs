@@ -24,6 +24,12 @@ internal class RelativeProcessingContext
     public PersonRecord? RelativePerson { get; set; }
 }
 
+internal readonly record struct RelativeProcessingDefinition(
+    string? RelativeId,
+    IEnumerable<string> RelativeIds,
+    RelationType RelationType,
+    Gender ExpectedGender);
+
 /// <summary>
 /// Orchestrates synchronization from GEDCOM to Geni
 /// </summary>
@@ -202,63 +208,51 @@ public class SyncService : ISyncService
         int currentDepth,
         CancellationToken cancellationToken)
     {
-        // Process parents
-        if (!string.IsNullOrEmpty(currentPerson.FatherId))
+        var relativeDefinitions = new[]
         {
-            await ProcessRelativeAsync(
+            new RelativeProcessingDefinition(
                 currentPerson.FatherId,
-                currentGeniId,
+                Enumerable.Empty<string>(),
                 RelationType.Parent,
-                Gender.Male,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
-        }
-
-        if (!string.IsNullOrEmpty(currentPerson.MotherId))
-        {
-            await ProcessRelativeAsync(
+                Gender.Male),
+            new RelativeProcessingDefinition(
                 currentPerson.MotherId,
-                currentGeniId,
+                Enumerable.Empty<string>(),
                 RelationType.Parent,
-                Gender.Female,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
-        }
-
-        // Process spouses
-        foreach (var spouseId in currentPerson.SpouseIds)
-        {
-            await ProcessRelativeAsync(
-                spouseId,
-                currentGeniId,
+                Gender.Female),
+            new RelativeProcessingDefinition(
+                null,
+                currentPerson.SpouseIds,
                 RelationType.Partner,
-                Gender.Unknown,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
-        }
-
-        // Process children
-        foreach (var childId in currentPerson.ChildrenIds)
-        {
-            await ProcessRelativeAsync(
-                childId,
-                currentGeniId,
+                Gender.Unknown),
+            new RelativeProcessingDefinition(
+                null,
+                currentPerson.ChildrenIds,
                 RelationType.Child,
-                Gender.Unknown,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
+                Gender.Unknown)
+        };
+
+        foreach (var relativeDefinition in relativeDefinitions)
+        {
+            var idsToProcess = relativeDefinition.RelativeIds.Any()
+                ? relativeDefinition.RelativeIds
+                : relativeDefinition.RelativeId is null
+                    ? Enumerable.Empty<string>()
+                    : new[] { relativeDefinition.RelativeId };
+
+            foreach (var relativeId in idsToProcess.Where(id => !string.IsNullOrEmpty(id)))
+            {
+                await ProcessRelativeAsync(
+                    relativeId!,
+                    currentGeniId,
+                    relativeDefinition.RelationType,
+                    relativeDefinition.ExpectedGender,
+                    geniFamily,
+                    gedcomData,
+                    queue,
+                    currentDepth,
+                    cancellationToken);
+            }
         }
     }
 
@@ -417,7 +411,7 @@ public class SyncService : ISyncService
         _statistics.QueueEnqueued++;
     }
 
-    private async Task ProcessRelativeAsync(
+    protected virtual async Task ProcessRelativeAsync(
         string relativeGedId,
         string currentGeniId,
         RelationType relationType,
