@@ -138,6 +138,7 @@ public class GedcomLoader : IGedcomLoader
     private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia)
     {
         string? firstName = null;
+        string? middleName = null;
         string? lastName = null;
         string? maidenName = null;
         string? nickname = null;
@@ -156,6 +157,21 @@ public class GedcomLoader : IGedcomLoader
                 lastName = CleanName(pieces.Surname);
                 nickname = CleanName(pieces.Nickname);
                 suffix = CleanName(pieces.NameSuffix);
+
+                // GEDCOM often puts patronymic (отчество) in the GIVN field along with first name
+                // e.g., "Владимир Витальевич" instead of just "Владимир"
+                // Split it into FirstName and MiddleName if there are exactly 2 words
+                if (!string.IsNullOrEmpty(firstName))
+                {
+                    var words = firstName.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (words.Length == 2)
+                    {
+                        middleName = words[1]; // Second word is patronymic (отчество)
+                        firstName = words[0];  // First word is actual first name
+                        _logger.LogDebug("Split GEDCOM FirstName '{Original}' into FirstName='{First}' and MiddleName='{Middle}' for {Id}",
+                            string.Join(" ", words), firstName, middleName, individual.IndividualId);
+                    }
+                }
             }
 
             // If no pieces available, fall back to parsing the full name string
@@ -330,6 +346,7 @@ public class GedcomLoader : IGedcomLoader
             Id = individual.IndividualId,
             Source = PersonSource.Gedcom,
             FirstName = firstName,
+            MiddleName = middleName,
             LastName = lastName,
             MaidenName = maidenName,
             Nickname = nickname,

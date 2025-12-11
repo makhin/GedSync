@@ -86,6 +86,14 @@ public class MatchingConfig
     public int GenderWeight { get; set; } = 5;
 
     /// <summary>
+    /// Weight for family relations comparison (default: 0)
+    /// Family relations include parents, spouses, children, and siblings
+    /// Higher weight increases accuracy but requires existing family data in Geni
+    /// </summary>
+    [JsonPropertyName("familyRelationsWeight")]
+    public int FamilyRelationsWeight { get; set; } = 0;
+
+    /// <summary>
     /// Minimum match score threshold (0-100, default: 70)
     /// </summary>
     [JsonPropertyName("matchThreshold")]
@@ -116,6 +124,7 @@ public class MatchingConfig
             BirthPlaceWeight = BirthPlaceWeight,
             DeathDateWeight = DeathDateWeight,
             GenderWeight = GenderWeight,
+            FamilyRelationsWeight = FamilyRelationsWeight,
             MatchThreshold = MatchThreshold,
             AutoMatchThreshold = AutoMatchThreshold,
             MaxBirthYearDifference = MaxBirthYearDifference

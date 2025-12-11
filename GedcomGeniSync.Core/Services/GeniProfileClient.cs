@@ -140,17 +140,19 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
                 var enrichedNodes = new Dictionary<string, GeniNode>();
 
-                // Collect all profile IDs (skip union nodes)
+                // Collect all profile IDs and union IDs separately
                 var profileIds = new List<string>();
+                var unionIds = new List<string>();
                 var nodeIdMapping = new Dictionary<string, string>(); // Maps nodeId -> numericId
 
                 foreach (var (nodeId, node) in result.Nodes)
                 {
-                    // Skip union nodes - they're relationships, not people
                     if (nodeId.StartsWith("union-"))
                     {
-                        Logger.LogDebug("Skipping union node {NodeId}", nodeId);
-                        enrichedNodes[nodeId] = node;
+                        // Collect union IDs for batch fetching
+                        var unionNumericId = nodeId.Replace("union-", "");
+                        unionIds.Add(unionNumericId);
+                        Logger.LogDebug("Found union node {NodeId} for batch fetch", nodeId);
                         continue;
                     }
 
@@ -171,7 +173,7 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
                     {
                         if (nodeId.StartsWith("union-"))
                         {
-                            continue; // Already added above
+                            continue; // Will be enriched after union batch fetch
                         }
 
                         var numericId = nodeIdMapping[nodeId];
@@ -224,6 +226,57 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
                         {
                             Logger.LogWarning("Failed to fetch full profile for {NodeId} (numeric: {NumericId}), using basic data", nodeId, numericId);
                             enrichedNodes[nodeId] = node;
+                        }
+                    }
+                }
+
+                // Fetch all unions in a single batch request
+                if (unionIds.Count > 0)
+                {
+                    Logger.LogInformation("Fetching {Count} unions in a single batch request", unionIds.Count);
+                    var batchUnions = await GetUnionsBatchAsync(unionIds);
+
+                    // Enrich union nodes with full union data
+                    foreach (var unionId in unionIds)
+                    {
+                        var nodeId = $"union-{unionId}";
+
+                        // Try to find the union in batch results
+                        GeniUnion? fullUnion = null;
+                        if (batchUnions.TryGetValue(unionId, out var union))
+                        {
+                            fullUnion = union;
+                        }
+                        else if (batchUnions.TryGetValue(nodeId, out var unionWithPrefix))
+                        {
+                            fullUnion = unionWithPrefix;
+                        }
+
+                        if (fullUnion != null)
+                        {
+                            // Get the original node structure
+                            var originalNode = result.Nodes.TryGetValue(nodeId, out var node) ? node : new GeniNode { Id = nodeId };
+
+                            // Enrich the node with union data
+                            var enrichedNode = new GeniNode
+                            {
+                                Id = originalNode.Id ?? nodeId,
+                                Edges = originalNode.Edges,
+                                Union = fullUnion  // Store the full union data
+                            };
+
+                            Logger.LogDebug("Enriched union node {NodeId}: Status='{Status}', MarriageDate='{MarriageDate}', DivorceDate='{DivorceDate}'",
+                                nodeId,
+                                fullUnion.Status ?? "(null)",
+                                fullUnion.MarriageDate ?? "(null)",
+                                fullUnion.Divorce?.Date?.FormattedDate ?? "(null)");
+
+                            enrichedNodes[nodeId] = enrichedNode;
+                        }
+                        else
+                        {
+                            Logger.LogWarning("Failed to fetch full union data for {NodeId} (numeric: {UnionId}), using basic data", nodeId, unionId);
+                            enrichedNodes[nodeId] = result.Nodes.TryGetValue(nodeId, out var node) ? node : new GeniNode { Id = nodeId };
                         }
                     }
                 }

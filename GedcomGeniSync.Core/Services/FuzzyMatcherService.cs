@@ -53,11 +53,26 @@ public class FuzzyMatcherService : IFuzzyMatcherService
     {
         var reasonsBuilder = ImmutableList.CreateBuilder<MatchReason>();
 
-        // Check if either has missing last name to adjust weights
-        var missingLastName = string.IsNullOrEmpty(source.LastName) || string.IsNullOrEmpty(target.LastName);
+        // Last name comparison first to check if we have a good match via MaidenName
+        var lastNameScore = CompareLastNames(source, target);
 
-        // First name comparison - give it more weight if last name is missing
-        var firstNameWeight = missingLastName ? _options.FirstNameWeight + (_options.LastNameWeight / 2) : _options.FirstNameWeight;
+        // Debug log for problematic cases
+        if (lastNameScore >= 0.95 && (string.IsNullOrEmpty(source.LastName) || string.IsNullOrEmpty(target.LastName)))
+        {
+            _logger.LogDebug("Strong LastName match via MaidenName! Source: FirstName='{SrcFirst}', LastName='{SrcLast}', MaidenName='{SrcMaiden}'; Target: FirstName='{TgtFirst}', LastName='{TgtLast}', MaidenName='{TgtMaiden}'",
+                source.FirstName, source.LastName ?? "(null)", source.MaidenName ?? "(null)",
+                target.FirstName, target.LastName ?? "(null)", target.MaidenName ?? "(null)");
+        }
+
+        // Check if either has missing last name to adjust weights
+        // BUT: Don't reduce weight if we successfully matched via MaidenName (score >= 0.95)
+        var missingLastName = string.IsNullOrEmpty(source.LastName) || string.IsNullOrEmpty(target.LastName);
+        var hasStrongLastNameMatch = lastNameScore >= 0.95; // MaidenName match returns 1.0
+
+        // First name comparison - give it more weight if last name is missing AND not matched via maiden name
+        var firstNameWeight = (missingLastName && !hasStrongLastNameMatch)
+            ? _options.FirstNameWeight + (_options.LastNameWeight / 2)
+            : _options.FirstNameWeight;
         var firstNameScore = CompareFirstNames(source, target);
         if (firstNameScore > 0)
         {
@@ -69,9 +84,10 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
-        // Last name comparison - reduce weight if missing
-        var lastNameWeight = missingLastName ? _options.LastNameWeight / 2 : _options.LastNameWeight;
-        var lastNameScore = CompareLastNames(source, target);
+        // Last name comparison - reduce weight ONLY if missing AND not matched via maiden name
+        var lastNameWeight = (missingLastName && !hasStrongLastNameMatch)
+            ? _options.LastNameWeight / 2
+            : _options.LastNameWeight;
         if (lastNameScore > 0)
         {
             reasonsBuilder.Add(new MatchReason
@@ -107,6 +123,25 @@ public class FuzzyMatcherService : IFuzzyMatcherService
                 Points = birthDateScore * _options.BirthDateWeight,
                 Details = $"{source.BirthDate} ↔ {target.BirthDate} ({birthDateScore:P0})"
             });
+        }
+
+        // IMPORTANT: Special bonus for strong MaidenName match combined with good FirstName and BirthDate
+        // This handles cases where:
+        // - LastName is missing but matched via MaidenName (e.g., Geni males often have null LastName)
+        // - FirstName is strong match but not perfect (e.g., "Владимир" vs "Владимир Витальевич")
+        // - BirthDate matches
+        // This combination gives high confidence even if individual scores aren't 100%
+        if (lastNameScore >= 0.95 && firstNameScore >= 0.85 && birthDateScore >= 0.85)
+        {
+            var bonus = 15.0; // Add bonus to compensate for patronymic differences
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "MaidenNameComboBonus",
+                Points = bonus,
+                Details = "Strong combination: MaidenName match + FirstName + BirthDate"
+            });
+            _logger.LogDebug("Applied MaidenName combo bonus of {Bonus} points (LastName:{LS:P0}, FirstName:{FS:P0}, BirthDate:{BS:P0})",
+                bonus, lastNameScore, firstNameScore, birthDateScore);
         }
 
         // Birth place comparison
@@ -309,7 +344,33 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         if (string.IsNullOrEmpty(sourceName) && string.IsNullOrEmpty(targetName))
             return 0.5; // Neutral score instead of 0
 
-        // If one is empty but the other is not, we can't confirm a match
+        // IMPORTANT: Check maiden name BEFORE early exit for missing LastName
+        // This handles cases where LastName is null but MaidenName is present (common in Geni for males)
+
+        // If source has no LastName but has MaidenName, compare it with target's LastName
+        if (string.IsNullOrEmpty(sourceName) && !string.IsNullOrEmpty(source.MaidenName) && !string.IsNullOrEmpty(targetName))
+        {
+            var normalizedMaiden = NormalizeForComparison(source.MaidenName);
+            var targetNorm = target.NormalizedLastName ?? NormalizeForComparison(targetName);
+            if (normalizedMaiden == targetNorm)
+                return 1.0; // Exact match via MaidenName
+        }
+
+        // If target has no LastName but has MaidenName, compare it with source's LastName
+        if (string.IsNullOrEmpty(targetName) && !string.IsNullOrEmpty(target.MaidenName) && !string.IsNullOrEmpty(sourceName))
+        {
+            var normalizedMaiden = NormalizeForComparison(target.MaidenName);
+            var sourceNorm = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
+            _logger.LogDebug("Comparing target MaidenName '{TargetMaidenName}' (normalized: '{NormMaiden}') with source LastName '{SourceLastName}' (normalized: '{NormSource}')",
+                target.MaidenName, normalizedMaiden, sourceName, sourceNorm);
+            if (normalizedMaiden == sourceNorm)
+            {
+                _logger.LogDebug("MATCH via MaidenName! Returning score 1.0");
+                return 1.0; // Exact match via MaidenName
+            }
+        }
+
+        // If one is empty but the other is not (and no MaidenName match above), we can't confirm a match
         // Return a neutral score instead of 0 to not penalize missing data
         if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(targetName))
             return 0.3; // Small positive score - missing data shouldn't be a strong negative
@@ -320,7 +381,7 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             source.NormalizedLastName == target.NormalizedLastName)
             return 1.0;
 
-        // 2. Check maiden name
+        // 2. Check maiden name (when both have LastName, but might also have MaidenName)
         if (!string.IsNullOrEmpty(source.MaidenName))
         {
             var normalizedMaiden = NormalizeForComparison(source.MaidenName);

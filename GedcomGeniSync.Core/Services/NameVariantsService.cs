@@ -45,14 +45,17 @@ public class NameVariantsService : INameVariantsService
         var lines = File.ReadAllLines(path);
         var count = 0;
 
-        foreach (var line in lines.Skip(1)) // Skip header
+        foreach (var line in lines)
         {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
             var parts = line.Split(',');
             if (parts.Length >= 2)
             {
                 var name = parts[0].Trim().Trim('"');
                 var variants = parts[1].Trim().Trim('"')
-                    .Split('|')
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
                     .Select(v => v.Trim())
                     .Where(v => !string.IsNullOrEmpty(v))
                     .ToList();
@@ -72,14 +75,17 @@ public class NameVariantsService : INameVariantsService
         var lines = File.ReadAllLines(path);
         var count = 0;
 
-        foreach (var line in lines.Skip(1))
+        foreach (var line in lines)
         {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
             var parts = line.Split(',');
             if (parts.Length >= 2)
             {
                 var name = parts[0].Trim().Trim('"');
                 var variants = parts[1].Trim().Trim('"')
-                    .Split('|')
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
                     .Select(v => v.Trim())
                     .Where(v => !string.IsNullOrEmpty(v))
                     .ToList();

@@ -249,6 +249,10 @@ public class GeniNode
     // Relations
     [JsonPropertyName("edges")]
     public GeniEdges? Edges { get; set; }
+
+    // Union data (only present for union nodes)
+    [JsonIgnore]
+    public GeniUnion? Union { get; set; }
 }
 
 [ExcludeFromCodeCoverage]
