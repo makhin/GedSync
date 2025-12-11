@@ -269,6 +269,62 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         }
     }
 
+    public async Task<Dictionary<string, GeniUnion>> GetUnionsBatchAsync(List<string> unionIds)
+    {
+        if (unionIds == null || unionIds.Count == 0)
+        {
+            return new Dictionary<string, GeniUnion>();
+        }
+
+        await ThrottleAsync();
+
+        // Join union IDs with commas
+        var idsParam = string.Join(",", unionIds);
+        var url = $"{BaseUrl}/union?ids={idsParam}";
+        Logger.LogDebug("GET {Url} (batch of {Count} unions)", url, unionIds.Count);
+
+        try
+        {
+            using var client = CreateClient();
+            var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
+            response.EnsureSuccessStatusCode();
+
+            // Log raw JSON response for debugging
+            var jsonContent = await response.Content.ReadAsStringAsync();
+            Logger.LogDebug("Batch API returned {Length} characters for {Count} unions",
+                jsonContent.Length, unionIds.Count);
+
+            // The batch API returns {"results": [GeniUnion, ...]}
+            var batchResult = System.Text.Json.JsonSerializer.Deserialize<GeniBatchUnionResult>(
+                jsonContent,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            // Convert list to dictionary keyed by numeric ID (without "union-" prefix)
+            var dictionary = new Dictionary<string, GeniUnion>();
+            if (batchResult?.Results != null)
+            {
+                foreach (var union in batchResult.Results)
+                {
+                    if (union.Id == null) continue;
+
+                    var numericId = union.NumericId;
+                    dictionary[numericId] = union;
+                    // Also add with "union-" prefix for compatibility
+                    dictionary[$"union-{numericId}"] = union;
+                    // Also add with full URL for compatibility
+                    dictionary[union.Id] = union;
+                }
+            }
+
+            return dictionary;
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.LogError(ex, "Failed to get batch unions for IDs: {UnionIds}", string.Join(", ", unionIds));
+            return new Dictionary<string, GeniUnion>();
+        }
+    }
+
     #endregion
 
     #region Write Operations
@@ -512,10 +568,10 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
             FirstName = create.FirstName,
             LastName = create.LastName,
             Gender = create.Gender,
-            BirthDate = create.BirthDate,
-            BirthPlace = create.BirthPlace,
-            DeathDate = create.DeathDate,
-            DeathPlace = create.DeathPlace
+            BirthDateString = create.BirthDate,
+            BirthLocationString = create.BirthPlace,
+            DeathDateString = create.DeathDate,
+            DeathLocationString = create.DeathPlace
         };
     }
 

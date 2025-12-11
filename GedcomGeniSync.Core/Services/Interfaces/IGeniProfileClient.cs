@@ -13,6 +13,9 @@ public interface IGeniProfileClient
     Task<GeniImmediateFamily?> GetImmediateFamilyAsync(string profileId);
     Task<List<GeniProfile>> SearchProfilesAsync(string name, string? birthYear = null);
 
+    // Union Read Operations
+    Task<Dictionary<string, GeniUnion>> GetUnionsBatchAsync(List<string> unionIds);
+
     // Profile Write Operations
     Task<GeniProfile?> AddChildAsync(string parentProfileId, GeniProfileCreate child);
     Task<GeniProfile?> AddParentAsync(string childProfileId, GeniProfileCreate parent);

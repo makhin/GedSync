@@ -145,6 +145,18 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
+        // Family relations comparison
+        var familyScore = CompareFamilyRelations(source, target);
+        if (familyScore > 0)
+        {
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "FamilyRelations",
+                Points = familyScore * _options.FamilyRelationsWeight,
+                Details = $"Common family members ({familyScore:P0})"
+            });
+        }
+
         var reasons = reasonsBuilder.ToImmutable();
         var rawScore = reasons.Sum(r => r.Points);
 
@@ -504,6 +516,84 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     #endregion
 
+    #region Family Relations Comparison
+
+    /// <summary>
+    /// Compare family relations between two persons
+    /// Returns a score between 0.0 and 1.0 based on matching family members
+    /// </summary>
+    private double CompareFamilyRelations(PersonRecord source, PersonRecord target)
+    {
+        var matchPoints = 0.0;
+        var totalPossiblePoints = 0.0;
+
+        // Compare parents (highest weight - 40% of family score)
+        var parentWeight = 0.4;
+        if (!string.IsNullOrEmpty(source.FatherId) && !string.IsNullOrEmpty(target.FatherId))
+        {
+            totalPossiblePoints += parentWeight;
+            if (source.FatherId == target.FatherId)
+                matchPoints += parentWeight;
+        }
+
+        if (!string.IsNullOrEmpty(source.MotherId) && !string.IsNullOrEmpty(target.MotherId))
+        {
+            totalPossiblePoints += parentWeight;
+            if (source.MotherId == target.MotherId)
+                matchPoints += parentWeight;
+        }
+
+        // Compare spouses (30% of family score)
+        var spouseWeight = 0.3;
+        if (source.SpouseIds.Any() && target.SpouseIds.Any())
+        {
+            totalPossiblePoints += spouseWeight;
+            var commonSpouses = source.SpouseIds.Intersect(target.SpouseIds).Count();
+            if (commonSpouses > 0)
+            {
+                // Full score if at least one common spouse
+                matchPoints += spouseWeight;
+            }
+        }
+
+        // Compare children (20% of family score)
+        var childrenWeight = 0.2;
+        if (source.ChildrenIds.Any() && target.ChildrenIds.Any())
+        {
+            totalPossiblePoints += childrenWeight;
+            var commonChildren = source.ChildrenIds.Intersect(target.ChildrenIds).Count();
+            var totalChildren = source.ChildrenIds.Union(target.ChildrenIds).Count();
+
+            if (totalChildren > 0)
+            {
+                // Jaccard similarity for children
+                var childrenSimilarity = (double)commonChildren / totalChildren;
+                matchPoints += childrenSimilarity * childrenWeight;
+            }
+        }
+
+        // Compare siblings (10% of family score)
+        var siblingWeight = 0.1;
+        if (source.SiblingIds.Any() && target.SiblingIds.Any())
+        {
+            totalPossiblePoints += siblingWeight;
+            var commonSiblings = source.SiblingIds.Intersect(target.SiblingIds).Count();
+            if (commonSiblings > 0)
+            {
+                matchPoints += siblingWeight;
+            }
+        }
+
+        // If no comparable family data, return 0 (neutral, not penalty)
+        if (totalPossiblePoints == 0)
+            return 0.0;
+
+        // Return normalized score
+        return matchPoints / totalPossiblePoints;
+    }
+
+    #endregion
+
     #region Normalization
 
     private string NormalizeForComparison(string text)
@@ -532,12 +622,13 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 public record MatchingOptions
 {
     // Weights (should sum to ~100 for intuitive percentage)
-    public int FirstNameWeight { get; init; } = 30;
-    public int LastNameWeight { get; init; } = 25;
-    public int BirthDateWeight { get; init; } = 20;
-    public int BirthPlaceWeight { get; init; } = 15;
-    public int DeathDateWeight { get; init; } = 5;
-    public int GenderWeight { get; init; } = 5;
+    public int FirstNameWeight { get; init; } = 25;
+    public int LastNameWeight { get; init; } = 20;
+    public int BirthDateWeight { get; init; } = 15;
+    public int BirthPlaceWeight { get; init; } = 10;
+    public int DeathDateWeight { get; init; } = 3;
+    public int GenderWeight { get; init; } = 2;
+    public int FamilyRelationsWeight { get; init; } = 25;
 
     // Thresholds
     public int MatchThreshold { get; init; } = 70;
@@ -548,7 +639,7 @@ public record MatchingOptions
     /// Total weight (sum of all weights)
     /// </summary>
     public int TotalWeight => FirstNameWeight + LastNameWeight + BirthDateWeight +
-                              BirthPlaceWeight + DeathDateWeight + GenderWeight;
+                              BirthPlaceWeight + DeathDateWeight + GenderWeight + FamilyRelationsWeight;
 
     /// <summary>
     /// Check if weights are normalized (sum to 100)

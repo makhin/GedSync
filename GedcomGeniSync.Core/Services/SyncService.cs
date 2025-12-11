@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
@@ -560,6 +561,9 @@ public class SyncService : ISyncService
             node.Gender ?? "(null)",
             node.BirthDate ?? "(null)");
 
+        // Extract multilingual name variants from Geni Names field
+        var nameVariants = ExtractNameVariantsFromGeniNames(node.Names, node.FirstName, node.LastName);
+
         return new PersonRecord
         {
             Id = geniId,
@@ -570,6 +574,7 @@ public class SyncService : ISyncService
             MaidenName = node.MaidenName,
             NormalizedFirstName = NameNormalizer.Normalize(node.FirstName),
             NormalizedLastName = NameNormalizer.Normalize(node.LastName),
+            NameVariants = nameVariants,
             Gender = node.Gender?.ToLowerInvariant() switch
             {
                 "male" => Gender.Male,
@@ -578,6 +583,60 @@ public class SyncService : ISyncService
             },
             BirthDate = DateInfo.Parse(node.BirthDate)
         };
+    }
+
+    /// <summary>
+    /// Extract name variants from Geni Names field
+    /// Names field structure: { "en": { "first_name": "John", "last_name": "Smith" }, "ru": { "first_name": "Иван", "last_name": "Смит" } }
+    /// </summary>
+    private ImmutableList<string> ExtractNameVariantsFromGeniNames(
+        Dictionary<string, Dictionary<string, string>>? names,
+        string? primaryFirstName,
+        string? primaryLastName)
+    {
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (names == null || names.Count == 0)
+            return ImmutableList<string>.Empty;
+
+        foreach (var (language, nameFields) in names)
+        {
+            // Extract first name variants
+            if (nameFields.TryGetValue("first_name", out var firstName) && !string.IsNullOrWhiteSpace(firstName))
+            {
+                // Only add if different from primary first name
+                if (!string.Equals(firstName, primaryFirstName, StringComparison.OrdinalIgnoreCase))
+                {
+                    variants.Add(firstName.Trim());
+                }
+            }
+
+            // Extract middle name variants
+            if (nameFields.TryGetValue("middle_name", out var middleName) && !string.IsNullOrWhiteSpace(middleName))
+            {
+                variants.Add(middleName.Trim());
+            }
+
+            // Extract last name variants (including maiden names from different languages)
+            if (nameFields.TryGetValue("last_name", out var lastName) && !string.IsNullOrWhiteSpace(lastName))
+            {
+                // Only add if different from primary last name
+                if (!string.Equals(lastName, primaryLastName, StringComparison.OrdinalIgnoreCase))
+                {
+                    variants.Add(lastName.Trim());
+                }
+            }
+
+            // Extract maiden name variants
+            if (nameFields.TryGetValue("maiden_name", out var maidenName) && !string.IsNullOrWhiteSpace(maidenName))
+            {
+                variants.Add(maidenName.Trim());
+            }
+        }
+
+        _logger.LogDebug("Extracted {Count} name variants from Geni Names field", variants.Count);
+
+        return variants.ToImmutableList();
     }
 
     private int CalculateMatchScore(

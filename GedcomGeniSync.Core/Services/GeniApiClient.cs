@@ -44,6 +44,9 @@ public class GeniApiClient : IGeniApiClient
     public Task<List<GeniProfile>> SearchProfilesAsync(string name, string? birthYear = null)
         => _profileClient.SearchProfilesAsync(name, birthYear);
 
+    public Task<Dictionary<string, GeniUnion>> GetUnionsBatchAsync(List<string> unionIds)
+        => _profileClient.GetUnionsBatchAsync(unionIds);
+
     public Task<GeniProfile?> AddChildAsync(string parentProfileId, GeniProfileCreate child)
         => _profileClient.AddChildAsync(parentProfileId, child);
 
