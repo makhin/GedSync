@@ -317,92 +317,95 @@ public class SyncService : ISyncService
 
         if (matchedGeniId != null)
         {
-            // Found existing match
-            _stateManager.AddMapping(context.RelativeGedId, matchedGeniId);
-
             var matchScore = CalculateMatchScore(context.RelativePerson, context.GeniFamily, matchedGeniId);
-
-            _results.Add(new SyncResult
-            {
-                GedcomId = context.RelativeGedId,
-                GeniId = matchedGeniId,
-                PersonName = context.RelativePerson.FullName,
-                Action = SyncAction.Matched,
-                MatchScore = matchScore,
-                RelationType = context.RelationType.ToString()
-            });
-
-            _statistics.ProfilesMatched++;
-
-            _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
-                context.RelativePerson.FullName, matchedGeniId, matchScore);
-
-            // Sync photos if enabled
-            if (_options.SyncPhotos && _photoService != null)
-            {
-                await SyncPhotosAsync(context.RelativePerson, matchedGeniId);
-            }
-
-            return matchedGeniId;
+            return await HandleMatchedProfileAsync(context, matchedGeniId, matchScore);
         }
-        else
+
+        var (createdProfile, errorMessage) = await CreateProfileAsync(
+            context.RelativePerson,
+            context.CurrentGeniId,
+            context.RelationType);
+
+        if (createdProfile != null)
         {
-            // Need to create new profile
-            var (createdProfile, errorMessage) = await CreateProfileAsync(
-                context.RelativePerson,
-                context.CurrentGeniId,
-                context.RelationType);
-
-            if (createdProfile != null)
-            {
-                var createdGeniId = createdProfile.NumericId;
-                _stateManager.AddMapping(context.RelativeGedId, createdGeniId);
-
-                _results.Add(new SyncResult
-                {
-                    GedcomId = context.RelativeGedId,
-                    GeniId = createdGeniId,
-                    PersonName = context.RelativePerson.FullName,
-                    Action = SyncAction.Created,
-                    RelationType = context.RelationType.ToString(),
-                    RelativeGeniId = context.CurrentGeniId
-                });
-
-                _statistics.ProfilesCreated++;
-                if (_options.DryRun)
-                {
-                    _statistics.DryRunProfileCreations++;
-                }
-
-                _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
-                    context.RelativePerson.FullName, createdGeniId, context.RelationType, context.CurrentGeniId);
-
-                // Sync photos if enabled
-                if (_options.SyncPhotos && _photoService != null)
-                {
-                    await SyncPhotosAsync(context.RelativePerson, createdGeniId);
-                }
-
-                return createdGeniId;
-            }
-            else
-            {
-                _logger.LogWarning("Failed to create profile for {Name}: {Error}",
-                    context.RelativePerson.FullName, errorMessage ?? "Unknown error");
-
-                _results.Add(new SyncResult
-                {
-                    GedcomId = context.RelativeGedId,
-                    PersonName = context.RelativePerson.FullName,
-                    Action = SyncAction.Error,
-                    RelationType = context.RelationType.ToString(),
-                    ErrorMessage = errorMessage ?? "Failed to create profile"
-                });
-
-                _statistics.ProfileErrors++;
-                return null;
-            }
+            return await HandleCreatedProfileAsync(context, createdProfile);
         }
+
+        _logger.LogWarning("Failed to create profile for {Name}: {Error}",
+            context.RelativePerson.FullName, errorMessage ?? "Unknown error");
+
+        _results.Add(new SyncResult
+        {
+            GedcomId = context.RelativeGedId,
+            PersonName = context.RelativePerson.FullName,
+            Action = SyncAction.Error,
+            RelationType = context.RelationType.ToString(),
+            ErrorMessage = errorMessage ?? "Failed to create profile"
+        });
+
+        _statistics.ProfileErrors++;
+        return null;
+    }
+
+    private async Task<string> HandleMatchedProfileAsync(RelativeProcessingContext context, string matchedGeniId, int matchScore)
+    {
+        _stateManager.AddMapping(context.RelativeGedId, matchedGeniId);
+
+        _results.Add(new SyncResult
+        {
+            GedcomId = context.RelativeGedId,
+            GeniId = matchedGeniId,
+            PersonName = context.RelativePerson!.FullName,
+            Action = SyncAction.Matched,
+            MatchScore = matchScore,
+            RelationType = context.RelationType.ToString()
+        });
+
+        _statistics.ProfilesMatched++;
+
+        _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
+            context.RelativePerson!.FullName, matchedGeniId, matchScore);
+
+        await SyncPhotosIfEnabledAsync(context.RelativePerson, matchedGeniId);
+
+        return matchedGeniId;
+    }
+
+    private async Task<string> HandleCreatedProfileAsync(RelativeProcessingContext context, GeniProfile createdProfile)
+    {
+        var createdGeniId = createdProfile.NumericId;
+        _stateManager.AddMapping(context.RelativeGedId, createdGeniId);
+
+        _results.Add(new SyncResult
+        {
+            GedcomId = context.RelativeGedId,
+            GeniId = createdGeniId,
+            PersonName = context.RelativePerson!.FullName,
+            Action = SyncAction.Created,
+            RelationType = context.RelationType.ToString(),
+            RelativeGeniId = context.CurrentGeniId
+        });
+
+        _statistics.ProfilesCreated++;
+        if (_options.DryRun)
+        {
+            _statistics.DryRunProfileCreations++;
+        }
+
+        _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
+            context.RelativePerson!.FullName, createdGeniId, context.RelationType, context.CurrentGeniId);
+
+        await SyncPhotosIfEnabledAsync(context.RelativePerson, createdGeniId);
+
+        return createdGeniId;
+    }
+
+    private async Task SyncPhotosIfEnabledAsync(PersonRecord? person, string geniId)
+    {
+        if (!_options.SyncPhotos || _photoService == null || person == null)
+            return;
+
+        await SyncPhotosAsync(person, geniId);
     }
 
     /// <summary>
