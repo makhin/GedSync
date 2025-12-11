@@ -8,6 +8,7 @@ public interface IGeniProfileClient
 {
     // Profile Read Operations
     Task<GeniProfile?> GetProfileAsync(string profileId);
+    Task<Dictionary<string, GeniProfile>> GetProfilesBatchAsync(List<string> profileIds);
     Task<GeniProfile?> GetCurrentUserProfileAsync();
     Task<GeniImmediateFamily?> GetImmediateFamilyAsync(string profileId);
     Task<List<GeniProfile>> SearchProfilesAsync(string name, string? birthYear = null);

@@ -32,6 +32,9 @@ public class GeniApiClient : IGeniApiClient
     public Task<GeniProfile?> GetProfileAsync(string profileId)
         => _profileClient.GetProfileAsync(profileId);
 
+    public Task<Dictionary<string, GeniProfile>> GetProfilesBatchAsync(List<string> profileIds)
+        => _profileClient.GetProfilesBatchAsync(profileIds);
+
     public Task<GeniProfile?> GetCurrentUserProfileAsync()
         => _profileClient.GetCurrentUserProfileAsync();
 

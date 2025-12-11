@@ -43,6 +43,58 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         }
     }
 
+    public async Task<Dictionary<string, GeniProfile>> GetProfilesBatchAsync(List<string> profileIds)
+    {
+        if (profileIds == null || profileIds.Count == 0)
+        {
+            return new Dictionary<string, GeniProfile>();
+        }
+
+        await ThrottleAsync();
+
+        // Join profile IDs with commas
+        var idsParam = string.Join(",", profileIds);
+        var url = $"{BaseUrl}/profile?ids={idsParam}";
+        Logger.LogDebug("GET {Url} (batch of {Count} profiles)", url, profileIds.Count);
+
+        try
+        {
+            using var client = CreateClient();
+            var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
+            response.EnsureSuccessStatusCode();
+
+            // Log raw JSON response for debugging
+            var jsonContent = await response.Content.ReadAsStringAsync();
+            Logger.LogDebug("Batch API returned {Length} characters for {Count} profiles",
+                jsonContent.Length, profileIds.Count);
+
+            // The batch API returns {"results": [GeniProfile, ...]}
+            var batchResult = System.Text.Json.JsonSerializer.Deserialize<GeniBatchProfileResult>(
+                jsonContent,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            // Convert list to dictionary keyed by numeric ID (without "profile-" prefix)
+            var dictionary = new Dictionary<string, GeniProfile>();
+            if (batchResult?.Results != null)
+            {
+                foreach (var profile in batchResult.Results)
+                {
+                    var numericId = profile.NumericId;
+                    dictionary[numericId] = profile;
+                    // Also add with "profile-" prefix for compatibility
+                    dictionary[profile.Id] = profile;
+                }
+            }
+
+            return dictionary;
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.LogError(ex, "Failed to get batch profiles for IDs: {ProfileIds}", string.Join(", ", profileIds));
+            return new Dictionary<string, GeniProfile>();
+        }
+    }
+
     public async Task<GeniProfile?> GetCurrentUserProfileAsync()
     {
         await ThrottleAsync();
@@ -81,18 +133,19 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             // IMPORTANT: The immediate-family endpoint returns only IDs and basic structure
-            // We need to fetch full profile data for each node
+            // We need to fetch full profile data for each node using batch API for efficiency
             if (result?.Nodes != null)
             {
-                Logger.LogInformation("Found {Count} nodes in immediate family. Fetching full profile data for each...", result.Nodes.Count);
+                Logger.LogInformation("Found {Count} nodes in immediate family. Fetching full profile data using batch API...", result.Nodes.Count);
 
                 var enrichedNodes = new Dictionary<string, GeniNode>();
 
+                // Collect all profile IDs (skip union nodes)
+                var profileIds = new List<string>();
+                var nodeIdMapping = new Dictionary<string, string>(); // Maps nodeId -> numericId
+
                 foreach (var (nodeId, node) in result.Nodes)
                 {
-                    // Extract numeric ID from node ID (e.g., "profile-34829663293" -> "34829663293")
-                    var numericId = nodeId.Replace("profile-", "").Replace("union-", "");
-
                     // Skip union nodes - they're relationships, not people
                     if (nodeId.StartsWith("union-"))
                     {
@@ -101,44 +154,77 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
                         continue;
                     }
 
-                    // Fetch full profile data
-                    Logger.LogDebug("Fetching full profile data for {NodeId}", nodeId);
-                    var fullProfile = await GetProfileAsync(numericId);
+                    // Extract numeric ID from node ID (e.g., "profile-34829663293" -> "34829663293")
+                    var numericId = nodeId.Replace("profile-", "");
+                    profileIds.Add(numericId);
+                    nodeIdMapping[nodeId] = numericId;
+                }
 
-                    if (fullProfile != null)
+                // Fetch all profiles in a single batch request
+                if (profileIds.Count > 0)
+                {
+                    Logger.LogInformation("Fetching {Count} profiles in a single batch request", profileIds.Count);
+                    var batchProfiles = await GetProfilesBatchAsync(profileIds);
+
+                    // Enrich nodes with full profile data
+                    foreach (var (nodeId, node) in result.Nodes)
                     {
-                        // Enrich the node with full profile data
-                        var enrichedNode = new GeniNode
+                        if (nodeId.StartsWith("union-"))
                         {
-                            Id = node.Id ?? nodeId,
-                            Name = fullProfile.Name,
-                            FirstName = fullProfile.FirstName,
-                            MiddleName = fullProfile.MiddleName, // Now we have middle_name!
-                            LastName = fullProfile.LastName,
-                            MaidenName = fullProfile.MaidenName,
-                            Suffix = fullProfile.Suffix,
-                            Gender = fullProfile.Gender,
-                            BirthDate = fullProfile.BirthDate,
-                            Edges = node.Edges
-                        };
+                            continue; // Already added above
+                        }
 
-                        Logger.LogDebug("Enriched node {NodeId}: Name='{Name}', FirstName='{FirstName}', MiddleName='{MiddleName}', LastName='{LastName}', MaidenName='{MaidenName}', Suffix='{Suffix}', Gender='{Gender}', BirthDate='{BirthDate}'",
-                            nodeId,
-                            enrichedNode.Name ?? "(null)",
-                            enrichedNode.FirstName ?? "(null)",
-                            enrichedNode.MiddleName ?? "(null)",
-                            enrichedNode.LastName ?? "(null)",
-                            enrichedNode.MaidenName ?? "(null)",
-                            enrichedNode.Suffix ?? "(null)",
-                            enrichedNode.Gender ?? "(null)",
-                            enrichedNode.BirthDate ?? "(null)");
+                        var numericId = nodeIdMapping[nodeId];
 
-                        enrichedNodes[nodeId] = enrichedNode;
-                    }
-                    else
-                    {
-                        Logger.LogWarning("Failed to fetch full profile for {NodeId}, using basic data", nodeId);
-                        enrichedNodes[nodeId] = node;
+                        // Try to find the profile in batch results
+                        // The batch API may return profile IDs with or without "profile-" prefix
+                        GeniProfile? fullProfile = null;
+                        if (batchProfiles.TryGetValue(numericId, out var profile))
+                        {
+                            fullProfile = profile;
+                        }
+                        else if (batchProfiles.TryGetValue($"profile-{numericId}", out var profileWithPrefix))
+                        {
+                            fullProfile = profileWithPrefix;
+                        }
+
+                        if (fullProfile != null)
+                        {
+                            // Enrich the node with full profile data
+                            var enrichedNode = new GeniNode
+                            {
+                                Id = node.Id ?? nodeId,
+                                Name = fullProfile.Name,
+                                FirstName = fullProfile.FirstName,
+                                MiddleName = fullProfile.MiddleName,
+                                LastName = fullProfile.LastName,
+                                MaidenName = fullProfile.MaidenName,
+                                Suffix = fullProfile.Suffix,
+                                Names = fullProfile.Names,
+                                Gender = fullProfile.Gender,
+                                BirthDate = fullProfile.BirthDate,
+                                Edges = node.Edges
+                            };
+
+                            Logger.LogDebug("Enriched node {NodeId}: Name='{Name}', FirstName='{FirstName}', MiddleName='{MiddleName}', LastName='{LastName}', MaidenName='{MaidenName}', Suffix='{Suffix}', Gender='{Gender}', BirthDate='{BirthDate}', Names={HasNames}",
+                                nodeId,
+                                enrichedNode.Name ?? "(null)",
+                                enrichedNode.FirstName ?? "(null)",
+                                enrichedNode.MiddleName ?? "(null)",
+                                enrichedNode.LastName ?? "(null)",
+                                enrichedNode.MaidenName ?? "(null)",
+                                enrichedNode.Suffix ?? "(null)",
+                                enrichedNode.Gender ?? "(null)",
+                                enrichedNode.BirthDate ?? "(null)",
+                                enrichedNode.Names != null ? $"{enrichedNode.Names.Count} locales" : "none");
+
+                            enrichedNodes[nodeId] = enrichedNode;
+                        }
+                        else
+                        {
+                            Logger.LogWarning("Failed to fetch full profile for {NodeId} (numeric: {NumericId}), using basic data", nodeId, numericId);
+                            enrichedNodes[nodeId] = node;
+                        }
                     }
                 }
 

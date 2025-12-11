@@ -35,6 +35,9 @@ public class GeniProfile
     [JsonPropertyName("suffix")]
     public string? Suffix { get; set; }
 
+    [JsonPropertyName("names")]
+    public Dictionary<string, Dictionary<string, string>>? Names { get; set; }
+
     [JsonPropertyName("gender")]
     public string? Gender { get; set; }
 
@@ -152,6 +155,9 @@ public class GeniNode
     [JsonPropertyName("suffix")]
     public string? Suffix { get; set; }
 
+    [JsonPropertyName("names")]
+    public Dictionary<string, Dictionary<string, string>>? Names { get; set; }
+
     [JsonPropertyName("gender")]
     public string? Gender { get; set; }
 
@@ -197,6 +203,13 @@ public class GeniSearchResult
 
     [JsonPropertyName("total_count")]
     public int TotalCount { get; set; }
+}
+
+[ExcludeFromCodeCoverage]
+public class GeniBatchProfileResult
+{
+    [JsonPropertyName("results")]
+    public List<GeniProfile>? Results { get; set; }
 }
 
 [ExcludeFromCodeCoverage]
