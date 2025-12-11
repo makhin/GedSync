@@ -61,38 +61,17 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(filePath);
         }
 
-        await ThrottleAsync();
-
         var url = $"{BaseUrl}/profile-{profileId}/add-photo";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        using var content = new MultipartFormDataContent();
-
         var fileBytes = await File.ReadAllBytesAsync(filePath);
-        using var fileContent = new ByteArrayContent(fileBytes);
-        fileContent.Headers.ContentType = GetContentType(filePath);
-        content.Add(fileContent, "file", Path.GetFileName(filePath));
 
-        if (!string.IsNullOrEmpty(caption))
-        {
-            content.Add(new StringContent(caption), "title");
-        }
-
-        try
-        {
-            var response = await client.PostAsync(url, content);
-            response.EnsureSuccessStatusCode();
-            var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
-
-            Logger.LogInformation("Uploaded photo {PhotoId} to profile {ProfileId}", result?.Id, profileId);
-            return result;
-        }
-        catch (HttpRequestException ex)
-        {
-            Logger.LogError(ex, "Failed to upload photo to profile {ProfileId}", profileId);
-            return null;
-        }
+        return await UploadPhotoInternalAsync(
+            url,
+            fileBytes,
+            Path.GetFileName(filePath),
+            profileId,
+            caption,
+            "Uploaded photo",
+            "Failed to upload photo to profile {ProfileId}");
     }
 
     public async Task<GeniPhoto?> AddPhotoFromBytesAsync(
@@ -108,37 +87,16 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(fileName);
         }
 
-        await ThrottleAsync();
-
         var url = $"{BaseUrl}/profile-{profileId}/add-photo";
-        Logger.LogDebug("POST {Url}", url);
 
-        using var client = CreateClient();
-        using var content = new MultipartFormDataContent();
-
-        using var fileContent = new ByteArrayContent(imageData);
-        fileContent.Headers.ContentType = GetContentType(fileName);
-        content.Add(fileContent, "file", fileName);
-
-        if (!string.IsNullOrEmpty(caption))
-        {
-            content.Add(new StringContent(caption), "title");
-        }
-
-        try
-        {
-            var response = await client.PostAsync(url, content);
-            response.EnsureSuccessStatusCode();
-            var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
-
-            Logger.LogInformation("Uploaded photo {PhotoId} to profile {ProfileId}", result?.Id, profileId);
-            return result;
-        }
-        catch (HttpRequestException ex)
-        {
-            Logger.LogError(ex, "Failed to upload photo to profile {ProfileId}", profileId);
-            return null;
-        }
+        return await UploadPhotoInternalAsync(
+            url,
+            imageData,
+            fileName,
+            profileId,
+            caption,
+            "Uploaded photo",
+            "Failed to upload photo to profile {ProfileId}");
     }
 
     public async Task<GeniPhoto?> SetMugshotAsync(string profileId, string filePath)
@@ -155,33 +113,17 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(filePath);
         }
 
-        await ThrottleAsync();
-
         var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        using var content = new MultipartFormDataContent();
-
         var fileBytes = await File.ReadAllBytesAsync(filePath);
-        using var fileContent = new ByteArrayContent(fileBytes);
-        fileContent.Headers.ContentType = GetContentType(filePath);
-        content.Add(fileContent, "file", Path.GetFileName(filePath));
 
-        try
-        {
-            var response = await client.PostAsync(url, content);
-            response.EnsureSuccessStatusCode();
-            var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
-
-            Logger.LogInformation("Set mugshot {PhotoId} for profile {ProfileId}", result?.Id, profileId);
-            return result;
-        }
-        catch (HttpRequestException ex)
-        {
-            Logger.LogError(ex, "Failed to set mugshot for profile {ProfileId}", profileId);
-            return null;
-        }
+        return await UploadPhotoInternalAsync(
+            url,
+            fileBytes,
+            Path.GetFileName(filePath),
+            profileId,
+            null,
+            "Set mugshot",
+            "Failed to set mugshot for profile {ProfileId}");
     }
 
     public async Task<GeniPhoto?> SetMugshotFromBytesAsync(string profileId, byte[] imageData, string fileName)
@@ -193,32 +135,16 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(fileName);
         }
 
-        await ThrottleAsync();
-
         var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
-        Logger.LogDebug("POST {Url}", url);
 
-        using var client = CreateClient();
-        using var content = new MultipartFormDataContent();
-
-        using var fileContent = new ByteArrayContent(imageData);
-        fileContent.Headers.ContentType = GetContentType(fileName);
-        content.Add(fileContent, "file", fileName);
-
-        try
-        {
-            var response = await client.PostAsync(url, content);
-            response.EnsureSuccessStatusCode();
-            var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
-
-            Logger.LogInformation("Set mugshot {PhotoId} for profile {ProfileId}", result?.Id, profileId);
-            return result;
-        }
-        catch (HttpRequestException ex)
-        {
-            Logger.LogError(ex, "Failed to set mugshot for profile {ProfileId}", profileId);
-            return null;
-        }
+        return await UploadPhotoInternalAsync(
+            url,
+            imageData,
+            fileName,
+            profileId,
+            null,
+            "Set mugshot",
+            "Failed to set mugshot for profile {ProfileId}");
     }
 
     public async Task<bool> SetExistingPhotoAsMugshotAsync(string profileId, string photoId)
@@ -427,6 +353,47 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
     #endregion
 
     #region Photo Helper Methods
+
+    private async Task<GeniPhoto?> UploadPhotoInternalAsync(
+        string url,
+        byte[] imageData,
+        string fileName,
+        string profileId,
+        string? caption,
+        string successAction,
+        string failureMessage)
+    {
+        await ThrottleAsync();
+
+        Logger.LogDebug("POST {Url}", url);
+
+        using var client = CreateClient();
+        using var content = new MultipartFormDataContent();
+
+        using var fileContent = new ByteArrayContent(imageData);
+        fileContent.Headers.ContentType = GetContentType(fileName);
+        content.Add(fileContent, "file", fileName);
+
+        if (!string.IsNullOrEmpty(caption))
+        {
+            content.Add(new StringContent(caption), "title");
+        }
+
+        try
+        {
+            var response = await client.PostAsync(url, content);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
+
+            Logger.LogInformation("{Action} {PhotoId} for profile {ProfileId}", successAction, result?.Id, profileId);
+            return result;
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.LogError(ex, failureMessage, profileId);
+            return null;
+        }
+    }
 
     private static MediaTypeHeaderValue GetContentType(string filePath)
     {
