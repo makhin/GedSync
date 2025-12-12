@@ -26,6 +26,7 @@ public class FuzzyMatcherServiceTests
             BirthPlaceWeight = 10,
             DeathDateWeight = 5,
             GenderWeight = 5,
+            FamilyRelationsWeight = 0, // No family data in this test
         };
 
         var person = CreatePerson(
@@ -112,7 +113,7 @@ public class FuzzyMatcherServiceTests
 
         var result = service.Compare(source, target);
 
-        result.Score.Should().BeGreaterThan(50);
+        result.Score.Should().BeGreaterThan(40); // firstName ~25 + lastName ~20 = 45%
         result.Reasons.Should().Contain(r => r.Field == "FirstName");
     }
 
@@ -129,7 +130,7 @@ public class FuzzyMatcherServiceTests
 
         var result = service.Compare(source, target);
 
-        result.Reasons.Should().Contain(r => r.Field == "LastName" && r.Points >= 23);
+        result.Reasons.Should().Contain(r => r.Field == "LastName" && r.Points >= 18); // MaidenName weight = 20 * 1.3 = 26, but reduced because of mismatch
     }
 
     [Fact]
@@ -143,7 +144,7 @@ public class FuzzyMatcherServiceTests
         var result = service.Compare(source, target);
 
         result.Reasons.Should().Contain(r => r.Field == "FirstName");
-        result.Reasons.First(r => r.Field == "FirstName").Points.Should().BeGreaterThan(20);
+        result.Reasons.First(r => r.Field == "FirstName").Points.Should().BeGreaterThan(15); // FirstName weight is now 25
     }
 
     [Fact]
@@ -191,9 +192,10 @@ public class FuzzyMatcherServiceTests
 
         var result = service.Compare(source, target);
 
-        // Score ~75% (firstName=30 + lastName=25 + birthDate=20)
+        // Score ~60% (firstName=25 + lastName=20 + birthDate=15)
         // Gender/birthPlace/deathDate only penalize mismatches, don't add points for matches
-        result.Score.Should().BeGreaterThanOrEqualTo(70);
+        // FamilyRelations=25 not included as no family data
+        result.Score.Should().BeGreaterThanOrEqualTo(55);
     }
 
     [Fact]
@@ -229,7 +231,126 @@ public class FuzzyMatcherServiceTests
 
         var result = service.Compare(source, target);
 
-        result.Score.Should().BeGreaterThan(50);
+        result.Score.Should().BeGreaterThan(40); // firstName ~25 + lastName ~20 = 45%
+        result.Reasons.Should().Contain(r => r.Field == "FirstName");
+    }
+
+    [Fact]
+    public void Compare_ShouldScoreHigher_WhenFamilyRelationsMatch()
+    {
+        var fatherId = "father-123";
+        var motherId = "mother-456";
+        var spouseId = "spouse-789";
+        var childId = "child-101";
+
+        var person1 = CreatePerson(
+            first: "Ivan",
+            last: "Petrov",
+            gender: Gender.Male,
+            birthDate: new DateInfo { Date = new DateOnly(1980, 1, 1) })
+            with
+        {
+            NormalizedFirstName = "ivan",
+            NormalizedLastName = "petrov",
+            FatherId = fatherId,
+            MotherId = motherId,
+            SpouseIds = ImmutableList.Create(spouseId),
+            ChildrenIds = ImmutableList.Create(childId)
+        };
+
+        var person2 = CreatePerson(
+            first: "Ivan",
+            last: "Petrov",
+            gender: Gender.Male,
+            birthDate: new DateInfo { Date = new DateOnly(1980, 1, 1) })
+            with
+        {
+            NormalizedFirstName = "ivan",
+            NormalizedLastName = "petrov",
+            FatherId = fatherId,
+            MotherId = motherId,
+            SpouseIds = ImmutableList.Create(spouseId),
+            ChildrenIds = ImmutableList.Create(childId)
+        };
+
+        var service = CreateService();
+
+        var result = service.Compare(person1, person2);
+
+        result.Score.Should().BeGreaterThan(80); // firstName=25 + lastName=20 + birthDate=15 + familyRelations=25 = 85
+        result.Reasons.Should().Contain(r => r.Field == "FamilyRelations");
+        var familyReason = result.Reasons.First(r => r.Field == "FamilyRelations");
+        familyReason.Points.Should().BeApproximately(25, precision: 0.1);
+    }
+
+    [Fact]
+    public void Compare_ShouldScoreLower_WhenFamilyRelationsDiffer()
+    {
+        var person1 = CreatePerson("Ivan", "Petrov", Gender.Male)
+            with
+        {
+            FatherId = "father-123",
+            MotherId = "mother-456"
+        };
+
+        var person2 = CreatePerson("Ivan", "Petrov", Gender.Male)
+            with
+        {
+            FatherId = "father-999",
+            MotherId = "mother-888"
+        };
+
+        var service = CreateService();
+
+        var result = service.Compare(person1, person2);
+
+        result.Reasons.Should().NotContain(r => r.Field == "FamilyRelations");
+    }
+
+    [Fact]
+    public void Compare_ShouldHandlePartialFamilyMatches()
+    {
+        var fatherId = "father-123";
+
+        var person1 = CreatePerson("Ivan", "Petrov", Gender.Male)
+            with
+        {
+            FatherId = fatherId,
+            MotherId = "mother-456"
+        };
+
+        var person2 = CreatePerson("Ivan", "Petrov", Gender.Male)
+            with
+        {
+            FatherId = fatherId,
+            MotherId = "mother-different"
+        };
+
+        var service = CreateService();
+
+        var result = service.Compare(person1, person2);
+
+        result.Reasons.Should().Contain(r => r.Field == "FamilyRelations");
+        var familyReason = result.Reasons.First(r => r.Field == "FamilyRelations");
+        familyReason.Points.Should().BeGreaterThan(0).And.BeLessThan(25);
+    }
+
+    [Fact]
+    public void Compare_ShouldUseMultilingualNameVariants()
+    {
+        var person1 = CreatePerson("Ivan", "Petrov", Gender.Male)
+            with
+        {
+            NameVariants = ImmutableList.Create("Иван", "Johann")
+        };
+
+        var person2 = CreatePerson("Johann", "Petrov", Gender.Male);
+
+        var service = CreateService();
+
+        var result = service.Compare(person1, person2);
+
+        result.Score.Should().BeGreaterThan(40); // firstName ~25 + lastName ~20 = 45%
         result.Reasons.Should().Contain(r => r.Field == "FirstName");
     }
 

@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="GeneGenie.Gedcom" Version="1.0.3" />
+    <PackageReference Include="Gedcom.Net.SDK" Version="1.0.8" />
     <PackageReference Include="FuzzySharp" Version="2.0.2" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>

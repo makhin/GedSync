@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "GedcomGeniSync.Cli": {
+      "commandName": "Project",
+      "commandLineArgs": "sync --dry-run --config gedsync.json --gedcom makhin.ged --anchor-ged I500002 --anchor-geni 34828568625 --token-file geni_token.json --max-depth 1"
+    }
+  }
+}

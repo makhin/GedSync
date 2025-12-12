@@ -6,7 +6,7 @@
     <RootNamespace>GedcomGeniSync</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="GeneGenie.Gedcom" Version="1.0.3" />
+    <PackageReference Include="Gedcom.Net.SDK" Version="1.0.8" />
     <PackageReference Include="F23.StringSimilarity" Version="7.0.1" />
     <PackageReference Include="Humanizer.Core" Version="3.0.1" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />

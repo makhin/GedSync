@@ -171,10 +171,12 @@ class Program
                     sp.GetRequiredService<IHttpClientFactory>(),
                     sp.GetRequiredService<ILogger<MyHeritagePhotoService>>(),
                     dryRun));
+                services.AddSingleton<ISyncStateManager, SyncStateManager>();
                 services.AddSingleton<ISyncService>(sp => new SyncService(
                     sp.GetRequiredService<IGedcomLoader>(),
                     sp.GetRequiredService<IGeniApiClient>(),
                     sp.GetRequiredService<IFuzzyMatcherService>(),
+                    sp.GetRequiredService<ISyncStateManager>(),
                     sp.GetRequiredService<ILogger<SyncService>>(),
                     sp.GetRequiredService<SyncOptions>(),
                     syncPhotos ? sp.GetRequiredService<IMyHeritagePhotoService>() : null));
@@ -279,34 +281,10 @@ class Program
 
                 result.PrintStats(logger);
 
-                logger.LogInformation("\n=== Sample Persons ===");
-                foreach (var person in result.Persons.Values.Take(10))
-                {
-                    logger.LogInformation("{Id}: {Name}", person.Id, person);
-                }
-
-                logger.LogInformation("\n=== RIN Mapping Count ===");
-                logger.LogInformation("Total RIN mappings: {Count}", result.RinToXRefMapping.Count);
-                if (result.RinToXRefMapping.ContainsKey("I500002"))
-                {
-                    logger.LogInformation("I500002 maps to: {XRef}", result.RinToXRefMapping["I500002"]);
-                }
-                else
-                {
-                    logger.LogInformation("I500002 NOT found in RIN mapping");
-                    logger.LogInformation("Sample RIN mappings: {Samples}",
-                        string.Join(", ", result.RinToXRefMapping.Take(5).Select(kvp => $"{kvp.Key}->{kvp.Value}")));
-                }
-
                 if (!string.IsNullOrEmpty(anchor))
                 {
-                    // Resolve anchor ID via RIN mapping if needed
-                    var resolvedAnchor = anchor;
-                    if (result.RinToXRefMapping.TryGetValue(anchor, out var xrefId))
-                    {
-                        resolvedAnchor = xrefId;
-                        logger.LogInformation("Resolved anchor '{Input}' to '{XRef}' via RIN", anchor, xrefId);
-                    }
+                    // Normalize anchor ID to standard GEDCOM format
+                    var resolvedAnchor = GedcomIdNormalizer.Normalize(anchor);
 
                     logger.LogInformation("\n=== BFS from {Anchor} ===", anchor);
 

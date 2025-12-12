@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
@@ -6,6 +7,28 @@ using System.Net.Http;
 using System.Text.Json;
 
 namespace GedcomGeniSync.Services;
+
+/// <summary>
+/// Context object for relative processing to reduce parameter count
+/// </summary>
+internal class RelativeProcessingContext
+{
+    public required string RelativeGedId { get; init; }
+    public required string CurrentGeniId { get; init; }
+    public required RelationType RelationType { get; init; }
+    public required Gender ExpectedGender { get; init; }
+    public required GeniImmediateFamily? GeniFamily { get; init; }
+    public required GedcomLoadResult GedcomData { get; init; }
+    public required Queue<(string GedcomId, string GeniId, int Depth)> Queue { get; init; }
+    public required int CurrentDepth { get; init; }
+    public PersonRecord? RelativePerson { get; set; }
+}
+
+internal readonly record struct RelativeProcessingDefinition(
+    string? RelativeId,
+    IEnumerable<string> RelativeIds,
+    RelationType RelationType,
+    Gender ExpectedGender);
 
 /// <summary>
 /// Orchestrates synchronization from GEDCOM to Geni
@@ -17,13 +40,11 @@ public class SyncService : ISyncService
     private readonly IGeniApiClient _geniClient;
     private readonly IFuzzyMatcherService _matcher;
     private readonly IMyHeritagePhotoService? _photoService;
+    private readonly ISyncStateManager _stateManager;
     private readonly ILogger<SyncService> _logger;
     private readonly SyncOptions _options;
 
     // State
-    private readonly Dictionary<string, string> _gedcomToGeniMap = new(); // GED ID → Geni ID
-    private readonly Dictionary<string, string> _geniToGedcomMap = new(); // Geni ID → GED ID
-    private readonly HashSet<string> _processedGedcomIds = new();
     private readonly List<SyncResult> _results = new();
     private readonly SyncStatistics _statistics = new();
 
@@ -31,6 +52,7 @@ public class SyncService : ISyncService
         IGedcomLoader gedcomLoader,
         IGeniApiClient geniClient,
         IFuzzyMatcherService matcher,
+        ISyncStateManager stateManager,
         ILogger<SyncService> logger,
         SyncOptions? options = null,
         IMyHeritagePhotoService? photoService = null)
@@ -38,6 +60,7 @@ public class SyncService : ISyncService
         _gedcomLoader = gedcomLoader;
         _geniClient = geniClient;
         _matcher = matcher;
+        _stateManager = stateManager;
         _logger = logger;
         _options = options ?? new SyncOptions();
         _photoService = photoService;
@@ -64,23 +87,11 @@ public class SyncService : ISyncService
         _statistics.GedcomPersonsTotal = gedcomData.TotalPersons;
         _statistics.GedcomFamiliesTotal = gedcomData.TotalFamilies;
 
-        // Normalize anchor ID (remove @ symbols and quotes if present)
-        var normalizedAnchorId = anchorGedcomId.Trim('@', '\'', '"');
+        // Normalize anchor ID to standard GEDCOM format with @ delimiters
+        var normalizedAnchorId = GedcomIdNormalizer.Normalize(anchorGedcomId);
 
         // Verify anchor exists in GEDCOM
-        // First try direct lookup
         var anchorPerson = gedcomData.Persons.GetValueOrDefault(normalizedAnchorId);
-
-        // If not found, try RIN mapping
-        if (anchorPerson == null && gedcomData.RinToXRefMapping.TryGetValue(normalizedAnchorId, out var xrefId))
-        {
-            anchorPerson = gedcomData.Persons.GetValueOrDefault(xrefId);
-            if (anchorPerson != null)
-            {
-                _logger.LogInformation("Resolved anchor ID '{Input}' via RIN mapping to '{XRef}'",
-                    anchorGedcomId, xrefId);
-            }
-        }
 
         if (anchorPerson == null)
         {
@@ -113,9 +124,8 @@ public class SyncService : ISyncService
         var anchorInternalId = anchorPerson.Id;
 
         // Initialize mapping with anchor
-        _gedcomToGeniMap[anchorInternalId] = anchorGeniId;
-        _geniToGedcomMap[anchorGeniId] = anchorInternalId;
-        _processedGedcomIds.Add(anchorInternalId);
+        _stateManager.AddMapping(anchorInternalId, anchorGeniId);
+        _stateManager.MarkAsProcessed(anchorInternalId);
 
         _statistics.ProfilesMatched++;
         _statistics.QueueEnqueued++;
@@ -198,67 +208,210 @@ public class SyncService : ISyncService
         int currentDepth,
         CancellationToken cancellationToken)
     {
-        // Process parents
-        if (!string.IsNullOrEmpty(currentPerson.FatherId))
+        var relativeDefinitions = new[]
         {
-            await ProcessRelativeAsync(
+            new RelativeProcessingDefinition(
                 currentPerson.FatherId,
-                currentGeniId,
+                Enumerable.Empty<string>(),
                 RelationType.Parent,
-                Gender.Male,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
-        }
-
-        if (!string.IsNullOrEmpty(currentPerson.MotherId))
-        {
-            await ProcessRelativeAsync(
+                Gender.Male),
+            new RelativeProcessingDefinition(
                 currentPerson.MotherId,
-                currentGeniId,
+                Enumerable.Empty<string>(),
                 RelationType.Parent,
-                Gender.Female,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
-        }
-
-        // Process spouses
-        foreach (var spouseId in currentPerson.SpouseIds)
-        {
-            await ProcessRelativeAsync(
-                spouseId,
-                currentGeniId,
+                Gender.Female),
+            new RelativeProcessingDefinition(
+                null,
+                currentPerson.SpouseIds,
                 RelationType.Partner,
-                Gender.Unknown,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
-        }
-
-        // Process children
-        foreach (var childId in currentPerson.ChildrenIds)
-        {
-            await ProcessRelativeAsync(
-                childId,
-                currentGeniId,
+                Gender.Unknown),
+            new RelativeProcessingDefinition(
+                null,
+                currentPerson.ChildrenIds,
                 RelationType.Child,
-                Gender.Unknown,
-                geniFamily,
-                gedcomData,
-                queue,
-                currentDepth,
-                cancellationToken);
+                Gender.Unknown)
+        };
+
+        foreach (var relativeDefinition in relativeDefinitions)
+        {
+            var idsToProcess = relativeDefinition.RelativeIds.Any()
+                ? relativeDefinition.RelativeIds
+                : relativeDefinition.RelativeId is null
+                    ? Enumerable.Empty<string>()
+                    : new[] { relativeDefinition.RelativeId };
+
+            foreach (var relativeId in idsToProcess.Where(id => !string.IsNullOrEmpty(id)))
+            {
+                await ProcessRelativeAsync(
+                    relativeId!,
+                    currentGeniId,
+                    relativeDefinition.RelationType,
+                    relativeDefinition.ExpectedGender,
+                    geniFamily,
+                    gedcomData,
+                    queue,
+                    currentDepth,
+                    cancellationToken);
+            }
         }
     }
 
-    private async Task ProcessRelativeAsync(
+    /// <summary>
+    /// Validates relative data and determines if processing should continue
+    /// </summary>
+    /// <returns>True if validation passed and processing should continue</returns>
+    private bool ValidateRelativeData(RelativeProcessingContext context)
+    {
+        // Check if relative exists in GEDCOM
+        context.RelativePerson = context.GedcomData.Persons.GetValueOrDefault(context.RelativeGedId);
+        if (context.RelativePerson == null)
+        {
+            _logger.LogWarning("Relative {Id} not found in GEDCOM", context.RelativeGedId);
+            _statistics.ProfileErrors++;
+            return false;
+        }
+
+        // Skip if insufficient data (no name)
+        if (string.IsNullOrEmpty(context.RelativePerson.FirstName) &&
+            string.IsNullOrEmpty(context.RelativePerson.LastName))
+        {
+            _statistics.ProfilesSkipped++;
+            _results.Add(new SyncResult
+            {
+                GedcomId = context.RelativeGedId,
+                PersonName = context.RelativePerson.FullName,
+                Action = SyncAction.Skipped,
+                ErrorMessage = "Insufficient data (no name)"
+            });
+            _logger.LogWarning("Skipping {RelType}: {Name} due to missing name data",
+                context.RelationType, context.RelativePerson.FullName);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Attempts to match existing profile or creates a new one
+    /// </summary>
+    /// <returns>Geni ID of matched or created profile, or null if failed</returns>
+    private async Task<string?> MatchOrCreateProfileAsync(RelativeProcessingContext context)
+    {
+        if (context.RelativePerson == null)
+            return null;
+
+        _logger.LogInformation("Processing {RelType}: {Name}", context.RelationType, context.RelativePerson.FullName);
+
+        // Try to find match in Geni family
+        var matchedGeniId = FindMatchInGeniFamily(
+            context.RelativePerson,
+            context.RelationType,
+            context.ExpectedGender,
+            context.GeniFamily);
+
+        if (matchedGeniId != null)
+        {
+            var matchScore = CalculateMatchScore(context.RelativePerson, context.GeniFamily, matchedGeniId);
+            return await HandleMatchedProfileAsync(context, matchedGeniId, matchScore);
+        }
+
+        var (createdProfile, errorMessage) = await CreateProfileAsync(
+            context.RelativePerson,
+            context.CurrentGeniId,
+            context.RelationType);
+
+        if (createdProfile != null)
+        {
+            return await HandleCreatedProfileAsync(context, createdProfile);
+        }
+
+        _logger.LogWarning("Failed to create profile for {Name}: {Error}",
+            context.RelativePerson.FullName, errorMessage ?? "Unknown error");
+
+        _results.Add(new SyncResult
+        {
+            GedcomId = context.RelativeGedId,
+            PersonName = context.RelativePerson.FullName,
+            Action = SyncAction.Error,
+            RelationType = context.RelationType.ToString(),
+            ErrorMessage = errorMessage ?? "Failed to create profile"
+        });
+
+        _statistics.ProfileErrors++;
+        return null;
+    }
+
+    private async Task<string> HandleMatchedProfileAsync(RelativeProcessingContext context, string matchedGeniId, int matchScore)
+    {
+        _stateManager.AddMapping(context.RelativeGedId, matchedGeniId);
+
+        _results.Add(new SyncResult
+        {
+            GedcomId = context.RelativeGedId,
+            GeniId = matchedGeniId,
+            PersonName = context.RelativePerson!.FullName,
+            Action = SyncAction.Matched,
+            MatchScore = matchScore,
+            RelationType = context.RelationType.ToString()
+        });
+
+        _statistics.ProfilesMatched++;
+
+        _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
+            context.RelativePerson!.FullName, matchedGeniId, matchScore);
+
+        await SyncPhotosIfEnabledAsync(context.RelativePerson, matchedGeniId);
+
+        return matchedGeniId;
+    }
+
+    private async Task<string> HandleCreatedProfileAsync(RelativeProcessingContext context, GeniProfile createdProfile)
+    {
+        var createdGeniId = createdProfile.NumericId;
+        _stateManager.AddMapping(context.RelativeGedId, createdGeniId);
+
+        _results.Add(new SyncResult
+        {
+            GedcomId = context.RelativeGedId,
+            GeniId = createdGeniId,
+            PersonName = context.RelativePerson!.FullName,
+            Action = SyncAction.Created,
+            RelationType = context.RelationType.ToString(),
+            RelativeGeniId = context.CurrentGeniId
+        });
+
+        _statistics.ProfilesCreated++;
+        if (_options.DryRun)
+        {
+            _statistics.DryRunProfileCreations++;
+        }
+
+        _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
+            context.RelativePerson!.FullName, createdGeniId, context.RelationType, context.CurrentGeniId);
+
+        await SyncPhotosIfEnabledAsync(context.RelativePerson, createdGeniId);
+
+        return createdGeniId;
+    }
+
+    private async Task SyncPhotosIfEnabledAsync(PersonRecord? person, string geniId)
+    {
+        if (!_options.SyncPhotos || _photoService == null || person == null)
+            return;
+
+        await SyncPhotosAsync(person, geniId);
+    }
+
+    /// <summary>
+    /// Enqueues relative for further processing
+    /// </summary>
+    private void EnqueueRelative(RelativeProcessingContext context, string geniId)
+    {
+        context.Queue.Enqueue((context.RelativeGedId, geniId, context.CurrentDepth + 1));
+        _statistics.QueueEnqueued++;
+    }
+
+    protected virtual async Task ProcessRelativeAsync(
         string relativeGedId,
         string currentGeniId,
         RelationType relationType,
@@ -273,139 +426,38 @@ public class SyncService : ISyncService
             return;
 
         // Skip if already processed
-        if (_processedGedcomIds.Contains(relativeGedId))
+        if (_stateManager.IsProcessed(relativeGedId))
         {
             _logger.LogDebug("Already processed relative {Id}, skipping", relativeGedId);
             return;
         }
 
-        _processedGedcomIds.Add(relativeGedId);
+        _stateManager.MarkAsProcessed(relativeGedId);
 
-        var relativePerson = gedcomData.Persons.GetValueOrDefault(relativeGedId);
-        if (relativePerson == null)
+        // Create context object to encapsulate all parameters
+        var context = new RelativeProcessingContext
         {
-            _logger.LogWarning("Relative {Id} not found in GEDCOM", relativeGedId);
-            _statistics.ProfileErrors++;
+            RelativeGedId = relativeGedId,
+            CurrentGeniId = currentGeniId,
+            RelationType = relationType,
+            ExpectedGender = expectedGender,
+            GeniFamily = geniFamily,
+            GedcomData = gedcomData,
+            Queue = queue,
+            CurrentDepth = currentDepth
+        };
+
+        // Validate relative data
+        if (!ValidateRelativeData(context))
             return;
-        }
 
-        // Skip if insufficient data
-        if (string.IsNullOrEmpty(relativePerson.FirstName) &&
-            string.IsNullOrEmpty(relativePerson.LastName))
+        // Match or create profile
+        var geniId = await MatchOrCreateProfileAsync(context);
+
+        // Enqueue for further processing if successful
+        if (geniId != null)
         {
-            _statistics.ProfilesSkipped++;
-            _results.Add(new SyncResult
-            {
-                GedcomId = relativeGedId,
-                PersonName = relativePerson.FullName,
-                Action = SyncAction.Skipped,
-                ErrorMessage = "Insufficient data (no name)"
-            });
-            _logger.LogWarning("Skipping {RelType}: {Name} due to missing name data", relationType, relativePerson.FullName);
-            return;
-        }
-
-        _logger.LogInformation("Processing {RelType}: {Name}", relationType, relativePerson.FullName);
-
-        // Try to find match in Geni family
-        var matchedGeniId = FindMatchInGeniFamily(
-            relativePerson,
-            relationType,
-            expectedGender,
-            geniFamily);
-
-        if (matchedGeniId != null)
-        {
-            // Found existing match
-            _gedcomToGeniMap[relativeGedId] = matchedGeniId;
-            _geniToGedcomMap[matchedGeniId] = relativeGedId;
-
-            var matchScore = CalculateMatchScore(relativePerson, geniFamily, matchedGeniId);
-
-            _results.Add(new SyncResult
-            {
-                GedcomId = relativeGedId,
-                GeniId = matchedGeniId,
-                PersonName = relativePerson.FullName,
-                Action = SyncAction.Matched,
-                MatchScore = matchScore,
-                RelationType = relationType.ToString()
-            });
-
-            _statistics.ProfilesMatched++;
-
-            _logger.LogInformation("MATCHED: {Name} → Geni:{GeniId} (score: {Score}%)",
-                relativePerson.FullName, matchedGeniId, matchScore);
-
-            // Sync photos if enabled
-            if (_options.SyncPhotos && _photoService != null)
-            {
-                await SyncPhotosAsync(relativePerson, matchedGeniId);
-            }
-
-            // Add to queue for further processing
-            queue.Enqueue((relativeGedId, matchedGeniId, currentDepth + 1));
-            _statistics.QueueEnqueued++;
-        }
-        else
-        {
-            // Need to create new profile
-            var (createdProfile, errorMessage) = await CreateProfileAsync(
-                relativePerson,
-                currentGeniId,
-                relationType);
-
-            if (createdProfile != null)
-            {
-                var createdGeniId = createdProfile.NumericId;
-                _gedcomToGeniMap[relativeGedId] = createdGeniId;
-                _geniToGedcomMap[createdGeniId] = relativeGedId;
-
-                _results.Add(new SyncResult
-                {
-                    GedcomId = relativeGedId,
-                    GeniId = createdGeniId,
-                    PersonName = relativePerson.FullName,
-                    Action = SyncAction.Created,
-                    RelationType = relationType.ToString(),
-                    RelativeGeniId = currentGeniId
-                });
-
-                _statistics.ProfilesCreated++;
-                if (_options.DryRun)
-                {
-                    _statistics.DryRunProfileCreations++;
-                }
-
-                _logger.LogInformation("CREATED: {Name} → Geni:{GeniId} as {RelType} of {ParentId}",
-                    relativePerson.FullName, createdGeniId, relationType, currentGeniId);
-
-                // Sync photos if enabled
-                if (_options.SyncPhotos && _photoService != null)
-                {
-                    await SyncPhotosAsync(relativePerson, createdGeniId);
-                }
-
-                // Add to queue for further processing
-                queue.Enqueue((relativeGedId, createdGeniId, currentDepth + 1));
-                _statistics.QueueEnqueued++;
-            }
-            else
-            {
-                _logger.LogWarning("Failed to create profile for {Name}: {Error}",
-                    relativePerson.FullName, errorMessage ?? "Unknown error");
-
-                _results.Add(new SyncResult
-                {
-                    GedcomId = relativeGedId,
-                    PersonName = relativePerson.FullName,
-                    Action = SyncAction.Error,
-                    RelationType = relationType.ToString(),
-                    ErrorMessage = errorMessage ?? "Failed to create profile"
-                });
-
-                _statistics.ProfileErrors++;
-            }
+            EnqueueRelative(context, geniId);
         }
     }
 
@@ -425,7 +477,7 @@ public class SyncService : ISyncService
         foreach (var (nodeId, node) in geniFamily.Nodes)
         {
             // Skip if already mapped
-            if (_geniToGedcomMap.ContainsKey(nodeId))
+            if (_stateManager.IsMappedToGeni(nodeId))
                 continue;
 
             // Filter by expected gender if known
@@ -456,8 +508,23 @@ public class SyncService : ISyncService
             candidates.Select(c => c.Person),
             _options.MatchingOptions.MatchThreshold);
 
+        _logger.LogDebug("Found {Count} matches above threshold {Threshold}% for {Name}",
+            matches.Count, _options.MatchingOptions.MatchThreshold, gedcomPerson.FullName);
+
+        // Log all match attempts for debugging
+        foreach (var match in matches.Take(5))
+        {
+            var reasons = string.Join(", ", match.Reasons.Select(r => $"{r.Field}:{r.Points:F1}"));
+            _logger.LogDebug("  Match candidate: {Name} - Score: {Score:F1}% ({Reasons})",
+                match.Target.FullName, match.Score, reasons);
+        }
+
         if (matches.Count == 0)
+        {
+            _logger.LogDebug("No matches found above threshold {Threshold}% for {Name}",
+                _options.MatchingOptions.MatchThreshold, gedcomPerson.FullName);
             return null;
+        }
 
         var bestMatch = matches[0];
 
@@ -478,14 +545,33 @@ public class SyncService : ISyncService
 
     private PersonRecord ConvertGeniNodeToPerson(string geniId, GeniNode node)
     {
+        // Log raw Geni data for debugging - include ALL name fields
+        _logger.LogDebug("Converting Geni node {GeniId}: Name='{Name}', FirstName='{FirstName}', MiddleName='{MiddleName}', LastName='{LastName}', " +
+            "MaidenName='{MaidenName}', Suffix='{Suffix}', Gender='{Gender}', BirthDate='{BirthDate}'",
+            geniId,
+            node.Name ?? "(null)",
+            node.FirstName ?? "(null)",
+            node.MiddleName ?? "(null)",
+            node.LastName ?? "(null)",
+            node.MaidenName ?? "(null)",
+            node.Suffix ?? "(null)",
+            node.Gender ?? "(null)",
+            node.BirthDate ?? "(null)");
+
+        // Extract multilingual name variants from Geni Names field
+        var nameVariants = ExtractNameVariantsFromGeniNames(node.Names, node.FirstName, node.LastName);
+
         return new PersonRecord
         {
             Id = geniId,
             Source = PersonSource.Geni,
             FirstName = node.FirstName,
+            MiddleName = node.MiddleName,
             LastName = node.LastName,
+            MaidenName = node.MaidenName,
             NormalizedFirstName = NameNormalizer.Normalize(node.FirstName),
             NormalizedLastName = NameNormalizer.Normalize(node.LastName),
+            NameVariants = nameVariants,
             Gender = node.Gender?.ToLowerInvariant() switch
             {
                 "male" => Gender.Male,
@@ -494,6 +580,60 @@ public class SyncService : ISyncService
             },
             BirthDate = DateInfo.Parse(node.BirthDate)
         };
+    }
+
+    /// <summary>
+    /// Extract name variants from Geni Names field
+    /// Names field structure: { "en": { "first_name": "John", "last_name": "Smith" }, "ru": { "first_name": "Иван", "last_name": "Смит" } }
+    /// </summary>
+    private ImmutableList<string> ExtractNameVariantsFromGeniNames(
+        Dictionary<string, Dictionary<string, string>>? names,
+        string? primaryFirstName,
+        string? primaryLastName)
+    {
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (names == null || names.Count == 0)
+            return ImmutableList<string>.Empty;
+
+        foreach (var (language, nameFields) in names)
+        {
+            // Extract first name variants
+            if (nameFields.TryGetValue("first_name", out var firstName) && !string.IsNullOrWhiteSpace(firstName))
+            {
+                // Only add if different from primary first name
+                if (!string.Equals(firstName, primaryFirstName, StringComparison.OrdinalIgnoreCase))
+                {
+                    variants.Add(firstName.Trim());
+                }
+            }
+
+            // Extract middle name variants
+            if (nameFields.TryGetValue("middle_name", out var middleName) && !string.IsNullOrWhiteSpace(middleName))
+            {
+                variants.Add(middleName.Trim());
+            }
+
+            // Extract last name variants (including maiden names from different languages)
+            if (nameFields.TryGetValue("last_name", out var lastName) && !string.IsNullOrWhiteSpace(lastName))
+            {
+                // Only add if different from primary last name
+                if (!string.Equals(lastName, primaryLastName, StringComparison.OrdinalIgnoreCase))
+                {
+                    variants.Add(lastName.Trim());
+                }
+            }
+
+            // Extract maiden name variants
+            if (nameFields.TryGetValue("maiden_name", out var maidenName) && !string.IsNullOrWhiteSpace(maidenName))
+            {
+                variants.Add(maidenName.Trim());
+            }
+        }
+
+        _logger.LogDebug("Extracted {Count} name variants from Geni Names field", variants.Count);
+
+        return variants.ToImmutableList();
     }
 
     private int CalculateMatchScore(
@@ -576,16 +716,16 @@ public class SyncService : ISyncService
     {
         var state = new SyncState
         {
-            GedcomToGeniMap = _gedcomToGeniMap,
-            ProcessedIds = _processedGedcomIds.ToList(),
+            GedcomToGeniMap = new Dictionary<string, string>(_stateManager.GetAllMappings()),
+            ProcessedIds = _stateManager.GetProcessedIds().ToList(),
             Results = _results
         };
 
         var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(_options.StateFilePath!, json);
-        
+
         _logger.LogInformation("State saved: {Count} mappings, {Processed} processed",
-            _gedcomToGeniMap.Count, _processedGedcomIds.Count);
+            _stateManager.GetAllMappings().Count, _stateManager.GetProcessedIds().Count);
     }
 
     private async Task LoadStateAsync()
@@ -597,16 +737,7 @@ public class SyncService : ISyncService
 
             if (state != null)
             {
-                foreach (var (gedId, geniId) in state.GedcomToGeniMap)
-                {
-                    _gedcomToGeniMap[gedId] = geniId;
-                    _geniToGedcomMap[geniId] = gedId;
-                }
-
-                foreach (var id in state.ProcessedIds)
-                {
-                    _processedGedcomIds.Add(id);
-                }
+                _stateManager.LoadState(state.GedcomToGeniMap, state.ProcessedIds);
 
                 _results.AddRange(state.Results);
 
@@ -614,11 +745,11 @@ public class SyncService : ISyncService
                 _statistics.ProfilesCreated = _results.Count(r => r.Action == SyncAction.Created);
                 _statistics.ProfilesSkipped = _results.Count(r => r.Action == SyncAction.Skipped);
                 _statistics.ProfileErrors = _results.Count(r => r.Action == SyncAction.Error);
-                _statistics.QueueEnqueued = _processedGedcomIds.Count;
-                _statistics.QueueDequeued = _processedGedcomIds.Count;
+                _statistics.QueueEnqueued = _stateManager.GetProcessedIds().Count;
+                _statistics.QueueDequeued = _stateManager.GetProcessedIds().Count;
 
                 _logger.LogInformation("State loaded: {Count} mappings, {Processed} processed",
-                    _gedcomToGeniMap.Count, _processedGedcomIds.Count);
+                    _stateManager.GetAllMappings().Count, _stateManager.GetProcessedIds().Count);
             }
         }
         catch (Exception ex)
@@ -749,7 +880,7 @@ public class SyncService : ISyncService
             Skipped = _results.Count(r => r.Action == SyncAction.Skipped),
             Errors = _results.Count(r => r.Action == SyncAction.Error),
             Results = _results,
-            GedcomToGeniMap = new Dictionary<string, string>(_gedcomToGeniMap),
+            GedcomToGeniMap = new Dictionary<string, string>(_stateManager.GetAllMappings()),
             Statistics = _statistics.Clone()
         };
 

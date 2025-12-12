@@ -3,15 +3,19 @@ using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
-using GeneGenie.Gedcom;
 using Microsoft.Extensions.Logging;
-using GeneGenie.Gedcom.Parser;
-using GeneGenie.Gedcom.Enums;
+using Patagames.GedcomNetSdk;
+using Patagames.GedcomNetSdk.Records;
+using Patagames.GedcomNetSdk.Records.Ver551;
+using Patagames.GedcomNetSdk.Structures;
+using Patagames.GedcomNetSdk.Structures.Ver551;
+using Patagames.GedcomNetSdk.Dates;
 
 namespace GedcomGeniSync.Services;
 
 /// <summary>
-/// Loads GEDCOM files and converts to PersonRecord models
+/// Loads GEDCOM 5.5.1 files and converts to PersonRecord models
+/// Uses Gedcom.Net.SDK library for parsing
 /// </summary>
 [ExcludeFromCodeCoverage]
 public class GedcomLoader : IGedcomLoader
@@ -37,50 +41,90 @@ public class GedcomLoader : IGedcomLoader
 
         var result = new GedcomLoadResult();
 
-        var gedcomReader = GedcomRecordReader.CreateReader(filePath);
-
-        if (gedcomReader.Parser.ErrorState != GedcomErrorState.NoError)
+        // Activate SDK for personal use (required for Gedcom.Net.SDK)
+        try
         {
-            throw new InvalidOperationException(
-                $"Failed to parse GEDCOM file: {gedcomReader.Parser.ErrorState}");
+            Activate.ForPersonalUse("gedcom@gedsync.local");
+        }
+        catch (Exception)
+        {
+            // Already activated or activation not required
         }
 
-        var db = gedcomReader.Database;
-
-        _logger.LogInformation("Found {Individuals} individuals and {Families} families",
-            db.Individuals.Count, db.Families.Count);
-
-        // First pass: create all PersonRecords
-        foreach (var individual in db.Individuals)
+        GedcomTransmission transmission;
+        try
         {
-            var person = ConvertIndividual(individual, db);
-            result.Persons[person.Id] = person;
+            using var parser = new Parser(filePath);
+            transmission = new GedcomTransmission();
+            transmission.Deserialize(parser);
+        }
+        catch (Patagames.GedcomNetSdk.Exceptions.UnknownTagException ex)
+        {
+            _logger.LogWarning("GEDCOM file contains unknown or non-standard tags. Attempting to load with pre-processing...");
+            _logger.LogDebug("Unknown tag details: {Message}", ex.Message);
 
-            // Build RIN mapping for ID resolution
-            // AutomatedRecordId (RIN field in GEDCOM) often contains the original ID like "MH:I500002"
-            var rin = individual.AutomatedRecordId;
-            if (!string.IsNullOrEmpty(rin))
+            // Pre-process the GEDCOM file to fix common issues
+            var cleanedFilePath = PreprocessGedcomFile(filePath);
+            try
             {
-                // Extract just the ID part after the colon (e.g., "MH:I500002" -> "I500002")
-                var idPart = rin.Contains(':') ? rin.Split(':').Last() : rin;
-                result.RinToXRefMapping[idPart] = person.Id;
-
-                // Also map without @ symbols for flexibility
-                var normalizedId = idPart.Trim('@');
-                if (normalizedId != idPart)
+                using var parser = new Parser(cleanedFilePath);
+                transmission = new GedcomTransmission();
+                transmission.Deserialize(parser);
+                _logger.LogInformation("Successfully loaded GEDCOM file after pre-processing");
+            }
+            catch (Exception innerEx)
+            {
+                // Clean up temporary file
+                if (File.Exists(cleanedFilePath))
                 {
-                    result.RinToXRefMapping[normalizedId] = person.Id;
+                    try { File.Delete(cleanedFilePath); } catch { }
                 }
 
-                _logger.LogDebug("RIN mapping: {RIN} -> {XRef}", rin, person.Id);
+                throw new InvalidOperationException(
+                    $"The GEDCOM file contains non-standard tags that cannot be parsed even after pre-processing. " +
+                    $"Error at: {ex.Message}. " +
+                    $"Please check the GEDCOM file for compliance with GEDCOM 5.5.1 standard, " +
+                    $"or use a GEDCOM editor to clean up the file before importing.",
+                    innerEx);
             }
         }
 
+        // Extract individuals and families from records
+        var individuals = new List<Individual>();
+        var families = new List<Family>();
+        var multimedia = new Dictionary<string, Multimedia>();
+
+        foreach (var record in transmission.Records)
+        {
+            if (record is Individual individual)
+            {
+                individuals.Add(individual);
+            }
+            else if (record is Family family)
+            {
+                families.Add(family);
+            }
+            else if (record is Multimedia media)
+            {
+                multimedia[media.MultimediaId] = media;
+            }
+        }
+
+        _logger.LogInformation("Found {Individuals} individuals and {Families} families",
+            individuals.Count, families.Count);
+
+        // First pass: create all PersonRecords
+        foreach (var individual in individuals)
+        {
+            var person = ConvertIndividual(individual, multimedia);
+            result.Persons[person.Id] = person;
+        }
+
         // Second pass: resolve family relationships
-        foreach (var family in db.Families)
+        foreach (var family in families)
         {
             ProcessFamily(family, result.Persons);
-            result.Families[family.XRefID] = family;
+            result.Families[family.FamilyId] = family;
         }
 
         // Third pass: calculate siblings
@@ -91,81 +135,117 @@ public class GedcomLoader : IGedcomLoader
         return result;
     }
 
-    private PersonRecord ConvertIndividual(GedcomIndividualRecord individual, GedcomDatabase db)
+    private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia)
     {
         string? firstName = null;
+        string? middleName = null;
         string? lastName = null;
         string? maidenName = null;
         string? nickname = null;
         string? suffix = null;
         var nameVariantsBuilder = ImmutableList.CreateBuilder<string>();
 
-        // Names
-        var primaryName = individual.Names.FirstOrDefault();
-        if (primaryName != null)
+        // Names - use the Name collection from IndividualRecord
+        var names = individual.Name;
+        var primaryName = names?.FirstOrDefault();
+        if (primaryName is PersonalName pn)
         {
-            firstName = CleanName(primaryName.Given);
-            lastName = CleanName(primaryName.Surname);
-            nickname = CleanName(primaryName.Nick);
-            suffix = CleanName(primaryName.Suffix);
+            // Try to extract name pieces from base class NamePieces property
+            if (pn.NamePieces is PersonalNamePieces pieces)
+            {
+                firstName = CleanName(pieces.GivenName);
+                lastName = CleanName(pieces.Surname);
+                nickname = CleanName(pieces.Nickname);
+                suffix = CleanName(pieces.NameSuffix);
+
+                // GEDCOM often puts patronymic (отчество) in the GIVN field along with first name
+                // e.g., "Владимир Витальевич" instead of just "Владимир"
+                // Split it into FirstName and MiddleName if there are exactly 2 words
+                if (!string.IsNullOrEmpty(firstName))
+                {
+                    var words = firstName.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (words.Length == 2)
+                    {
+                        middleName = words[1]; // Second word is patronymic (отчество)
+                        firstName = words[0];  // First word is actual first name
+                        _logger.LogDebug("Split GEDCOM FirstName '{Original}' into FirstName='{First}' and MiddleName='{Middle}' for {Id}",
+                            string.Join(" ", words), firstName, middleName, individual.IndividualId);
+                    }
+                }
+            }
+
+            // If no pieces available, fall back to parsing the full name string
+            if (string.IsNullOrEmpty(firstName) && string.IsNullOrEmpty(lastName))
+            {
+                ParseFullName(pn.Name, out firstName, out lastName);
+            }
         }
 
         // Process all names to find maiden name and store variants
-        // Check for proper TYPE tags (MAIDEN, MARRIED, BIRTH) according to GEDCOM standard
-        foreach (var name in individual.Names)
+        if (names != null)
         {
-            var nameType = name.Type?.ToUpperInvariant().Trim();
-
-            // Store name variants for fuzzy matching
-            if (!string.IsNullOrEmpty(name.Given))
-                nameVariantsBuilder.Add(name.Given);
-            if (!string.IsNullOrEmpty(name.Surname))
-                nameVariantsBuilder.Add(name.Surname);
-
-            // Look for maiden name from TYPE=MAIDEN or TYPE=BIRTH
-            // MAIDEN is the standard type, but BIRTH is also used to indicate birth name
-            if (nameType == "MAIDEN" || nameType == "BIRTH")
+            foreach (var name in names)
             {
-                var surname = CleanName(name.Surname);
-                if (!string.IsNullOrEmpty(surname))
+                if (name is not PersonalName personalName)
+                    continue;
+
+                var pieces = personalName.NamePieces as PersonalNamePieces;
+                var nameType = personalName.Type?.ToUpperInvariant();
+
+                // Store name variants for fuzzy matching
+                if (pieces != null)
                 {
-                    maidenName = surname;
-                    _logger.LogDebug("Found maiden name '{MaidenName}' from NAME with TYPE={Type} for {Id}",
-                        maidenName, nameType, individual.XRefID);
+                    if (!string.IsNullOrEmpty(pieces.GivenName))
+                        nameVariantsBuilder.Add(pieces.GivenName);
+                    if (!string.IsNullOrEmpty(pieces.Surname))
+                        nameVariantsBuilder.Add(pieces.Surname);
                 }
-            }
-            // If TYPE=MARRIED, update the current last name to married name
-            else if (nameType == "MARRIED")
-            {
-                var surname = CleanName(name.Surname);
-                if (!string.IsNullOrEmpty(surname))
+
+                // Look for maiden name from TYPE=MAIDEN or TYPE=BIRTH
+                if (nameType == "MAIDEN" || nameType == "BIRTH")
                 {
-                    lastName = surname;
-                    _logger.LogDebug("Found married name '{MarriedName}' from NAME with TYPE=MARRIED for {Id}",
-                        lastName, individual.XRefID);
+                    var surname = pieces != null ? CleanName(pieces.Surname) : null;
+                    if (!string.IsNullOrEmpty(surname))
+                    {
+                        maidenName = surname;
+                        _logger.LogDebug("Found maiden name '{MaidenName}' from NAME with TYPE={Type} for {Id}",
+                            maidenName, nameType, individual.IndividualId);
+                    }
+                }
+                // If TYPE=MARRIED, update the current last name to married name
+                else if (nameType == "MARRIED")
+                {
+                    var surname = pieces != null ? CleanName(pieces.Surname) : null;
+                    if (!string.IsNullOrEmpty(surname))
+                    {
+                        lastName = surname;
+                        _logger.LogDebug("Found married name '{MarriedName}' from NAME with TYPE=MARRIED for {Id}",
+                            lastName, individual.IndividualId);
+                    }
                 }
             }
         }
 
-        // Fallback: if no maiden name found via TYPE and SurnamePrefix exists on primary name
-        // Note: SurnamePrefix is not the correct GEDCOM way to store maiden names,
-        // but some genealogy software may use it this way
-        if (string.IsNullOrEmpty(maidenName) && primaryName != null)
+        // Fallback: if no maiden name found via TYPE, try SurnamePrefix
+        if (string.IsNullOrEmpty(maidenName) && primaryName is PersonalName pnFallback)
         {
-            var surnamePrefix = CleanName(primaryName.SurnamePrefix);
-            if (!string.IsNullOrEmpty(surnamePrefix))
+            if (pnFallback.NamePieces is PersonalNamePieces fallbackPieces)
             {
-                maidenName = surnamePrefix;
-                _logger.LogDebug("Using SurnamePrefix '{SurnamePrefix}' as fallback maiden name for {Id}",
-                    maidenName, individual.XRefID);
+                var surnamePrefix = CleanName(fallbackPieces.SurnamePrefix);
+                if (!string.IsNullOrEmpty(surnamePrefix))
+                {
+                    maidenName = surnamePrefix;
+                    _logger.LogDebug("Using SurnamePrefix '{SurnamePrefix}' as fallback maiden name for {Id}",
+                        maidenName, individual.IndividualId);
+                }
             }
         }
 
         // Gender
-        var gender = individual.Sex switch
+        var gender = individual.Sex?.ToUpperInvariant() switch
         {
-            GedcomSex.Male => Gender.Male,
-            GedcomSex.Female => Gender.Female,
+            "M" => Gender.Male,
+            "F" => Gender.Female,
             _ => Gender.Unknown
         };
 
@@ -178,67 +258,84 @@ public class GedcomLoader : IGedcomLoader
         string? burialPlace = null;
         bool? isLiving = null;
 
-        foreach (var evt in individual.Events)
+        if (individual.Events != null)
         {
-            switch (evt.EventType)
+            foreach (var evt in individual.Events)
             {
-                case GedcomEventType.Birth:
-                    birthDate = ConvertDate(evt.Date);
-                    birthPlace = GetPlace(evt.Place);
-                    break;
+                var eventType = evt.GetType().Name;
 
-                case GedcomEventType.DEAT:
-                    deathDate = ConvertDate(evt.Date);
-                    deathPlace = GetPlace(evt.Place);
-                    isLiving = false;
-                    break;
+                switch (eventType)
+                {
+                    case "EvtBirth":
+                        birthDate = ConvertDate(evt.Date);
+                        birthPlace = evt.Place?.Name;
+                        break;
 
-                case GedcomEventType.BURI:
-                    burialDate = ConvertDate(evt.Date);
-                    burialPlace = GetPlace(evt.Place);
-                    break;
+                    case "EvtDeath":
+                        deathDate = ConvertDate(evt.Date);
+                        deathPlace = evt.Place?.Name;
+                        isLiving = false;
+                        break;
+
+                    case "EvtBurial":
+                        burialDate = ConvertDate(evt.Date);
+                        burialPlace = evt.Place?.Name;
+                        break;
+                }
             }
         }
 
         // Check if marked as living
         if (!isLiving.HasValue)
         {
-            // If no death date and birth year suggests they could be alive
             var birthYear = birthDate?.Year;
-            if (birthYear.HasValue && birthYear > DateTime.Now.Year - 120)
+            if (birthYear.HasValue && birthYear > System.DateTime.Now.Year - 120)
             {
                 isLiving = true;
             }
         }
 
-        // Family links (raw IDs, will be resolved later)
+        // Family links
         var childOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
         var spouseOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
 
-        foreach (var familyLink in individual.ChildIn)
+        if (individual.ChildToFamilyLinks != null)
         {
-            childOfFamilyIdsBuilder.Add(familyLink.XRefID);
+            foreach (var familyLink in individual.ChildToFamilyLinks)
+            {
+                if (!string.IsNullOrEmpty(familyLink.FamilyId))
+                {
+                    childOfFamilyIdsBuilder.Add(familyLink.FamilyId);
+                }
+            }
         }
 
-        foreach (var familyLink in individual.SpouseIn)
+        if (individual.SpouseToFamilyLinks != null)
         {
-            spouseOfFamilyIdsBuilder.Add(familyLink.XRefID);
+            foreach (var familyLink in individual.SpouseToFamilyLinks)
+            {
+                if (!string.IsNullOrEmpty(familyLink.FamilyId))
+                {
+                    spouseOfFamilyIdsBuilder.Add(familyLink.FamilyId);
+                }
+            }
         }
 
         // Extract photo URLs from multimedia records
         var photoUrlsBuilder = ImmutableList.CreateBuilder<string>();
-        if (db.Media != null)
+        if (individual.MultimediaLinks != null)
         {
-            foreach (var multimediaLink in individual.Multimedia)
+            foreach (var multimediaLink in individual.MultimediaLinks)
             {
-                // Find the multimedia record in the database
-                var multimediaRecord = db.Media.FirstOrDefault(m => m.XRefID == multimediaLink);
-                if (multimediaRecord != null)
+                if (multimediaLink is MultimediaLink ml && !string.IsNullOrEmpty(ml.MultimediaId))
                 {
-                    var photoUrl = ExtractPhotoUrl(multimediaRecord);
-                    if (!string.IsNullOrEmpty(photoUrl))
+                    if (multimedia.TryGetValue(ml.MultimediaId, out var mediaRecord))
                     {
-                        photoUrlsBuilder.Add(photoUrl);
+                        var photoUrl = ExtractPhotoUrl(mediaRecord);
+                        if (!string.IsNullOrEmpty(photoUrl))
+                        {
+                            photoUrlsBuilder.Add(photoUrl);
+                        }
                     }
                 }
             }
@@ -246,9 +343,10 @@ public class GedcomLoader : IGedcomLoader
 
         return new PersonRecord
         {
-            Id = individual.XRefID,
+            Id = individual.IndividualId,
             Source = PersonSource.Gedcom,
             FirstName = firstName,
+            MiddleName = middleName,
             LastName = lastName,
             MaidenName = maidenName,
             Nickname = nickname,
@@ -270,41 +368,27 @@ public class GedcomLoader : IGedcomLoader
         };
     }
 
-    private string? ExtractPhotoUrl(GedcomMultimediaRecord multimedia)
+    private static string? ExtractPhotoUrl(Multimedia multimedia)
     {
-        if (multimedia == null)
+        if (multimedia?.Files == null)
             return null;
 
-        // Try to get file reference from multimedia record
-        var file = multimedia.Files?.FirstOrDefault();
-        if (file != null && !string.IsNullOrWhiteSpace(file.Filename))
+        var file = multimedia.Files.FirstOrDefault();
+        if (file != null && !string.IsNullOrWhiteSpace(file.File))
         {
-            var filename = file.Filename.Trim();
-
-            // Check if it's a URL (http/https)
-            if (filename.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                filename.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                return filename;
-            }
-
-            // Check if it's a local file path that we should keep
-            // Some GEDCOM files store relative or absolute paths
-            return filename;
+            return file.File.Trim();
         }
 
         return null;
     }
 
-    private void ProcessFamily(GedcomFamilyRecord family, Dictionary<string, PersonRecord> persons)
+    private void ProcessFamily(Family family, Dictionary<string, PersonRecord> persons)
     {
-        var husbandId = ResolveXRefId(family.Husband);
-        var wifeId = ResolveXRefId(family.Wife);
-        var childIds = family.Children
-            .Select(ResolveXRefId)
+        var husbandId = family.HusbandId;
+        var wifeId = family.WifeId;
+        var childIds = family.Children?
             .Where(id => !string.IsNullOrEmpty(id))
-            .Select(id => id!)
-            .ToList();
+            .ToList() ?? new List<string>();
 
         // Link children to parents
         foreach (var childId in childIds)
@@ -347,7 +431,7 @@ public class GedcomLoader : IGedcomLoader
             };
 
             persons[husbandId] = updatedHusband;
-            husband = updatedHusband; // Update reference for maiden name logic
+            husband = updatedHusband;
         }
 
         if (!string.IsNullOrEmpty(wifeId) && persons.TryGetValue(wifeId, out var wife))
@@ -370,7 +454,6 @@ public class GedcomLoader : IGedcomLoader
             // Try to extract maiden name from family if not set
             if (string.IsNullOrEmpty(updatedWife.MaidenName) && !string.IsNullOrEmpty(updatedWife.LastName))
             {
-                // Check if wife has different surname than husband
                 if (husband != null && updatedWife.LastName != husband.LastName)
                 {
                     updatedWife = updatedWife with { MaidenName = updatedWife.LastName };
@@ -383,7 +466,6 @@ public class GedcomLoader : IGedcomLoader
 
     private void CalculateSiblings(Dictionary<string, PersonRecord> persons)
     {
-        // Group by parents
         var siblingGroups = persons.Values
             .Where(p => !string.IsNullOrEmpty(p.FatherId) || !string.IsNullOrEmpty(p.MotherId))
             .GroupBy(p => (p.FatherId ?? "", p.MotherId ?? ""))
@@ -409,25 +491,99 @@ public class GedcomLoader : IGedcomLoader
         }
     }
 
-    private static DateInfo? ConvertDate(GedcomDate? gedcomDate)
+    private static DateInfo? ConvertDate(DateBase? gedcomDate)
     {
-        if (gedcomDate == null || string.IsNullOrEmpty(gedcomDate.Date1))
+        if (gedcomDate == null)
             return null;
 
-        // GedcomDate has parsed components, use them
-        var year = gedcomDate.DateTime1?.Year;
-        var month = gedcomDate.DateTime1?.Month;
-        var day = gedcomDate.DateTime1?.Day;
+        int? year = null;
+        int? month = null;
+        int? day = null;
+        string? originalText = null;
 
-        // Handle date type/modifier
-        // Note: GeneGenie.Gedcom may expose this differently
-        // Fallback to parsing if needed
-        if (!year.HasValue)
+        if (gedcomDate is DateExact exactDate)
         {
-            return DateInfo.Parse(gedcomDate.Date1);
+            year = exactDate.Year;
+            month = ParseMonth(exactDate.Month);
+            day = exactDate.Day;
+            originalText = FormatDateString(day, month, year);
+        }
+        else if (gedcomDate is Date simpleDate)
+        {
+            year = simpleDate.Year;
+            month = ParseMonth(simpleDate.Month);
+            day = simpleDate.Day;
+            originalText = FormatDateString(day, month, year);
+        }
+        else if (gedcomDate is DateBetween betweenDate)
+        {
+            if (betweenDate.Date != null)
+            {
+                year = betweenDate.Date.Year;
+                month = ParseMonth(betweenDate.Date.Month);
+                day = betweenDate.Date.Day;
+            }
+            originalText = $"BET {FormatDateString(day, month, year)}";
+        }
+        else if (gedcomDate is DateAbout aboutDate)
+        {
+            year = aboutDate.Year;
+            month = ParseMonth(aboutDate.Month);
+            day = aboutDate.Day;
+            originalText = $"ABT {FormatDateString(day, month, year)}";
+        }
+        else if (gedcomDate is DateBefore beforeDate)
+        {
+            year = beforeDate.Year;
+            month = ParseMonth(beforeDate.Month);
+            day = beforeDate.Day;
+            originalText = $"BEF {FormatDateString(day, month, year)}";
+        }
+        else if (gedcomDate is DateAfter afterDate)
+        {
+            year = afterDate.Year;
+            month = ParseMonth(afterDate.Month);
+            day = afterDate.Day;
+            originalText = $"AFT {FormatDateString(day, month, year)}";
+        }
+        else if (gedcomDate is DateEstimated estimatedDate)
+        {
+            year = estimatedDate.Year;
+            month = ParseMonth(estimatedDate.Month);
+            day = estimatedDate.Day;
+            originalText = $"EST {FormatDateString(day, month, year)}";
+        }
+        else if (gedcomDate is DateCalculate calcDate)
+        {
+            year = calcDate.Year;
+            month = ParseMonth(calcDate.Month);
+            day = calcDate.Day;
+            originalText = $"CAL {FormatDateString(day, month, year)}";
+        }
+        else if (gedcomDate is DatePhrase phraseDate)
+        {
+            originalText = phraseDate.Text;
+            if (phraseDate.InterpretedDate != null)
+            {
+                year = phraseDate.InterpretedDate.Year;
+                month = ParseMonth(phraseDate.InterpretedDate.Month);
+                day = phraseDate.InterpretedDate.Day;
+            }
+        }
+        else if (gedcomDate is DateFromTo fromToDate)
+        {
+            if (fromToDate.From != null)
+            {
+                year = fromToDate.From.Year;
+                month = ParseMonth(fromToDate.From.Month);
+                day = fromToDate.From.Day;
+            }
+            originalText = $"FROM {FormatDateString(day, month, year)}";
         }
 
-        // Determine precision and create DateOnly
+        if (!year.HasValue)
+            return null;
+
         DatePrecision precision;
         DateOnly date;
 
@@ -440,37 +596,91 @@ public class GedcomLoader : IGedcomLoader
             }
             catch (ArgumentOutOfRangeException)
             {
-                // Invalid date (e.g., Feb 31), fall back to month precision
-                precision = DatePrecision.Month;
-                date = new DateOnly(year.Value, month.Value, 1);
+                // Invalid day for the month, try month precision
+                try
+                {
+                    precision = DatePrecision.Month;
+                    date = new DateOnly(year.Value, month.Value, 1);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // Invalid month or year, fall back to year precision
+                    precision = DatePrecision.Year;
+                    date = new DateOnly(year.Value, 1, 1);
+                }
             }
         }
         else if (month.HasValue)
         {
             precision = DatePrecision.Month;
-            date = new DateOnly(year.Value, month.Value, 1);
+            try
+            {
+                date = new DateOnly(year.Value, month.Value, 1);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Invalid month or year, fall back to year precision
+                precision = DatePrecision.Year;
+                date = new DateOnly(year.Value, 1, 1);
+            }
         }
         else
         {
             precision = DatePrecision.Year;
-            date = new DateOnly(year.Value, 1, 1);
+            try
+            {
+                date = new DateOnly(year.Value, 1, 1);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Invalid year, can't create any valid date - return null
+                return null;
+            }
         }
 
         return new DateInfo
         {
-            Original = gedcomDate.Date1,
+            Original = originalText ?? FormatDateString(day, month, year),
             Date = date,
             Precision = precision
         };
     }
 
-    private static string? GetPlace(GedcomPlace? place)
+    private static int? ParseMonth(string? monthStr)
     {
-        if (place == null)
+        if (string.IsNullOrEmpty(monthStr))
             return null;
 
-        // GedcomPlace.Name typically contains the full place hierarchy
-        return place.Name;
+        return monthStr.ToUpperInvariant() switch
+        {
+            "JAN" => 1,
+            "FEB" => 2,
+            "MAR" => 3,
+            "APR" => 4,
+            "MAY" => 5,
+            "JUN" => 6,
+            "JUL" => 7,
+            "AUG" => 8,
+            "SEP" => 9,
+            "OCT" => 10,
+            "NOV" => 11,
+            "DEC" => 12,
+            _ => null
+        };
+    }
+
+    private static string FormatDateString(int? day, int? month, int? year)
+    {
+        var parts = new List<string>();
+        if (day.HasValue) parts.Add(day.Value.ToString());
+        if (month.HasValue)
+        {
+            var monthNames = new[] { "", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC" };
+            if (month.Value >= 1 && month.Value <= 12)
+                parts.Add(monthNames[month.Value]);
+        }
+        if (year.HasValue) parts.Add(year.Value.ToString());
+        return string.Join(" ", parts);
     }
 
     private static string? CleanName(string? name)
@@ -481,11 +691,26 @@ public class GedcomLoader : IGedcomLoader
         // Remove GEDCOM-specific markers and special characters
         // Keep only letters (Latin and Cyrillic), digits, spaces, and hyphens
         name = Regex.Replace(name, @"[^A-Za-zА-Яа-яЁё0-9 -]", "");
-
-        // Normalize multiple spaces to single space
         name = Regex.Replace(name, @"\s+", " ");
 
         return name.Trim();
+    }
+
+    private static void ParseFullName(string? fullName, out string? firstName, out string? lastName)
+    {
+        firstName = null;
+        lastName = null;
+
+        if (string.IsNullOrWhiteSpace(fullName))
+            return;
+
+        // GEDCOM name format: "Given Names /Surname/"
+        var match = Regex.Match(fullName, @"^([^/]*?)/?([^/]*)?/?$");
+        if (match.Success)
+        {
+            firstName = CleanName(match.Groups[1].Value);
+            lastName = CleanName(match.Groups[2].Value);
+        }
     }
 
     /// <summary>
@@ -517,25 +742,101 @@ public class GedcomLoader : IGedcomLoader
         return relatives.Distinct();
     }
 
-    private static string? ResolveXRefId(object? link)
+    /// <summary>
+    /// Pre-process GEDCOM file to fix common formatting issues
+    /// </summary>
+    private string PreprocessGedcomFile(string filePath)
     {
-        if (link == null)
+        _logger.LogInformation("Pre-processing GEDCOM file to fix formatting issues");
+
+        var tempFilePath = Path.GetTempFileName();
+        var encoding = DetectFileEncoding(filePath);
+
+        using (var reader = new StreamReader(filePath, encoding))
+        using (var writer = new StreamWriter(tempFilePath, false, encoding))
         {
-            return null;
+            string? line;
+            var lineNumber = 0;
+            int? currentNoteLevel = null;  // Track if we're inside a NOTE block
+            int fixedLines = 0;
+
+            while ((line = reader.ReadLine()) != null)
+            {
+                lineNumber++;
+                var originalLine = line;
+
+                // Handle empty lines - keep them but don't reset NOTE context
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    writer.WriteLine(line);
+                    // Don't reset NOTE context - empty lines can appear within NOTE blocks
+                    continue;
+                }
+
+                // Check if this is a proper GEDCOM line (level + tag)
+                var gedcomLineMatch = Regex.Match(line, @"^(\d+)\s+([A-Z_@][A-Z0-9_@]*)(\s|$)");
+                if (gedcomLineMatch.Success)
+                {
+                    var level = int.Parse(gedcomLineMatch.Groups[1].Value);
+                    var tag = gedcomLineMatch.Groups[2].Value;
+
+                    // Check if we're starting a NOTE block
+                    if (tag == "NOTE" || tag == "CONC" || tag == "CONT")
+                    {
+                        if (tag == "NOTE")
+                        {
+                            currentNoteLevel = level;
+                        }
+                    }
+                    else
+                    {
+                        // New tag at same or lower level ends the NOTE context
+                        if (currentNoteLevel.HasValue && level <= currentNoteLevel.Value)
+                        {
+                            currentNoteLevel = null;
+                        }
+                    }
+
+                    writer.WriteLine(line);
+                    continue;
+                }
+
+                // If we're here, the line doesn't start with a proper GEDCOM level+tag
+                // If we're in a NOTE context, this should be a continuation line
+                if (currentNoteLevel.HasValue)
+                {
+                    // This line is part of a NOTE but doesn't have proper formatting
+                    // Convert it to a CONT (continuation) line at the appropriate level
+                    line = $"{currentNoteLevel.Value + 1} CONT {originalLine}";
+                    fixedLines++;
+                    if (fixedLines <= 10)  // Log first 10 fixes
+                    {
+                        _logger.LogDebug("Fixed untagged NOTE content at line {LineNumber}: {Preview}...",
+                            lineNumber, originalLine.Substring(0, Math.Min(60, originalLine.Length)));
+                    }
+                }
+
+                writer.WriteLine(line);
+            }
+
+            if (fixedLines > 0)
+            {
+                _logger.LogInformation("Fixed {Count} malformed NOTE continuation lines", fixedLines);
+            }
         }
 
-        if (link is string id)
-        {
-            return id;
-        }
+        _logger.LogInformation("Pre-processing complete. Temporary file: {Path}", tempFilePath);
+        return tempFilePath;
+    }
 
-        var xRefIdProperty = link.GetType().GetProperty("XRefID");
-        if (xRefIdProperty?.GetValue(link) is string xRefId)
-        {
-            return xRefId;
-        }
-
-        return null;
+    /// <summary>
+    /// Detect file encoding (UTF-8, UTF-16, or ANSI)
+    /// </summary>
+    private static System.Text.Encoding DetectFileEncoding(string filePath)
+    {
+        // Read first few bytes to detect BOM
+        using var reader = new StreamReader(filePath, true);
+        reader.Peek(); // Force detection
+        return reader.CurrentEncoding;
     }
 }
-
