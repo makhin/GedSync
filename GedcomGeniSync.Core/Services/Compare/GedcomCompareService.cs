@@ -94,7 +94,8 @@ public class GedcomCompareService : IGedcomCompareService
         var familyResult = _familyCompareService.CompareFamilies(
             sourceResult.Families,
             destResult.Families,
-            individualResult);
+            individualResult,
+            options);
 
         // Step 6: Calculate statistics
         var statistics = new CompareStatistics

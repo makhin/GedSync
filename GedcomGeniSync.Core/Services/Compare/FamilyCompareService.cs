@@ -24,7 +24,8 @@ public class FamilyCompareService : IFamilyCompareService
     public FamilyCompareResult CompareFamilies(
         Dictionary<string, Family> sourceFamilies,
         Dictionary<string, Family> destFamilies,
-        IndividualCompareResult individualResult)
+        IndividualCompareResult individualResult,
+        CompareOptions options)
     {
         _logger.LogInformation("Starting family comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourceFamilies.Count, destFamilies.Count);
@@ -80,15 +81,18 @@ public class FamilyCompareService : IFamilyCompareService
         }
 
         // Find unmatched destination families (candidates for deletion)
-        foreach (var (destFamId, destFamily) in destFamilies)
+        if (options.IncludeDeleteSuggestions)
         {
-            if (!matchedDestFamilyIds.Contains(destFamId))
+            foreach (var (destFamId, destFamily) in destFamilies)
             {
-                familiesToDelete.Add(new FamilyToDelete
+                if (!matchedDestFamilyIds.Contains(destFamId))
                 {
-                    DestinationFamId = destFamId,
-                    Reason = "No matching family found in source"
-                });
+                    familiesToDelete.Add(new FamilyToDelete
+                    {
+                        DestinationFamId = destFamId,
+                        Reason = "No matching family found in source"
+                    });
+                }
             }
         }
 

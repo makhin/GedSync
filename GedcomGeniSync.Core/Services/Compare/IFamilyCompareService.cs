@@ -15,9 +15,11 @@ public interface IFamilyCompareService
     /// <param name="sourceFamilies">Families from source GEDCOM</param>
     /// <param name="destFamilies">Families from destination GEDCOM</param>
     /// <param name="individualResult">Results from individual comparison (for ID mapping)</param>
+    /// <param name="options">Comparison options</param>
     /// <returns>Family comparison result</returns>
     FamilyCompareResult CompareFamilies(
         Dictionary<string, Family> sourceFamilies,
         Dictionary<string, Family> destFamilies,
-        IndividualCompareResult individualResult);
+        IndividualCompareResult individualResult,
+        CompareOptions options);
 }
