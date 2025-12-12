@@ -33,6 +33,10 @@ public class IndividualCompareService : IIndividualCompareService
         _logger.LogInformation("Starting individual comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourcePersons.Count, destPersons.Count);
 
+        // Set person dictionaries for family relations comparison
+        _fuzzyMatcher.SetPersonDictionaries(sourcePersons, destPersons);
+        _logger.LogInformation("Person dictionaries set for family-based matching");
+
         var matchedNodes = ImmutableList.CreateBuilder<MatchedNode>();
         var nodesToUpdate = ImmutableList.CreateBuilder<NodeToUpdate>();
         var nodesToAdd = ImmutableList.CreateBuilder<NodeToAdd>();
@@ -180,27 +184,7 @@ public class IndividualCompareService : IIndividualCompareService
             }
         }
 
-        // Strategy 2: Try INDI ID match (both files exported from Geni)
-        var sourceNumericId = source.GetNumericGeniId();
-        if (sourceNumericId != null)
-        {
-            foreach (var dest in destPersons.Values)
-            {
-                var destNumericId = dest.GetNumericGeniId();
-                if (destNumericId != null && sourceNumericId == destNumericId)
-                {
-                    return new MatchResult
-                    {
-                        MatchedPerson = dest,
-                        Score = 100,
-                        MatchedBy = "INDI_ID",
-                        IsAmbiguous = false
-                    };
-                }
-            }
-        }
-
-        // Strategy 3: Fuzzy matching
+        // Strategy 2: Fuzzy matching (name-based comparison)
         foreach (var dest in destPersons.Values)
         {
             var matchCandidate = _fuzzyMatcher.Compare(source, dest);

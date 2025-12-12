@@ -176,6 +176,19 @@ public record PersonRecord
     /// </summary>
     public SyncStatus SyncStatus { get; init; } = SyncStatus.Pending;
 
+    /// <summary>
+    /// Notes about this person from GEDCOM NOTE tag
+    /// Can contain biographical information, research notes, etc.
+    /// </summary>
+    public ImmutableList<string> Notes { get; init; } = ImmutableList<string>.Empty;
+
+    /// <summary>
+    /// Custom tags from GEDCOM (e.g., MyHeritage _UPD, _UID, RIN, etc.)
+    /// Stored as key-value pairs where key is tag name and value is tag content
+    /// For multi-line tags, values are concatenated with newlines
+    /// </summary>
+    public ImmutableDictionary<string, string> CustomTags { get; init; } = ImmutableDictionary<string, string>.Empty;
+
     #endregion
 
     public override string ToString()

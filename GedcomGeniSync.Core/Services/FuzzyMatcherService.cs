@@ -579,70 +579,75 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     #region Family Relations Comparison
 
+    private Dictionary<string, PersonRecord>? _sourcePersonsCache;
+    private Dictionary<string, PersonRecord>? _destPersonsCache;
+
+    /// <summary>
+    /// Set person dictionaries for family relations comparison
+    /// This allows comparing family members by name when IDs don't match
+    /// </summary>
+    public void SetPersonDictionaries(
+        Dictionary<string, PersonRecord>? sourcePersons,
+        Dictionary<string, PersonRecord>? destPersons)
+    {
+        _sourcePersonsCache = sourcePersons;
+        _destPersonsCache = destPersons;
+    }
+
     /// <summary>
     /// Compare family relations between two persons
     /// Returns a score between 0.0 and 1.0 based on matching family members
+    /// Now uses name-based comparison when person dictionaries are available
     /// </summary>
     private double CompareFamilyRelations(PersonRecord source, PersonRecord target)
     {
         var matchPoints = 0.0;
         var totalPossiblePoints = 0.0;
 
-        // Compare parents (highest weight - 40% of family score)
+        // Compare parents (highest weight - 40% of family score each)
         var parentWeight = 0.4;
-        if (!string.IsNullOrEmpty(source.FatherId) && !string.IsNullOrEmpty(target.FatherId))
+
+        // Compare fathers
+        if (!string.IsNullOrEmpty(source.FatherId) || !string.IsNullOrEmpty(target.FatherId))
         {
             totalPossiblePoints += parentWeight;
-            if (source.FatherId == target.FatherId)
-                matchPoints += parentWeight;
+            var fatherMatch = CompareRelativePair(source.FatherId, target.FatherId);
+            matchPoints += fatherMatch * parentWeight;
         }
 
-        if (!string.IsNullOrEmpty(source.MotherId) && !string.IsNullOrEmpty(target.MotherId))
+        // Compare mothers
+        if (!string.IsNullOrEmpty(source.MotherId) || !string.IsNullOrEmpty(target.MotherId))
         {
             totalPossiblePoints += parentWeight;
-            if (source.MotherId == target.MotherId)
-                matchPoints += parentWeight;
+            var motherMatch = CompareRelativePair(source.MotherId, target.MotherId);
+            matchPoints += motherMatch * parentWeight;
         }
 
         // Compare spouses (30% of family score)
         var spouseWeight = 0.3;
-        if (source.SpouseIds.Any() && target.SpouseIds.Any())
+        if (source.SpouseIds.Any() || target.SpouseIds.Any())
         {
             totalPossiblePoints += spouseWeight;
-            var commonSpouses = source.SpouseIds.Intersect(target.SpouseIds).Count();
-            if (commonSpouses > 0)
-            {
-                // Full score if at least one common spouse
-                matchPoints += spouseWeight;
-            }
+            var spouseMatch = CompareRelativeList(source.SpouseIds, target.SpouseIds);
+            matchPoints += spouseMatch * spouseWeight;
         }
 
         // Compare children (20% of family score)
         var childrenWeight = 0.2;
-        if (source.ChildrenIds.Any() && target.ChildrenIds.Any())
+        if (source.ChildrenIds.Any() || target.ChildrenIds.Any())
         {
             totalPossiblePoints += childrenWeight;
-            var commonChildren = source.ChildrenIds.Intersect(target.ChildrenIds).Count();
-            var totalChildren = source.ChildrenIds.Union(target.ChildrenIds).Count();
-
-            if (totalChildren > 0)
-            {
-                // Jaccard similarity for children
-                var childrenSimilarity = (double)commonChildren / totalChildren;
-                matchPoints += childrenSimilarity * childrenWeight;
-            }
+            var childrenMatch = CompareRelativeList(source.ChildrenIds, target.ChildrenIds);
+            matchPoints += childrenMatch * childrenWeight;
         }
 
         // Compare siblings (10% of family score)
         var siblingWeight = 0.1;
-        if (source.SiblingIds.Any() && target.SiblingIds.Any())
+        if (source.SiblingIds.Any() || target.SiblingIds.Any())
         {
             totalPossiblePoints += siblingWeight;
-            var commonSiblings = source.SiblingIds.Intersect(target.SiblingIds).Count();
-            if (commonSiblings > 0)
-            {
-                matchPoints += siblingWeight;
-            }
+            var siblingMatch = CompareRelativeList(source.SiblingIds, target.SiblingIds);
+            matchPoints += siblingMatch * siblingWeight;
         }
 
         // If no comparable family data, return 0 (neutral, not penalty)
@@ -651,6 +656,134 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
         // Return normalized score
         return matchPoints / totalPossiblePoints;
+    }
+
+    /// <summary>
+    /// Compare two relative IDs by resolving to PersonRecords and comparing names
+    /// Returns 1.0 if they match, 0.0 if not
+    /// </summary>
+    private double CompareRelativePair(string? sourceId, string? targetId)
+    {
+        // If both are null/empty, no data to compare
+        if (string.IsNullOrEmpty(sourceId) && string.IsNullOrEmpty(targetId))
+            return 0.0;
+
+        // If only one is null, it's a mismatch
+        if (string.IsNullOrEmpty(sourceId) || string.IsNullOrEmpty(targetId))
+            return 0.0;
+
+        // Try to resolve persons from cache
+        PersonRecord? sourcePerson = null;
+        PersonRecord? targetPerson = null;
+
+        if (_sourcePersonsCache != null)
+            _sourcePersonsCache.TryGetValue(sourceId, out sourcePerson);
+
+        if (_destPersonsCache != null)
+            _destPersonsCache.TryGetValue(targetId, out targetPerson);
+
+        // If we couldn't resolve both persons, fall back to ID comparison
+        if (sourcePerson == null || targetPerson == null)
+        {
+            return sourceId == targetId ? 1.0 : 0.0;
+        }
+
+        // Compare by names
+        return CompareRelativesByName(sourcePerson, targetPerson);
+    }
+
+    /// <summary>
+    /// Compare two lists of relative IDs by finding best matches
+    /// Returns a score from 0.0 to 1.0 based on how many match
+    /// </summary>
+    private double CompareRelativeList(ImmutableList<string> sourceIds, ImmutableList<string> targetIds)
+    {
+        if (!sourceIds.Any() && !targetIds.Any())
+            return 0.0;
+
+        if (!sourceIds.Any() || !targetIds.Any())
+            return 0.0;
+
+        // Try to resolve all persons
+        var sourcePersons = sourceIds
+            .Select(id => _sourcePersonsCache?.GetValueOrDefault(id))
+            .Where(p => p != null)
+            .ToList()!;
+
+        var targetPersons = targetIds
+            .Select(id => _destPersonsCache?.GetValueOrDefault(id))
+            .Where(p => p != null)
+            .ToList()!;
+
+        // If we couldn't resolve any persons, fall back to ID intersection
+        if (!sourcePersons.Any() || !targetPersons.Any())
+        {
+            var commonIds = sourceIds.Intersect(targetIds).Count();
+            var totalIds = sourceIds.Union(targetIds).Count();
+            return totalIds > 0 ? (double)commonIds / totalIds : 0.0;
+        }
+
+        // Find matching pairs by name
+        var matchedCount = 0;
+        var matched = new HashSet<PersonRecord>();
+
+        foreach (var sourcePerson in sourcePersons)
+        {
+            foreach (var targetPerson in targetPersons)
+            {
+                if (matched.Contains(targetPerson))
+                    continue;
+
+                // Check if names match well
+                if (CompareRelativesByName(sourcePerson, targetPerson) >= 0.8)
+                {
+                    matchedCount++;
+                    matched.Add(targetPerson);
+                    break; // Move to next source person
+                }
+            }
+        }
+
+        // Jaccard-like similarity: matched / total unique
+        var totalUnique = Math.Max(sourcePersons.Count, targetPersons.Count);
+        return totalUnique > 0 ? (double)matchedCount / totalUnique : 0.0;
+    }
+
+    /// <summary>
+    /// Compare two persons by name to determine if they are likely the same person
+    /// Used for family relations matching
+    /// Returns 1.0 for strong match, 0.0 for no match
+    /// </summary>
+    private double CompareRelativesByName(PersonRecord person1, PersonRecord person2)
+    {
+        // Compare first names
+        var firstName1 = person1.NormalizedFirstName ?? NormalizeForComparison(person1.FirstName ?? "");
+        var firstName2 = person2.NormalizedFirstName ?? NormalizeForComparison(person2.FirstName ?? "");
+
+        if (string.IsNullOrEmpty(firstName1) || string.IsNullOrEmpty(firstName2))
+            return 0.0;
+
+        var firstNameSimilarity = _jaroWinkler.Similarity(firstName1, firstName2);
+        if (firstNameSimilarity < 0.8)
+            return 0.0; // First name must match well
+
+        // Compare last names (or maiden names)
+        var lastName1 = person1.NormalizedLastName ?? NormalizeForComparison(person1.LastName ?? person1.MaidenName ?? "");
+        var lastName2 = person2.NormalizedLastName ?? NormalizeForComparison(person2.LastName ?? person2.MaidenName ?? "");
+
+        if (string.IsNullOrEmpty(lastName1) || string.IsNullOrEmpty(lastName2))
+        {
+            // If last name missing for both but first name matches well, consider it a match
+            return firstNameSimilarity >= 0.9 ? 1.0 : 0.5;
+        }
+
+        var lastNameSimilarity = _jaroWinkler.Similarity(lastName1, lastName2);
+
+        // Both names need to match reasonably well
+        var avgSimilarity = (firstNameSimilarity + lastNameSimilarity) / 2.0;
+
+        // Return 1.0 if average is high, or scaled value if moderate
+        return avgSimilarity >= 0.85 ? 1.0 : (avgSimilarity >= 0.7 ? 0.5 : 0.0);
     }
 
     #endregion

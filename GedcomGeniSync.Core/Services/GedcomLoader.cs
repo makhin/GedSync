@@ -5,6 +5,7 @@ using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 using Patagames.GedcomNetSdk;
+using Patagames.GedcomNetSdk.Enums;
 using Patagames.GedcomNetSdk.Records;
 using Patagames.GedcomNetSdk.Records.Ver551;
 using Patagames.GedcomNetSdk.Structures;
@@ -55,23 +56,28 @@ public class GedcomLoader : IGedcomLoader
             // Already activated or activation not required
         }
 
+        // Configure parser to skip unknown tags gracefully
         GedcomTransmission transmission;
         try
         {
             using var parser = new Parser(filePath);
+            // Skip unknown/custom tags (ADDR in INDI, _UPD, _UID, etc.) to avoid parsing errors
+            parser.Settings.SkipUnknownTag = SkipUnknownTag.All;
             transmission = new GedcomTransmission();
             transmission.Deserialize(parser);
         }
-        catch (Patagames.GedcomNetSdk.Exceptions.UnknownTagException ex)
+        catch (Exception ex)
         {
-            _logger.LogWarning("GEDCOM file contains unknown or non-standard tags. Attempting to load with pre-processing...");
-            _logger.LogDebug("Unknown tag details: {Message}", ex.Message);
+            _logger.LogWarning("GEDCOM file has formatting issues. Attempting to load with pre-processing...");
+            _logger.LogDebug("Error details: {Message}", ex.Message);
 
-            // Pre-process the GEDCOM file to fix common issues
+            // Pre-process the GEDCOM file to fix severe formatting issues
+            // (malformed NOTE lines, encoding issues, etc.) that SDK can't handle
             var cleanedFilePath = PreprocessGedcomFile(filePath);
             try
             {
                 using var parser = new Parser(cleanedFilePath);
+                parser.Settings.SkipUnknownTag = SkipUnknownTag.All;
                 transmission = new GedcomTransmission();
                 transmission.Deserialize(parser);
                 _logger.LogInformation("Successfully loaded GEDCOM file after pre-processing");
@@ -85,11 +91,19 @@ public class GedcomLoader : IGedcomLoader
                 }
 
                 throw new InvalidOperationException(
-                    $"The GEDCOM file contains non-standard tags that cannot be parsed even after pre-processing. " +
-                    $"Error at: {ex.Message}. " +
+                    $"The GEDCOM file contains formatting issues that cannot be parsed. " +
+                    $"Error: {ex.Message}. " +
                     $"Please check the GEDCOM file for compliance with GEDCOM 5.5.1 standard, " +
                     $"or use a GEDCOM editor to clean up the file before importing.",
                     innerEx);
+            }
+            finally
+            {
+                // Clean up temporary file
+                if (File.Exists(cleanedFilePath))
+                {
+                    try { File.Delete(cleanedFilePath); } catch { }
+                }
             }
         }
 
@@ -162,6 +176,37 @@ public class GedcomLoader : IGedcomLoader
                 nickname = CleanName(pieces.Nickname);
                 suffix = CleanName(pieces.NameSuffix);
 
+                // Extract all name variants (including transliterations) for fuzzy matching
+                // E.g., "Мустафа (Mustafa)" -> both "Мустафа" and "Mustafa"
+                // E.g., "Иванов\Ivanov" -> both "Иванов" and "Ivanov"
+                if (!string.IsNullOrEmpty(pieces.GivenName))
+                {
+                    var givenVariants = ExtractNameVariants(pieces.GivenName);
+                    foreach (var variant in givenVariants)
+                    {
+                        if (!nameVariantsBuilder.Contains(variant))
+                            nameVariantsBuilder.Add(variant);
+                    }
+                }
+                if (!string.IsNullOrEmpty(pieces.Surname))
+                {
+                    var surnameVariants = ExtractNameVariants(pieces.Surname);
+                    foreach (var variant in surnameVariants)
+                    {
+                        if (!nameVariantsBuilder.Contains(variant))
+                            nameVariantsBuilder.Add(variant);
+                    }
+                }
+                if (!string.IsNullOrEmpty(pieces.Nickname))
+                {
+                    var nicknameVariants = ExtractNameVariants(pieces.Nickname);
+                    foreach (var variant in nicknameVariants)
+                    {
+                        if (!nameVariantsBuilder.Contains(variant))
+                            nameVariantsBuilder.Add(variant);
+                    }
+                }
+
                 // GEDCOM often puts patronymic (отчество) in the GIVN field along with first name
                 // e.g., "Владимир Витальевич" instead of just "Владимир"
                 // Split it into FirstName and MiddleName if there are exactly 2 words
@@ -197,12 +242,27 @@ public class GedcomLoader : IGedcomLoader
                 var nameType = personalName.Type?.ToUpperInvariant();
 
                 // Store name variants for fuzzy matching
+                // Extract all variants including transliterations (e.g., "Мустафа (Mustafa)" -> both variants)
                 if (pieces != null)
                 {
                     if (!string.IsNullOrEmpty(pieces.GivenName))
-                        nameVariantsBuilder.Add(pieces.GivenName);
+                    {
+                        var givenVariants = ExtractNameVariants(pieces.GivenName);
+                        foreach (var variant in givenVariants)
+                        {
+                            if (!nameVariantsBuilder.Contains(variant))
+                                nameVariantsBuilder.Add(variant);
+                        }
+                    }
                     if (!string.IsNullOrEmpty(pieces.Surname))
-                        nameVariantsBuilder.Add(pieces.Surname);
+                    {
+                        var surnameVariants = ExtractNameVariants(pieces.Surname);
+                        foreach (var variant in surnameVariants)
+                        {
+                            if (!nameVariantsBuilder.Contains(variant))
+                                nameVariantsBuilder.Add(variant);
+                        }
+                    }
                 }
 
                 // Look for maiden name from TYPE=MAIDEN or TYPE=BIRTH
@@ -355,6 +415,54 @@ public class GedcomLoader : IGedcomLoader
                 geniProfileId, individual.IndividualId);
         }
 
+        // Extract NOTE tags
+        var notesBuilder = ImmutableList.CreateBuilder<string>();
+        if (individual.Notes != null)
+        {
+            foreach (var noteStructure in individual.Notes)
+            {
+                if (noteStructure != null)
+                {
+                    // NoteStructure may have different properties depending on SDK version
+                    // Try to get note content via ToString() or available properties
+                    var noteText = noteStructure.ToString();
+                    if (!string.IsNullOrWhiteSpace(noteText))
+                    {
+                        notesBuilder.Add(noteText.Trim());
+                    }
+                }
+            }
+        }
+
+        // Extract custom tags (MyHeritage _UPD, _UID, RIN, etc.)
+        // These are stored in UnknownTags collection when SkipUnknownTag = None
+        var customTagsBuilder = ImmutableDictionary.CreateBuilder<string, string>();
+        if (individual.UnknownTags != null)
+        {
+            foreach (var unknownTag in individual.UnknownTags)
+            {
+                // TagInfo structure: unknownTag is TagInfo type
+                var tagName = unknownTag.Tag;
+                var tagValue = unknownTag.Value ?? string.Empty;
+
+                // Skip RFN since we handle it separately
+                if (string.IsNullOrWhiteSpace(tagName) ||
+                    tagName.Equals("RFN", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Store custom tag
+                if (!customTagsBuilder.ContainsKey(tagName))
+                {
+                    customTagsBuilder[tagName] = tagValue;
+                }
+                else
+                {
+                    // If tag appears multiple times, concatenate with newline
+                    customTagsBuilder[tagName] = customTagsBuilder[tagName] + "\n" + tagValue;
+                }
+            }
+        }
+
         return new PersonRecord
         {
             Id = individual.IndividualId,
@@ -379,7 +487,9 @@ public class GedcomLoader : IGedcomLoader
             ChildOfFamilyIds = childOfFamilyIdsBuilder.ToImmutable(),
             SpouseOfFamilyIds = spouseOfFamilyIdsBuilder.ToImmutable(),
             PhotoUrls = photoUrlsBuilder.ToImmutable(),
-            GeniProfileId = geniProfileId
+            GeniProfileId = geniProfileId,
+            Notes = notesBuilder.ToImmutable(),
+            CustomTags = customTagsBuilder.ToImmutable()
         };
     }
 
@@ -698,10 +808,75 @@ public class GedcomLoader : IGedcomLoader
         return string.Join(" ", parts);
     }
 
+    /// <summary>
+    /// Extract name variants from a name string that may contain transliterations
+    /// Supports formats:
+    /// - "Мустафа (Mustafa)" -> ["Мустафа", "Mustafa"]
+    /// - "Иванов\Ivanov" -> ["Иванов", "Ivanov"]
+    /// - "Simple Name" -> ["Simple Name"]
+    /// </summary>
+    private static List<string> ExtractNameVariants(string? name)
+    {
+        var variants = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(name))
+            return variants;
+
+        // Pattern 1: Extract name with parentheses "Мустафа (Mustafa)"
+        var parenthesesMatch = Regex.Match(name, @"^(.+?)\s*\(([^)]+)\)\s*$");
+        if (parenthesesMatch.Success)
+        {
+            var primary = CleanNameSimple(parenthesesMatch.Groups[1].Value);
+            var transliteration = CleanNameSimple(parenthesesMatch.Groups[2].Value);
+
+            if (!string.IsNullOrWhiteSpace(primary))
+                variants.Add(primary);
+            if (!string.IsNullOrWhiteSpace(transliteration))
+                variants.Add(transliteration);
+
+            return variants;
+        }
+
+        // Pattern 2: Extract name with backslash "Иванов\Ivanov"
+        var backslashMatch = Regex.Match(name, @"^(.+?)\\(.+)$");
+        if (backslashMatch.Success)
+        {
+            var primary = CleanNameSimple(backslashMatch.Groups[1].Value);
+            var transliteration = CleanNameSimple(backslashMatch.Groups[2].Value);
+
+            if (!string.IsNullOrWhiteSpace(primary))
+                variants.Add(primary);
+            if (!string.IsNullOrWhiteSpace(transliteration))
+                variants.Add(transliteration);
+
+            return variants;
+        }
+
+        // No special format - just clean and return
+        var cleaned = CleanNameSimple(name);
+        if (!string.IsNullOrWhiteSpace(cleaned))
+            variants.Add(cleaned);
+
+        return variants;
+    }
+
+    /// <summary>
+    /// Clean a name by removing GEDCOM markers and special characters
+    /// Returns the primary (first) variant if transliterations are present
+    /// </summary>
     private static string? CleanName(string? name)
     {
+        var variants = ExtractNameVariants(name);
+        return variants.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Simple cleaning without extracting variants
+    /// </summary>
+    private static string CleanNameSimple(string name)
+    {
         if (string.IsNullOrWhiteSpace(name))
-            return null;
+            return string.Empty;
 
         // Remove GEDCOM-specific markers and special characters
         // Keep only letters (Latin and Cyrillic), digits, spaces, and hyphens
@@ -757,22 +932,21 @@ public class GedcomLoader : IGedcomLoader
         return relatives.Distinct();
     }
 
+
     /// <summary>
-    /// Pre-process GEDCOM file to fix common formatting issues
+    /// Pre-process GEDCOM file to fix severe formatting issues
+    /// Note: SDK's SkipUnknownTag handles non-standard tags, but we still need to fix malformed NOTE lines
     /// </summary>
     private string PreprocessGedcomFile(string filePath)
     {
         _logger.LogInformation("Pre-processing GEDCOM file to fix formatting issues");
 
         var tempFilePath = Path.GetTempFileName();
-        var encoding = DetectFileEncoding(filePath);
 
-        // Known problematic tags that should be removed from certain contexts
-        // ADDR on INDI level is not standard GEDCOM 5.5.1
-        // DATA on SOUR level can also cause issues with some parsers
-        var problematicIndiTags = new HashSet<string> { "ADDR", "EMAIL", "PHON", "WWW" };
-        var problematicSourTags = new HashSet<string> { "DATA" };
-        var removedLines = 0;
+        // Detect encoding by reading first few bytes to detect BOM
+        using var encodingReader = new StreamReader(filePath, true);
+        encodingReader.Peek(); // Force detection
+        var encoding = encodingReader.CurrentEncoding;
 
         using (var reader = new StreamReader(filePath, encoding))
         using (var writer = new StreamWriter(tempFilePath, false, encoding))
@@ -780,9 +954,6 @@ public class GedcomLoader : IGedcomLoader
             string? line;
             var lineNumber = 0;
             int? currentNoteLevel = null;  // Track if we're inside a NOTE block
-            int? currentIndiLevel = null;  // Track if we're inside an INDI record
-            int? currentSourLevel = null;  // Track if we're inside a SOUR block
-            int? skipUntilLevel = null;    // Track when we're skipping a tag and its children
             int fixedLines = 0;
 
             while ((line = reader.ReadLine()) != null)
@@ -794,7 +965,6 @@ public class GedcomLoader : IGedcomLoader
                 if (string.IsNullOrWhiteSpace(line))
                 {
                     writer.WriteLine(line);
-                    // Don't reset NOTE context - empty lines can appear within NOTE blocks
                     continue;
                 }
 
@@ -804,83 +974,6 @@ public class GedcomLoader : IGedcomLoader
                 {
                     var level = int.Parse(gedcomLineMatch.Groups[1].Value);
                     var tag = gedcomLineMatch.Groups[2].Value;
-
-                    // If we're skipping and current line is a child of the skipped tag (deeper level)
-                    // OR if current line is at the same level as the skipped tag, continue skipping
-                    if (skipUntilLevel.HasValue)
-                    {
-                        if (level > skipUntilLevel.Value)
-                        {
-                            // This is a child of the problematic tag, skip it
-                            removedLines++;
-                            continue;
-                        }
-                        else
-                        {
-                            // We've reached a tag at the same or lower level, stop skipping
-                            skipUntilLevel = null;
-                            // Fall through to process this line normally
-                        }
-                    }
-
-                    // Track INDI records
-                    if (level == 0 && tag.StartsWith("@"))
-                    {
-                        // Check if this is an INDI record
-                        if (Regex.IsMatch(line, @"^\d+\s+@[^@]+@\s+INDI"))
-                        {
-                            currentIndiLevel = 0;
-                        }
-                        else
-                        {
-                            // New level 0 record of different type ends INDI context
-                            currentIndiLevel = null;
-                        }
-                    }
-                    else if (currentIndiLevel.HasValue && level == 0)
-                    {
-                        // New level 0 record ends INDI context
-                        currentIndiLevel = null;
-                    }
-
-                    // Track SOUR blocks
-                    if (tag == "SOUR")
-                    {
-                        currentSourLevel = level;
-                    }
-                    else if (currentSourLevel.HasValue && level <= currentSourLevel.Value)
-                    {
-                        // New tag at same or lower level ends SOUR context
-                        currentSourLevel = null;
-                    }
-
-                    // Filter out problematic tags in INDI records
-                    if (currentIndiLevel.HasValue && level == 1 && problematicIndiTags.Contains(tag))
-                    {
-                        removedLines++;
-                        if (removedLines <= 10)
-                        {
-                            _logger.LogDebug("Removed non-standard tag {Tag} from INDI record at line {LineNumber}",
-                                tag, lineNumber);
-                        }
-                        // Set skipUntilLevel to skip children of this tag
-                        skipUntilLevel = level;
-                        continue; // Skip this line
-                    }
-
-                    // Filter out problematic tags in SOUR blocks
-                    if (currentSourLevel.HasValue && level == currentSourLevel.Value + 1 && problematicSourTags.Contains(tag))
-                    {
-                        removedLines++;
-                        if (removedLines <= 20)
-                        {
-                            _logger.LogDebug("Removed non-standard tag {Tag} from SOUR block at line {LineNumber}",
-                                tag, lineNumber);
-                        }
-                        // Set skipUntilLevel to skip children of this tag
-                        skipUntilLevel = level;
-                        continue; // Skip this line
-                    }
 
                     // Check if we're starting a NOTE block
                     if (tag == "NOTE" || tag == "CONC" || tag == "CONT")
@@ -925,26 +1018,10 @@ public class GedcomLoader : IGedcomLoader
             {
                 _logger.LogInformation("Fixed {Count} malformed NOTE continuation lines", fixedLines);
             }
-
-            if (removedLines > 0)
-            {
-                _logger.LogInformation("Removed {Count} non-standard tags from INDI records", removedLines);
-            }
         }
 
         _logger.LogInformation("Pre-processing complete. Temporary file: {Path}", tempFilePath);
         return tempFilePath;
-    }
-
-    /// <summary>
-    /// Detect file encoding (UTF-8, UTF-16, or ANSI)
-    /// </summary>
-    private static System.Text.Encoding DetectFileEncoding(string filePath)
-    {
-        // Read first few bytes to detect BOM
-        using var reader = new StreamReader(filePath, true);
-        reader.Peek(); // Force detection
-        return reader.CurrentEncoding;
     }
 
     /// <summary>
@@ -954,9 +1031,10 @@ public class GedcomLoader : IGedcomLoader
     private Dictionary<string, string> ExtractRfnTags(string filePath)
     {
         var rfnMap = new Dictionary<string, string>();
-        var encoding = DetectFileEncoding(filePath);
 
-        using var reader = new StreamReader(filePath, encoding);
+        // Detect encoding by reading first few bytes to detect BOM
+        using var reader = new StreamReader(filePath, true);
+        reader.Peek(); // Force detection
         string? currentIndiId = null;
         string? line;
 

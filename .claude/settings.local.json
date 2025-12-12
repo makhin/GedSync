@@ -29,7 +29,11 @@
       "Bash(timeout 60 ./GedcomGeniSync.Cli/bin/Debug/net8.0/GedcomGeniSync.Cli.exe:*)",
       "Bash(xargs -I {} sh -c 'head -35 {} | tail -10')",
       "Bash(timeout:*)",
-      "Bash(del \"c:\\code\\GedSync\\GedcomGeniSync.Tests\\Services\\Compare\\IndividualCompareServiceTests.cs\")"
+      "Bash(del \"c:\\code\\GedSync\\GedcomGeniSync.Tests\\Services\\Compare\\IndividualCompareServiceTests.cs\")",
+      "Bash(dotnet add:*)",
+      "Bash(powershell:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

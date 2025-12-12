@@ -6,6 +6,7 @@ using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.CommandLine.Builder;
 
 namespace GedcomGeniSync;
 
@@ -13,6 +14,19 @@ class Program
 {
     static async Task<int> Main(string[] args)
     {
+        // Workaround for System.CommandLine treating @ as response file indicator
+        // Escape @ symbols in GEDCOM IDs by doubling them (@@) before parsing
+        // System.CommandLine will convert @@ back to @ internally
+        var escapedArgs = args.Select(arg =>
+        {
+            // Only escape arguments that look like GEDCOM IDs (@I123@, @F456@, etc.)
+            if (arg.StartsWith("@") && arg.EndsWith("@") && arg.Length > 2)
+            {
+                return $"@{arg}"; // Add extra @ prefix: @I123@ becomes @@I123@
+            }
+            return arg;
+        }).ToArray();
+
         var rootCommand = new RootCommand("GEDCOM to Geni synchronization tool");
 
         var syncCommand = BuildSyncCommand();
@@ -27,7 +41,7 @@ class Program
         rootCommand.AddCommand(authCommand);
         rootCommand.AddCommand(profileCommand);
 
-        return await rootCommand.InvokeAsync(args);
+        return await rootCommand.InvokeAsync(escapedArgs);
     }
 
     private static Command BuildCompareCommand()
@@ -159,7 +173,8 @@ class Program
                 var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                 });
 
                 // Output to file or stdout

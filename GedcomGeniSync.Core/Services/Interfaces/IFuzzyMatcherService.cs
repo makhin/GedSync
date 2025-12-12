@@ -10,6 +10,16 @@ namespace GedcomGeniSync.Services;
 public interface IFuzzyMatcherService
 {
     /// <summary>
+    /// Set person dictionaries for family relations comparison
+    /// This allows comparing family members by name when IDs don't match between different GEDCOM files
+    /// </summary>
+    /// <param name="sourcePersons">Dictionary of source persons by ID</param>
+    /// <param name="destPersons">Dictionary of destination persons by ID</param>
+    void SetPersonDictionaries(
+        Dictionary<string, PersonRecord>? sourcePersons,
+        Dictionary<string, PersonRecord>? destPersons);
+
+    /// <summary>
     /// Compare two persons and return match score with detailed reasoning
     /// </summary>
     /// <param name="source">Source person record</param>
