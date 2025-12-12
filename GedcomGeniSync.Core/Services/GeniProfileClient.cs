@@ -269,7 +269,7 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
                                 nodeId,
                                 fullUnion.Status ?? "(null)",
                                 fullUnion.MarriageDate ?? "(null)",
-                                fullUnion.Divorce?.Date?.FormattedDate ?? "(null)");
+                                fullUnion.DivorceDate ?? "(null)");
 
                             enrichedNodes[nodeId] = enrichedNode;
                         }

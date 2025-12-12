@@ -20,7 +20,10 @@
       "Bash(test -f:*)",
       "Bash(cat:*)",
       "Bash(grep:*)",
-      "Bash(dotnet script:*)"
+      "Bash(dotnet script:*)",
+      "Bash(powershell -Command \"$content = [System.IO.File]::ReadAllText(''''analyze_csv.csx''''); Invoke-Expression $content\")",
+      "Bash(csc:*)",
+      "Bash(./AnalyzeCsv.exe:*)"
     ],
     "deny": [],
     "ask": []
