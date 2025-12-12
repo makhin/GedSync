@@ -138,6 +138,30 @@ public record PersonRecord
     #region Sync State
 
     /// <summary>
+    /// Geni Profile ID extracted from RFN tag (e.g., "geni:6000000012345678901")
+    /// Used for matching GEDCOM records to Geni profiles
+    /// </summary>
+    public string? GeniProfileId { get; init; }
+
+    /// <summary>
+    /// Extract numeric Geni ID from either GEDCOM ID or RFN
+    /// Returns the numeric part that uniquely identifies a Geni profile
+    /// </summary>
+    public string? GetNumericGeniId()
+    {
+        // Try to extract from RFN first (most reliable for Geni-exported files)
+        if (!string.IsNullOrEmpty(GeniProfileId))
+        {
+            var numericFromRfn = Utils.GeniIdHelper.ExtractNumericId(GeniProfileId);
+            if (numericFromRfn != null)
+                return numericFromRfn;
+        }
+
+        // Fall back to GEDCOM ID (works if GEDCOM was exported from Geni)
+        return Utils.GeniIdHelper.ExtractNumericId(Id);
+    }
+
+    /// <summary>
     /// Matched ID in other system (GEDCOM ID → Geni ID or vice versa)
     /// </summary>
     public string? MatchedId { get; init; }

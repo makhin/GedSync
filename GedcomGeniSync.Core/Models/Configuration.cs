@@ -39,6 +39,12 @@ public class GedSyncConfiguration
     /// </summary>
     [JsonPropertyName("logging")]
     public LoggingConfig Logging { get; set; } = new();
+
+    /// <summary>
+    /// Compare configuration
+    /// </summary>
+    [JsonPropertyName("compare")]
+    public CompareConfig Compare { get; set; } = new();
 }
 
 /// <summary>
@@ -215,4 +221,53 @@ public class LoggingConfig
     /// </summary>
     [JsonPropertyName("verbose")]
     public bool Verbose { get; set; } = false;
+}
+
+/// <summary>
+/// Compare configuration
+/// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
+public class CompareConfig
+{
+    /// <summary>
+    /// Depth of new nodes to add from existing matched nodes (default: 1)
+    /// </summary>
+    [JsonPropertyName("newNodeDepth")]
+    public int NewNodeDepth { get; set; } = 1;
+
+    /// <summary>
+    /// Match threshold score 0-100 (default: 70)
+    /// </summary>
+    [JsonPropertyName("matchThreshold")]
+    public int MatchThreshold { get; set; } = 70;
+
+    /// <summary>
+    /// Whether to include delete suggestions (default: false)
+    /// </summary>
+    [JsonPropertyName("includeDeleteSuggestions")]
+    public bool IncludeDeleteSuggestions { get; set; } = false;
+
+    /// <summary>
+    /// Whether to require unique matches (default: true)
+    /// </summary>
+    [JsonPropertyName("requireUniqueMatch")]
+    public bool RequireUniqueMatch { get; set; } = true;
+
+    /// <summary>
+    /// Convert to CompareOptions
+    /// </summary>
+    public CompareOptions ToCompareOptions(string anchorSourceId, string anchorDestinationId)
+    {
+        return new CompareOptions
+        {
+            AnchorSourceId = anchorSourceId,
+            AnchorDestinationId = anchorDestinationId,
+            NewNodeDepth = NewNodeDepth,
+            MatchThreshold = MatchThreshold,
+            IncludeDeleteSuggestions = IncludeDeleteSuggestions,
+            RequireUniqueMatch = RequireUniqueMatch
+        };
+    }
 }

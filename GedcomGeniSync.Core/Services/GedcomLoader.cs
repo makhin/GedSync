@@ -41,6 +41,10 @@ public class GedcomLoader : IGedcomLoader
 
         var result = new GedcomLoadResult();
 
+        // First pass: extract RFN tags by parsing the file directly
+        // This is needed because Gedcom.Net.SDK doesn't expose RFN as a standard property
+        var rfnMap = ExtractRfnTags(filePath);
+
         // Activate SDK for personal use (required for Gedcom.Net.SDK)
         try
         {
@@ -116,7 +120,7 @@ public class GedcomLoader : IGedcomLoader
         // First pass: create all PersonRecords
         foreach (var individual in individuals)
         {
-            var person = ConvertIndividual(individual, multimedia);
+            var person = ConvertIndividual(individual, multimedia, rfnMap);
             result.Persons[person.Id] = person;
         }
 
@@ -135,7 +139,7 @@ public class GedcomLoader : IGedcomLoader
         return result;
     }
 
-    private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia)
+    private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia, Dictionary<string, string> rfnMap)
     {
         string? firstName = null;
         string? middleName = null;
@@ -341,6 +345,16 @@ public class GedcomLoader : IGedcomLoader
             }
         }
 
+        // Extract Geni Profile ID from RFN tag (Reference Number)
+        // RFN is used to store Geni profile identifiers like "geni:6000000012345678901"
+        string? geniProfileId = null;
+        if (rfnMap.TryGetValue(individual.IndividualId, out var rfnValue))
+        {
+            geniProfileId = rfnValue;
+            _logger.LogDebug("Found Geni Profile ID '{GeniProfileId}' from RFN tag for {Id}",
+                geniProfileId, individual.IndividualId);
+        }
+
         return new PersonRecord
         {
             Id = individual.IndividualId,
@@ -364,7 +378,8 @@ public class GedcomLoader : IGedcomLoader
             IsLiving = isLiving,
             ChildOfFamilyIds = childOfFamilyIdsBuilder.ToImmutable(),
             SpouseOfFamilyIds = spouseOfFamilyIdsBuilder.ToImmutable(),
-            PhotoUrls = photoUrlsBuilder.ToImmutable()
+            PhotoUrls = photoUrlsBuilder.ToImmutable(),
+            GeniProfileId = geniProfileId
         };
     }
 
@@ -752,12 +767,22 @@ public class GedcomLoader : IGedcomLoader
         var tempFilePath = Path.GetTempFileName();
         var encoding = DetectFileEncoding(filePath);
 
+        // Known problematic tags that should be removed from certain contexts
+        // ADDR on INDI level is not standard GEDCOM 5.5.1
+        // DATA on SOUR level can also cause issues with some parsers
+        var problematicIndiTags = new HashSet<string> { "ADDR", "EMAIL", "PHON", "WWW" };
+        var problematicSourTags = new HashSet<string> { "DATA" };
+        var removedLines = 0;
+
         using (var reader = new StreamReader(filePath, encoding))
         using (var writer = new StreamWriter(tempFilePath, false, encoding))
         {
             string? line;
             var lineNumber = 0;
             int? currentNoteLevel = null;  // Track if we're inside a NOTE block
+            int? currentIndiLevel = null;  // Track if we're inside an INDI record
+            int? currentSourLevel = null;  // Track if we're inside a SOUR block
+            int? skipUntilLevel = null;    // Track when we're skipping a tag and its children
             int fixedLines = 0;
 
             while ((line = reader.ReadLine()) != null)
@@ -779,6 +804,83 @@ public class GedcomLoader : IGedcomLoader
                 {
                     var level = int.Parse(gedcomLineMatch.Groups[1].Value);
                     var tag = gedcomLineMatch.Groups[2].Value;
+
+                    // If we're skipping and current line is a child of the skipped tag (deeper level)
+                    // OR if current line is at the same level as the skipped tag, continue skipping
+                    if (skipUntilLevel.HasValue)
+                    {
+                        if (level > skipUntilLevel.Value)
+                        {
+                            // This is a child of the problematic tag, skip it
+                            removedLines++;
+                            continue;
+                        }
+                        else
+                        {
+                            // We've reached a tag at the same or lower level, stop skipping
+                            skipUntilLevel = null;
+                            // Fall through to process this line normally
+                        }
+                    }
+
+                    // Track INDI records
+                    if (level == 0 && tag.StartsWith("@"))
+                    {
+                        // Check if this is an INDI record
+                        if (Regex.IsMatch(line, @"^\d+\s+@[^@]+@\s+INDI"))
+                        {
+                            currentIndiLevel = 0;
+                        }
+                        else
+                        {
+                            // New level 0 record of different type ends INDI context
+                            currentIndiLevel = null;
+                        }
+                    }
+                    else if (currentIndiLevel.HasValue && level == 0)
+                    {
+                        // New level 0 record ends INDI context
+                        currentIndiLevel = null;
+                    }
+
+                    // Track SOUR blocks
+                    if (tag == "SOUR")
+                    {
+                        currentSourLevel = level;
+                    }
+                    else if (currentSourLevel.HasValue && level <= currentSourLevel.Value)
+                    {
+                        // New tag at same or lower level ends SOUR context
+                        currentSourLevel = null;
+                    }
+
+                    // Filter out problematic tags in INDI records
+                    if (currentIndiLevel.HasValue && level == 1 && problematicIndiTags.Contains(tag))
+                    {
+                        removedLines++;
+                        if (removedLines <= 10)
+                        {
+                            _logger.LogDebug("Removed non-standard tag {Tag} from INDI record at line {LineNumber}",
+                                tag, lineNumber);
+                        }
+                        // Set skipUntilLevel to skip children of this tag
+                        skipUntilLevel = level;
+                        continue; // Skip this line
+                    }
+
+                    // Filter out problematic tags in SOUR blocks
+                    if (currentSourLevel.HasValue && level == currentSourLevel.Value + 1 && problematicSourTags.Contains(tag))
+                    {
+                        removedLines++;
+                        if (removedLines <= 20)
+                        {
+                            _logger.LogDebug("Removed non-standard tag {Tag} from SOUR block at line {LineNumber}",
+                                tag, lineNumber);
+                        }
+                        // Set skipUntilLevel to skip children of this tag
+                        skipUntilLevel = level;
+                        continue; // Skip this line
+                    }
 
                     // Check if we're starting a NOTE block
                     if (tag == "NOTE" || tag == "CONC" || tag == "CONT")
@@ -823,6 +925,11 @@ public class GedcomLoader : IGedcomLoader
             {
                 _logger.LogInformation("Fixed {Count} malformed NOTE continuation lines", fixedLines);
             }
+
+            if (removedLines > 0)
+            {
+                _logger.LogInformation("Removed {Count} non-standard tags from INDI records", removedLines);
+            }
         }
 
         _logger.LogInformation("Pre-processing complete. Temporary file: {Path}", tempFilePath);
@@ -838,5 +945,53 @@ public class GedcomLoader : IGedcomLoader
         using var reader = new StreamReader(filePath, true);
         reader.Peek(); // Force detection
         return reader.CurrentEncoding;
+    }
+
+    /// <summary>
+    /// Extract RFN tags from GEDCOM file by parsing directly
+    /// Returns a dictionary mapping Individual ID to RFN value
+    /// </summary>
+    private Dictionary<string, string> ExtractRfnTags(string filePath)
+    {
+        var rfnMap = new Dictionary<string, string>();
+        var encoding = DetectFileEncoding(filePath);
+
+        using var reader = new StreamReader(filePath, encoding);
+        string? currentIndiId = null;
+        string? line;
+
+        while ((line = reader.ReadLine()) != null)
+        {
+            var trimmedLine = line.Trim();
+
+            // Check for INDI record start (e.g., "0 @I123@ INDI")
+            var indiMatch = Regex.Match(trimmedLine, @"^0\s+(@[^@]+@)\s+INDI", RegexOptions.IgnoreCase);
+            if (indiMatch.Success)
+            {
+                currentIndiId = indiMatch.Groups[1].Value;
+                continue;
+            }
+
+            // Check for RFN tag at level 1 (e.g., "1 RFN geni:6000000012345678901")
+            if (currentIndiId != null)
+            {
+                var rfnMatch = Regex.Match(trimmedLine, @"^1\s+RFN\s+(.+)$", RegexOptions.IgnoreCase);
+                if (rfnMatch.Success)
+                {
+                    var rfnValue = rfnMatch.Groups[1].Value.Trim();
+                    rfnMap[currentIndiId] = rfnValue;
+                    _logger.LogDebug("Extracted RFN '{RfnValue}' for {IndiId}", rfnValue, currentIndiId);
+                }
+            }
+
+            // Reset currentIndiId when we hit a new level 0 record
+            if (trimmedLine.StartsWith("0 ") && !trimmedLine.Contains("INDI"))
+            {
+                currentIndiId = null;
+            }
+        }
+
+        _logger.LogInformation("Extracted {Count} RFN tags from GEDCOM file", rfnMap.Count);
+        return rfnMap;
     }
 }

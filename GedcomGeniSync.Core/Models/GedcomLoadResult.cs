@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using PersonRecord = GedcomGeniSync.Models.PersonRecord;
-using GedcomFamilyRecord = Patagames.GedcomNetSdk.Records.FamilyRecord;
+using Family = Patagames.GedcomNetSdk.Records.Ver551.Family;
 using Gender = GedcomGeniSync.Models.Gender;
 using Microsoft.Extensions.Logging;
 
@@ -22,7 +22,7 @@ public class GedcomLoadResult
     /// <summary>
     /// Original family records for reference.
     /// </summary>
-    public Dictionary<string, GedcomFamilyRecord> Families { get; } = new();
+    public Dictionary<string, Family> Families { get; } = new();
 
     /// <summary>
     /// Statistics.

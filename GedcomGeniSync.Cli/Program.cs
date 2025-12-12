@@ -1,5 +1,6 @@
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Services.Compare;
 using GedcomGeniSync.Services.Interfaces;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,15 +17,172 @@ class Program
 
         var syncCommand = BuildSyncCommand();
         var analyzeCommand = BuildAnalyzeCommand();
+        var compareCommand = BuildCompareCommand();
         var authCommand = BuildAuthCommand();
         var profileCommand = BuildProfileCommand();
 
         rootCommand.AddCommand(syncCommand);
         rootCommand.AddCommand(analyzeCommand);
+        rootCommand.AddCommand(compareCommand);
         rootCommand.AddCommand(authCommand);
         rootCommand.AddCommand(profileCommand);
 
         return await rootCommand.InvokeAsync(args);
+    }
+
+    private static Command BuildCompareCommand()
+    {
+        var compareCommand = new Command("compare", "Compare two GEDCOM files and output differences as JSON");
+
+        var configOption = new Option<string>("--config", description: "Path to configuration file (JSON or YAML)");
+        var sourceOption = new Option<string>("--source", description: "Path to source GEDCOM file") { IsRequired = true };
+        var destOption = new Option<string>("--dest", description: "Path to destination GEDCOM file") { IsRequired = true };
+        var anchorSourceOption = new Option<string>("--anchor-source", description: "GEDCOM ID of anchor person in source (e.g., @I123@)") { IsRequired = true };
+        var anchorDestOption = new Option<string>("--anchor-dest", description: "GEDCOM ID of anchor person in destination (e.g., @I456@)") { IsRequired = true };
+        var outputOption = new Option<string>("--output", description: "Output JSON file path (default: stdout)");
+        var depthOption = new Option<int?>("--depth", description: "Depth of new nodes to add from existing matched nodes");
+        var thresholdOption = new Option<int?>("--threshold", description: "Match threshold (0-100)");
+        var includeDeletesOption = new Option<bool?>("--include-deletes", description: "Include delete suggestions");
+        var requireUniqueOption = new Option<bool?>("--require-unique", description: "Require unique matches");
+        var verboseOption = new Option<bool?>("--verbose", description: "Enable verbose logging");
+
+        compareCommand.AddOption(configOption);
+        compareCommand.AddOption(sourceOption);
+        compareCommand.AddOption(destOption);
+        compareCommand.AddOption(anchorSourceOption);
+        compareCommand.AddOption(anchorDestOption);
+        compareCommand.AddOption(outputOption);
+        compareCommand.AddOption(depthOption);
+        compareCommand.AddOption(thresholdOption);
+        compareCommand.AddOption(includeDeletesOption);
+        compareCommand.AddOption(requireUniqueOption);
+        compareCommand.AddOption(verboseOption);
+
+        compareCommand.SetHandler(async context =>
+        {
+            // Load configuration
+            var configPath = context.ParseResult.GetValueForOption(configOption);
+            var configLoader = new ConfigurationLoader();
+            var config = configLoader.LoadWithDefaults(
+                configPath ?? "",
+                "gedsync.json",
+                "gedsync.yaml",
+                "gedsync.yml",
+                ".gedsync.json",
+                ".gedsync.yaml",
+                ".gedsync.yml"
+            );
+
+            // Get CLI options (they override config)
+            var sourcePath = context.ParseResult.GetValueForOption(sourceOption)!;
+            var destPath = context.ParseResult.GetValueForOption(destOption)!;
+            var anchorSource = context.ParseResult.GetValueForOption(anchorSourceOption)!;
+            var anchorDest = context.ParseResult.GetValueForOption(anchorDestOption)!;
+            var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var depthCli = context.ParseResult.GetValueForOption(depthOption);
+            var thresholdCli = context.ParseResult.GetValueForOption(thresholdOption);
+            var includeDeletesCli = context.ParseResult.GetValueForOption(includeDeletesOption);
+            var requireUniqueCli = context.ParseResult.GetValueForOption(requireUniqueOption);
+            var verboseCli = context.ParseResult.GetValueForOption(verboseOption);
+
+            // Merge CLI options with config (CLI takes precedence)
+            var depth = depthCli ?? config.Compare.NewNodeDepth;
+            var threshold = thresholdCli ?? config.Compare.MatchThreshold;
+            var includeDeletes = includeDeletesCli ?? config.Compare.IncludeDeleteSuggestions;
+            var requireUnique = requireUniqueCli ?? config.Compare.RequireUniqueMatch;
+            var verbose = verboseCli ?? config.Logging.Verbose;
+
+            await using var provider = BuildServiceProvider(verbose, services =>
+            {
+                // Register compare services
+                services.AddSingleton<IPersonFieldComparer>(sp =>
+                    new Services.Compare.PersonFieldComparer(
+                        sp.GetRequiredService<ILogger<Services.Compare.PersonFieldComparer>>()));
+
+                services.AddSingleton<IFuzzyMatcherService>(sp =>
+                    new FuzzyMatcherService(
+                        sp.GetRequiredService<INameVariantsService>(),
+                        sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
+                        new MatchingOptions { MatchThreshold = threshold }));
+
+                services.AddSingleton<Services.Compare.IIndividualCompareService>(sp =>
+                    new Services.Compare.IndividualCompareService(
+                        sp.GetRequiredService<ILogger<Services.Compare.IndividualCompareService>>(),
+                        sp.GetRequiredService<IPersonFieldComparer>(),
+                        sp.GetRequiredService<IFuzzyMatcherService>()));
+
+                services.AddSingleton<Services.Compare.IFamilyCompareService>(sp =>
+                    new Services.Compare.FamilyCompareService(
+                        sp.GetRequiredService<ILogger<Services.Compare.FamilyCompareService>>()));
+
+                services.AddSingleton<IGedcomLoader>(sp =>
+                    new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
+
+                services.AddSingleton<Services.Compare.IGedcomCompareService>(sp =>
+                    new Services.Compare.GedcomCompareService(
+                        sp.GetRequiredService<ILogger<Services.Compare.GedcomCompareService>>(),
+                        sp.GetRequiredService<IGedcomLoader>(),
+                        sp.GetRequiredService<Services.Compare.IIndividualCompareService>(),
+                        sp.GetRequiredService<Services.Compare.IFamilyCompareService>()));
+
+                services.AddSingleton<INameVariantsService, NameVariantsService>();
+            });
+
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Compare");
+
+            try
+            {
+                logger.LogInformation("Configuration source: {Config}", string.IsNullOrEmpty(configPath) ? "auto-detected defaults" : configPath);
+                logger.LogInformation("=== GEDCOM Compare ===");
+                logger.LogInformation("Source: {Source}", sourcePath);
+                logger.LogInformation("Destination: {Dest}", destPath);
+                logger.LogInformation("Anchor Source: {AnchorSource}", anchorSource);
+                logger.LogInformation("Anchor Dest: {AnchorDest}", anchorDest);
+                logger.LogInformation("Depth: {Depth}, Threshold: {Threshold}%, Include Deletes: {IncludeDeletes}, Require Unique: {RequireUnique}",
+                    depth, threshold, includeDeletes, requireUnique);
+
+                var compareService = provider.GetRequiredService<Services.Compare.IGedcomCompareService>();
+
+                var options = new CompareOptions
+                {
+                    AnchorSourceId = GedcomIdNormalizer.Normalize(anchorSource),
+                    AnchorDestinationId = GedcomIdNormalizer.Normalize(anchorDest),
+                    NewNodeDepth = depth,
+                    MatchThreshold = threshold,
+                    IncludeDeleteSuggestions = includeDeletes,
+                    RequireUniqueMatch = requireUnique
+                };
+
+                var result = compareService.Compare(sourcePath, destPath, options);
+
+                // Serialize to JSON
+                var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+
+                // Output to file or stdout
+                if (!string.IsNullOrEmpty(outputPath))
+                {
+                    await File.WriteAllTextAsync(outputPath, json);
+                    logger.LogInformation("Comparison result saved to: {Path}", outputPath);
+                }
+                else
+                {
+                    Console.WriteLine(json);
+                }
+
+                context.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Compare failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return compareCommand;
     }
 
     private static Command BuildAuthCommand()
