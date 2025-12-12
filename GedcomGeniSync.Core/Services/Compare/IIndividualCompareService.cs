@@ -17,5 +17,6 @@ public interface IIndividualCompareService
     IndividualCompareResult CompareIndividuals(
         Dictionary<string, PersonRecord> sourcePersons,
         Dictionary<string, PersonRecord> destPersons,
-        CompareOptions options);
+        CompareOptions options,
+        IReadOnlyDictionary<string, string>? existingMatches = null);
 }

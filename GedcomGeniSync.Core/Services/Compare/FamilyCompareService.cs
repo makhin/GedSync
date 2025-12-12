@@ -34,6 +34,7 @@ public class FamilyCompareService : IFamilyCompareService
         var familiesToUpdate = ImmutableList.CreateBuilder<FamilyToUpdate>();
         var familiesToAdd = ImmutableList.CreateBuilder<FamilyToAdd>();
         var familiesToDelete = ImmutableList.CreateBuilder<FamilyToDelete>();
+        var newPersonMappings = new Dictionary<string, string>();
 
         // Build ID mapping from individual comparison results
         var sourceToDestMap = BuildIdMapping(individualResult);
@@ -61,6 +62,8 @@ public class FamilyCompareService : IFamilyCompareService
             else
             {
                 matchedDestFamilyIds.Add(matchedDestFamily.FamilyId);
+
+                CaptureNewPersonMappings(sourceFamily, matchedDestFamily, sourceToDestMap, newPersonMappings);
 
                 // Check if family needs updates
                 var updates = CompareFamilyDetails(sourceFamily, matchedDestFamily, sourceToDestMap);
@@ -105,8 +108,53 @@ public class FamilyCompareService : IFamilyCompareService
             MatchedFamilies = matchedFamilies.ToImmutable(),
             FamiliesToUpdate = familiesToUpdate.ToImmutable(),
             FamiliesToAdd = familiesToAdd.ToImmutable(),
-            FamiliesToDelete = familiesToDelete.ToImmutable()
+            FamiliesToDelete = familiesToDelete.ToImmutable(),
+            NewPersonMappings = newPersonMappings.ToImmutableDictionary()
         };
+    }
+
+    private void CaptureNewPersonMappings(
+        Family sourceFamily,
+        Family destFamily,
+        Dictionary<string, string> sourceToDestMap,
+        Dictionary<string, string> newPersonMappings)
+    {
+        void TryAddMapping(string? sourceId, string? destId)
+        {
+            if (sourceId == null || destId == null)
+            {
+                return;
+            }
+
+            if (sourceToDestMap.ContainsKey(sourceId)
+                || newPersonMappings.ContainsKey(sourceId)
+                || sourceToDestMap.ContainsValue(destId)
+                || newPersonMappings.ContainsValue(destId))
+            {
+                return;
+            }
+
+            newPersonMappings[sourceId] = destId;
+        }
+
+        TryAddMapping(sourceFamily.HusbandId, destFamily.HusbandId);
+        TryAddMapping(sourceFamily.WifeId, destFamily.WifeId);
+
+        var sourceChildren = sourceFamily.Children?.ToList() ?? new List<string>();
+        var destChildren = destFamily.Children?.ToList() ?? new List<string>();
+
+        var mappedDestinationIds = new HashSet<string>(sourceToDestMap.Values.Concat(newPersonMappings.Values));
+        var unmappedSourceChildren = sourceChildren
+            .Where(id => !sourceToDestMap.ContainsKey(id) && !newPersonMappings.ContainsKey(id))
+            .ToList();
+        var unmappedDestChildren = destChildren
+            .Where(id => !mappedDestinationIds.Contains(id))
+            .ToList();
+
+        if (unmappedSourceChildren.Count == 1 && unmappedDestChildren.Count == 1)
+        {
+            TryAddMapping(unmappedSourceChildren[0], unmappedDestChildren[0]);
+        }
     }
 
     private Dictionary<string, string> BuildIdMapping(IndividualCompareResult individualResult)
