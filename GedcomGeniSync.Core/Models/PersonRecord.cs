@@ -63,6 +63,51 @@ public record PersonRecord
 
     #endregion
 
+    #region Contact Info
+
+    /// <summary>
+    /// Email address from GEDCOM ADDR or EMAIL tags
+    /// </summary>
+    public string? Email { get; init; }
+
+    /// <summary>
+    /// Website URL from GEDCOM WWW tag
+    /// </summary>
+    public string? Website { get; init; }
+
+    #endregion
+
+    #region Residence (RESI)
+
+    /// <summary>
+    /// Current residence - city
+    /// </summary>
+    public string? ResidenceCity { get; init; }
+
+    /// <summary>
+    /// Current residence - state/province
+    /// </summary>
+    public string? ResidenceState { get; init; }
+
+    /// <summary>
+    /// Current residence - country
+    /// </summary>
+    public string? ResidenceCountry { get; init; }
+
+    /// <summary>
+    /// Full residence address (if available)
+    /// </summary>
+    public string? ResidenceAddress { get; init; }
+
+    /// <summary>
+    /// Get formatted residence string
+    /// </summary>
+    public string? FormattedResidence => string.Join(", ",
+        new[] { ResidenceCity, ResidenceState, ResidenceCountry }
+        .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    #endregion
+
     #region Media
 
     /// <summary>

@@ -42,10 +42,6 @@ public class GedcomLoader : IGedcomLoader
 
         var result = new GedcomLoadResult();
 
-        // First pass: extract RFN tags by parsing the file directly
-        // This is needed because Gedcom.Net.SDK doesn't expose RFN as a standard property
-        var rfnMap = ExtractRfnTags(filePath);
-
         // Activate SDK for personal use (required for Gedcom.Net.SDK)
         try
         {
@@ -134,7 +130,7 @@ public class GedcomLoader : IGedcomLoader
         // First pass: create all PersonRecords
         foreach (var individual in individuals)
         {
-            var person = ConvertIndividual(individual, multimedia, rfnMap);
+            var person = ConvertIndividual(individual, multimedia);
             result.Persons[person.Id] = person;
         }
 
@@ -153,7 +149,7 @@ public class GedcomLoader : IGedcomLoader
         return result;
     }
 
-    private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia, Dictionary<string, string> rfnMap)
+    private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia)
     {
         string? firstName = null;
         string? middleName = null;
@@ -359,6 +355,94 @@ public class GedcomLoader : IGedcomLoader
             }
         }
 
+        // Extract attributes (OCCU, RESI, etc.)
+        string? occupation = null;
+        string? residenceCity = null;
+        string? residenceState = null;
+        string? residenceCountry = null;
+        string? residenceAddress = null;
+
+        if (individual.Attributes != null)
+        {
+            foreach (var attr in individual.Attributes)
+            {
+                var attrTypeName = attr.GetType().Name;
+
+                // AttrOccupation contains the OCCU tag value
+                if (attrTypeName == "AttrOccupation" && occupation == null)
+                {
+                    var valueProp = attr.GetType().GetProperty("Value");
+                    if (valueProp != null)
+                    {
+                        occupation = valueProp.GetValue(attr)?.ToString();
+                    }
+                    else
+                    {
+                        var descProp = attr.GetType().GetProperty("Description");
+                        if (descProp != null)
+                        {
+                            occupation = descProp.GetValue(attr)?.ToString();
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(occupation))
+                    {
+                        _logger.LogDebug("Found Occupation '{Occupation}' for {Id}",
+                            occupation, individual.IndividualId);
+                    }
+                }
+                // AttrResidence contains the RESI tag with address info
+                else if (attrTypeName == "AttrResidence" && residenceCity == null)
+                {
+                    // Try to get Place property which contains address details
+                    var placeProp = attr.GetType().GetProperty("Place");
+                    if (placeProp != null)
+                    {
+                        var place = placeProp.GetValue(attr);
+                        if (place != null)
+                        {
+                            // Try to get Name property from Place
+                            var nameProp = place.GetType().GetProperty("Name");
+                            if (nameProp != null)
+                            {
+                                residenceAddress = nameProp.GetValue(place)?.ToString();
+                            }
+                        }
+                    }
+
+                    // Try to get Address property which may have structured address
+                    var addrProp = attr.GetType().GetProperty("Address");
+                    if (addrProp != null)
+                    {
+                        var address = addrProp.GetValue(attr);
+                        if (address != null)
+                        {
+                            // Extract structured address components
+                            var cityProp = address.GetType().GetProperty("City");
+                            var stateProp = address.GetType().GetProperty("State");
+                            var countryProp = address.GetType().GetProperty("Country");
+                            var addrLineProp = address.GetType().GetProperty("AddressLine");
+
+                            if (cityProp != null)
+                                residenceCity = cityProp.GetValue(address)?.ToString();
+                            if (stateProp != null)
+                                residenceState = stateProp.GetValue(address)?.ToString();
+                            if (countryProp != null)
+                                residenceCountry = countryProp.GetValue(address)?.ToString();
+                            if (addrLineProp != null && string.IsNullOrEmpty(residenceAddress))
+                                residenceAddress = addrLineProp.GetValue(address)?.ToString();
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(residenceCity) || !string.IsNullOrWhiteSpace(residenceCountry))
+                    {
+                        _logger.LogDebug("Found Residence '{City}, {State}, {Country}' for {Id}",
+                            residenceCity, residenceState, residenceCountry, individual.IndividualId);
+                    }
+                }
+            }
+        }
+
         // Family links
         var childOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
         var spouseOfFamilyIdsBuilder = ImmutableList.CreateBuilder<string>();
@@ -405,12 +489,13 @@ public class GedcomLoader : IGedcomLoader
             }
         }
 
-        // Extract Geni Profile ID from RFN tag (Reference Number)
+        // Extract Geni Profile ID from RFN tag (Reference Number / PermanentRecordFileNumber)
         // RFN is used to store Geni profile identifiers like "geni:6000000012345678901"
+        // SDK exposes this via PermanentRecordFileNumber property
         string? geniProfileId = null;
-        if (rfnMap.TryGetValue(individual.IndividualId, out var rfnValue))
+        if (!string.IsNullOrWhiteSpace(individual.PermanentRecordFileNumber))
         {
-            geniProfileId = rfnValue;
+            geniProfileId = individual.PermanentRecordFileNumber;
             _logger.LogDebug("Found Geni Profile ID '{GeniProfileId}' from RFN tag for {Id}",
                 geniProfileId, individual.IndividualId);
         }
@@ -435,8 +520,38 @@ public class GedcomLoader : IGedcomLoader
         }
 
         // Extract custom tags (MyHeritage _UPD, _UID, RIN, etc.)
-        // These are stored in UnknownTags collection when SkipUnknownTag = None
+        // SDK separates CustomTags (tags starting with _) and UnknownTags (other unknown tags)
+        // Both are populated when SkipUnknownTag = All
         var customTagsBuilder = ImmutableDictionary.CreateBuilder<string, string>();
+
+        // First, extract CustomTags (tags starting with _, e.g., _UPD, _UID)
+        if (individual.CustomTags != null)
+        {
+            foreach (var customTag in individual.CustomTags)
+            {
+                var tagName = customTag.Tag;
+                var tagValue = customTag.Value ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(tagName))
+                    continue;
+
+                if (!customTagsBuilder.ContainsKey(tagName))
+                {
+                    customTagsBuilder[tagName] = tagValue;
+                }
+                else
+                {
+                    customTagsBuilder[tagName] = customTagsBuilder[tagName] + "\n" + tagValue;
+                }
+            }
+        }
+
+        // Extract ADDR, EMAIL, WWW from UnknownTags
+        // These appear as unknown tags when they're at the wrong level in GEDCOM
+        string? email = null;
+        string? website = null;
+
+        // Then, extract UnknownTags (other non-standard tags like RIN, ADDR at wrong level, etc.)
         if (individual.UnknownTags != null)
         {
             foreach (var unknownTag in individual.UnknownTags)
@@ -450,15 +565,42 @@ public class GedcomLoader : IGedcomLoader
                     tagName.Equals("RFN", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                // Store custom tag
-                if (!customTagsBuilder.ContainsKey(tagName))
+                // Extract EMAIL
+                if (tagName.Equals("EMAIL", StringComparison.OrdinalIgnoreCase) && email == null)
                 {
-                    customTagsBuilder[tagName] = tagValue;
+                    email = tagValue;
+                    _logger.LogDebug("Found Email '{Email}' for {Id}", email, individual.IndividualId);
                 }
-                else
+                // Extract WWW (website)
+                else if (tagName.Equals("WWW", StringComparison.OrdinalIgnoreCase) && website == null)
                 {
-                    // If tag appears multiple times, concatenate with newline
-                    customTagsBuilder[tagName] = customTagsBuilder[tagName] + "\n" + tagValue;
+                    website = tagValue;
+                    _logger.LogDebug("Found Website '{Website}' for {Id}", website, individual.IndividualId);
+                }
+                // ADDR may contain email as value in some GEDCOM files
+                else if (tagName.Equals("ADDR", StringComparison.OrdinalIgnoreCase) && email == null)
+                {
+                    // Check if it looks like an email
+                    if (!string.IsNullOrEmpty(tagValue) && tagValue.Contains('@'))
+                    {
+                        email = tagValue;
+                        _logger.LogDebug("Found Email '{Email}' from ADDR for {Id}", email, individual.IndividualId);
+                    }
+                }
+
+                // Store custom tag (except EMAIL and WWW which we extract separately)
+                if (!tagName.Equals("EMAIL", StringComparison.OrdinalIgnoreCase) &&
+                    !tagName.Equals("WWW", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!customTagsBuilder.ContainsKey(tagName))
+                    {
+                        customTagsBuilder[tagName] = tagValue;
+                    }
+                    else
+                    {
+                        // If tag appears multiple times, concatenate with newline
+                        customTagsBuilder[tagName] = customTagsBuilder[tagName] + "\n" + tagValue;
+                    }
                 }
             }
         }
@@ -484,6 +626,13 @@ public class GedcomLoader : IGedcomLoader
             BurialDate = burialDate,
             BurialPlace = burialPlace,
             IsLiving = isLiving,
+            Occupation = occupation,
+            Email = email,
+            Website = website,
+            ResidenceCity = residenceCity,
+            ResidenceState = residenceState,
+            ResidenceCountry = residenceCountry,
+            ResidenceAddress = residenceAddress,
             ChildOfFamilyIds = childOfFamilyIdsBuilder.ToImmutable(),
             SpouseOfFamilyIds = spouseOfFamilyIdsBuilder.ToImmutable(),
             PhotoUrls = photoUrlsBuilder.ToImmutable(),
@@ -1022,54 +1171,5 @@ public class GedcomLoader : IGedcomLoader
 
         _logger.LogInformation("Pre-processing complete. Temporary file: {Path}", tempFilePath);
         return tempFilePath;
-    }
-
-    /// <summary>
-    /// Extract RFN tags from GEDCOM file by parsing directly
-    /// Returns a dictionary mapping Individual ID to RFN value
-    /// </summary>
-    private Dictionary<string, string> ExtractRfnTags(string filePath)
-    {
-        var rfnMap = new Dictionary<string, string>();
-
-        // Detect encoding by reading first few bytes to detect BOM
-        using var reader = new StreamReader(filePath, true);
-        reader.Peek(); // Force detection
-        string? currentIndiId = null;
-        string? line;
-
-        while ((line = reader.ReadLine()) != null)
-        {
-            var trimmedLine = line.Trim();
-
-            // Check for INDI record start (e.g., "0 @I123@ INDI")
-            var indiMatch = Regex.Match(trimmedLine, @"^0\s+(@[^@]+@)\s+INDI", RegexOptions.IgnoreCase);
-            if (indiMatch.Success)
-            {
-                currentIndiId = indiMatch.Groups[1].Value;
-                continue;
-            }
-
-            // Check for RFN tag at level 1 (e.g., "1 RFN geni:6000000012345678901")
-            if (currentIndiId != null)
-            {
-                var rfnMatch = Regex.Match(trimmedLine, @"^1\s+RFN\s+(.+)$", RegexOptions.IgnoreCase);
-                if (rfnMatch.Success)
-                {
-                    var rfnValue = rfnMatch.Groups[1].Value.Trim();
-                    rfnMap[currentIndiId] = rfnValue;
-                    _logger.LogDebug("Extracted RFN '{RfnValue}' for {IndiId}", rfnValue, currentIndiId);
-                }
-            }
-
-            // Reset currentIndiId when we hit a new level 0 record
-            if (trimmedLine.StartsWith("0 ") && !trimmedLine.Contains("INDI"))
-            {
-                currentIndiId = null;
-            }
-        }
-
-        _logger.LogInformation("Extracted {Count} RFN tags from GEDCOM file", rfnMap.Count);
-        return rfnMap;
     }
 }

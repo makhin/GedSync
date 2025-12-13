@@ -33,7 +33,8 @@
       "Bash(dotnet add:*)",
       "Bash(powershell:*)",
       "Bash(python:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
