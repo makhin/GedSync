@@ -1,5 +1,6 @@
 using GedcomGeniSync.Models;
 using Microsoft.Extensions.Logging;
+using System.Collections.Immutable;
 
 namespace GedcomGeniSync.Services.Compare;
 
@@ -9,6 +10,8 @@ namespace GedcomGeniSync.Services.Compare;
 /// </summary>
 public class GedcomCompareService : IGedcomCompareService
 {
+    private const int SafetyIterationLimit = 5;
+
     private readonly ILogger<GedcomCompareService> _logger;
     private readonly IGedcomLoader _gedcomLoader;
     private readonly IIndividualCompareService _individualCompareService;
@@ -82,50 +85,80 @@ public class GedcomCompareService : IGedcomCompareService
         _logger.LogInformation("Scope: {SourceCount} source persons, {DestCount} destination persons",
             sourcePersonsInScope.Count, destPersonsInScope.Count);
 
-        // Step 4: Compare individuals
-        _logger.LogInformation("Comparing individuals...");
-        var individualResult = _individualCompareService.CompareIndividuals(
-            sourcePersonsInScope,
-            destPersonsInScope,
-            options);
-
-        // Step 5: Compare families
-        _logger.LogInformation("Comparing families...");
-        var familyResult = _familyCompareService.CompareFamilies(
-            sourceResult.Families,
-            destResult.Families,
-            individualResult);
-
-        // Step 6: Calculate statistics
-        var statistics = new CompareStatistics
+        var iterationResults = ImmutableList.CreateBuilder<CompareIterationResult>();
+        var existingMappings = new Dictionary<string, string>
         {
-            Individuals = new IndividualStats
-            {
-                TotalSource = sourcePersonsInScope.Count,
-                TotalDestination = destPersonsInScope.Count,
-                Matched = individualResult.MatchedNodes.Count,
-                ToUpdate = individualResult.NodesToUpdate.Count,
-                ToAdd = individualResult.NodesToAdd.Count,
-                ToDelete = individualResult.NodesToDelete.Count,
-                Ambiguous = individualResult.AmbiguousMatches.Count
-            },
-            Families = new FamilyStats
-            {
-                TotalSource = sourceResult.Families.Count,
-                TotalDestination = destResult.Families.Count,
-                Matched = familyResult.MatchedFamilies.Count,
-                ToUpdate = familyResult.FamiliesToUpdate.Count,
-                ToAdd = familyResult.FamiliesToAdd.Count,
-                ToDelete = familyResult.FamiliesToDelete.Count
-            }
+            [anchorSource.Id] = anchorDest.Id
         };
+
+        IndividualCompareResult? individualResult = null;
+        FamilyCompareResult? familyResult = null;
+        CompareStatistics? statistics = null;
+
+        for (var iteration = 1; iteration <= SafetyIterationLimit; iteration++)
+        {
+            _logger.LogInformation("Comparison iteration {Iteration} - individual pass", iteration);
+            individualResult = _individualCompareService.CompareIndividuals(
+                sourcePersonsInScope,
+                destPersonsInScope,
+                options,
+                existingMappings);
+
+            var newIndividualMappings = AddNewMappings(existingMappings, BuildIdMapping(individualResult));
+
+            _logger.LogInformation("Comparison iteration {Iteration} - family pass", iteration);
+            familyResult = _familyCompareService.CompareFamilies(
+                sourceResult.Families,
+                destResult.Families,
+                individualResult,
+                options);
+
+            var newFamilyMappings = AddNewMappings(existingMappings, familyResult.NewPersonMappings);
+            var totalNewMappings = newIndividualMappings + newFamilyMappings;
+
+            statistics = BuildStatistics(
+                sourcePersonsInScope.Count,
+                destPersonsInScope.Count,
+                sourceResult.Families.Count,
+                destResult.Families.Count,
+                individualResult,
+                familyResult);
+
+            iterationResults.Add(new CompareIterationResult
+            {
+                Iteration = iteration,
+                Individuals = individualResult,
+                Families = familyResult,
+                Statistics = statistics,
+                NewPersonMappings = totalNewMappings
+            });
+
+            if (totalNewMappings == 0)
+            {
+                _logger.LogInformation("No new person mappings in iteration {Iteration}; stopping iterations", iteration);
+                break;
+            }
+
+            _logger.LogInformation(
+                "Iteration {Iteration} discovered {NewMappings} new person mappings", iteration, totalNewMappings);
+        }
+
+        if (iterationResults.Count == SafetyIterationLimit && iterationResults[^1].NewPersonMappings > 0)
+        {
+            _logger.LogWarning("Reached safety iteration limit of {Limit}", SafetyIterationLimit);
+        }
+
+        if (statistics == null || individualResult == null || familyResult == null)
+        {
+            throw new InvalidOperationException("Comparison did not produce any results");
+        }
 
         var endTime = DateTime.UtcNow;
         var duration = endTime - startTime;
 
         _logger.LogInformation("Comparison completed in {Duration}ms", duration.TotalMilliseconds);
         _logger.LogInformation("Results - Individuals: {Matched} matched, {ToUpdate} to update, {ToAdd} to add, {Ambiguous} ambiguous",
-            statistics.Individuals.Matched,
+            statistics!.Individuals.Matched,
             statistics.Individuals.ToUpdate,
             statistics.Individuals.ToAdd,
             statistics.Individuals.Ambiguous);
@@ -142,8 +175,76 @@ public class GedcomCompareService : IGedcomCompareService
             Anchors = anchorInfo,
             Options = options,
             Statistics = statistics,
-            Individuals = individualResult,
-            Families = familyResult
+            Individuals = individualResult!,
+            Families = familyResult!,
+            Iterations = iterationResults.ToImmutable()
         };
+    }
+
+    private CompareStatistics BuildStatistics(
+        int sourcePersonCount,
+        int destinationPersonCount,
+        int sourceFamilyCount,
+        int destinationFamilyCount,
+        IndividualCompareResult individualResult,
+        FamilyCompareResult familyResult)
+    {
+        return new CompareStatistics
+        {
+            Individuals = new IndividualStats
+            {
+                TotalSource = sourcePersonCount,
+                TotalDestination = destinationPersonCount,
+                Matched = individualResult.MatchedNodes.Count,
+                ToUpdate = individualResult.NodesToUpdate.Count,
+                ToAdd = individualResult.NodesToAdd.Count,
+                ToDelete = individualResult.NodesToDelete.Count,
+                Ambiguous = individualResult.AmbiguousMatches.Count
+            },
+            Families = new FamilyStats
+            {
+                TotalSource = sourceFamilyCount,
+                TotalDestination = destinationFamilyCount,
+                Matched = familyResult.MatchedFamilies.Count,
+                ToUpdate = familyResult.FamiliesToUpdate.Count,
+                ToAdd = familyResult.FamiliesToAdd.Count,
+                ToDelete = familyResult.FamiliesToDelete.Count
+            }
+        };
+    }
+
+    private ImmutableDictionary<string, string> BuildIdMapping(IndividualCompareResult individualResult)
+    {
+        var mapping = new Dictionary<string, string>();
+
+        foreach (var matched in individualResult.MatchedNodes)
+        {
+            mapping[matched.SourceId] = matched.DestinationId;
+        }
+
+        foreach (var toUpdate in individualResult.NodesToUpdate)
+        {
+            mapping[toUpdate.SourceId] = toUpdate.DestinationId;
+        }
+
+        return mapping.ToImmutableDictionary();
+    }
+
+    private int AddNewMappings(Dictionary<string, string> existingMappings, ImmutableDictionary<string, string> newPersonMappings)
+    {
+        var added = 0;
+
+        foreach (var (sourceId, destId) in newPersonMappings)
+        {
+            if (existingMappings.ContainsKey(sourceId) || existingMappings.ContainsValue(destId))
+            {
+                continue;
+            }
+
+            existingMappings[sourceId] = destId;
+            added++;
+        }
+
+        return added;
     }
 }

@@ -1,7 +1,9 @@
 using GedcomGeniSync.Models;
 using Microsoft.Extensions.Logging;
 using Patagames.GedcomNetSdk.Records.Ver551;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using Family = Patagames.GedcomNetSdk.Records.Ver551.Family;
 
 namespace GedcomGeniSync.Services.Compare;
@@ -22,7 +24,8 @@ public class FamilyCompareService : IFamilyCompareService
     public FamilyCompareResult CompareFamilies(
         Dictionary<string, Family> sourceFamilies,
         Dictionary<string, Family> destFamilies,
-        IndividualCompareResult individualResult)
+        IndividualCompareResult individualResult,
+        CompareOptions options)
     {
         _logger.LogInformation("Starting family comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourceFamilies.Count, destFamilies.Count);
@@ -31,17 +34,24 @@ public class FamilyCompareService : IFamilyCompareService
         var familiesToUpdate = ImmutableList.CreateBuilder<FamilyToUpdate>();
         var familiesToAdd = ImmutableList.CreateBuilder<FamilyToAdd>();
         var familiesToDelete = ImmutableList.CreateBuilder<FamilyToDelete>();
+        var newPersonMappings = new Dictionary<string, string>();
 
         // Build ID mapping from individual comparison results
         var sourceToDestMap = BuildIdMapping(individualResult);
 
         // Track which destination families have been matched
         var matchedDestFamilyIds = new HashSet<string>();
+        var destFamilySignatures = BuildDestinationSignatures(destFamilies);
 
         // Process each source family
         foreach (var (sourceFamId, sourceFamily) in sourceFamilies)
         {
-            var matchedDestFamily = FindMatchingFamily(sourceFamily, destFamilies, sourceToDestMap);
+            var matchedDestFamily = FindMatchingFamily(
+                sourceFamily,
+                destFamilies,
+                destFamilySignatures,
+                sourceToDestMap,
+                matchedDestFamilyIds);
 
             if (matchedDestFamily == null)
             {
@@ -52,6 +62,8 @@ public class FamilyCompareService : IFamilyCompareService
             else
             {
                 matchedDestFamilyIds.Add(matchedDestFamily.FamilyId);
+
+                CaptureNewPersonMappings(sourceFamily, matchedDestFamily, sourceToDestMap, newPersonMappings);
 
                 // Check if family needs updates
                 var updates = CompareFamilyDetails(sourceFamily, matchedDestFamily, sourceToDestMap);
@@ -72,15 +84,18 @@ public class FamilyCompareService : IFamilyCompareService
         }
 
         // Find unmatched destination families (candidates for deletion)
-        foreach (var (destFamId, destFamily) in destFamilies)
+        if (options.IncludeDeleteSuggestions)
         {
-            if (!matchedDestFamilyIds.Contains(destFamId))
+            foreach (var (destFamId, destFamily) in destFamilies)
             {
-                familiesToDelete.Add(new FamilyToDelete
+                if (!matchedDestFamilyIds.Contains(destFamId))
                 {
-                    DestinationFamId = destFamId,
-                    Reason = "No matching family found in source"
-                });
+                    familiesToDelete.Add(new FamilyToDelete
+                    {
+                        DestinationFamId = destFamId,
+                        Reason = "No matching family found in source"
+                    });
+                }
             }
         }
 
@@ -93,8 +108,53 @@ public class FamilyCompareService : IFamilyCompareService
             MatchedFamilies = matchedFamilies.ToImmutable(),
             FamiliesToUpdate = familiesToUpdate.ToImmutable(),
             FamiliesToAdd = familiesToAdd.ToImmutable(),
-            FamiliesToDelete = familiesToDelete.ToImmutable()
+            FamiliesToDelete = familiesToDelete.ToImmutable(),
+            NewPersonMappings = newPersonMappings.ToImmutableDictionary()
         };
+    }
+
+    private void CaptureNewPersonMappings(
+        Family sourceFamily,
+        Family destFamily,
+        Dictionary<string, string> sourceToDestMap,
+        Dictionary<string, string> newPersonMappings)
+    {
+        void TryAddMapping(string? sourceId, string? destId)
+        {
+            if (sourceId == null || destId == null)
+            {
+                return;
+            }
+
+            if (sourceToDestMap.ContainsKey(sourceId)
+                || newPersonMappings.ContainsKey(sourceId)
+                || sourceToDestMap.ContainsValue(destId)
+                || newPersonMappings.ContainsValue(destId))
+            {
+                return;
+            }
+
+            newPersonMappings[sourceId] = destId;
+        }
+
+        TryAddMapping(sourceFamily.HusbandId, destFamily.HusbandId);
+        TryAddMapping(sourceFamily.WifeId, destFamily.WifeId);
+
+        var sourceChildren = sourceFamily.Children?.ToList() ?? new List<string>();
+        var destChildren = destFamily.Children?.ToList() ?? new List<string>();
+
+        var mappedDestinationIds = new HashSet<string>(sourceToDestMap.Values.Concat(newPersonMappings.Values));
+        var unmappedSourceChildren = sourceChildren
+            .Where(id => !sourceToDestMap.ContainsKey(id) && !newPersonMappings.ContainsKey(id))
+            .ToList();
+        var unmappedDestChildren = destChildren
+            .Where(id => !mappedDestinationIds.Contains(id))
+            .ToList();
+
+        if (unmappedSourceChildren.Count == 1 && unmappedDestChildren.Count == 1)
+        {
+            TryAddMapping(unmappedSourceChildren[0], unmappedDestChildren[0]);
+        }
     }
 
     private Dictionary<string, string> BuildIdMapping(IndividualCompareResult individualResult)
@@ -119,34 +179,119 @@ public class FamilyCompareService : IFamilyCompareService
     private Family? FindMatchingFamily(
         Family sourceFamily,
         Dictionary<string, Family> destFamilies,
-        Dictionary<string, string> sourceToDestMap)
+        Dictionary<string, FamilyMemberSignature> destFamilySignatures,
+        Dictionary<string, string> sourceToDestMap,
+        HashSet<string> matchedDestFamilyIds)
     {
-        var sourceHusbandId = sourceFamily.HusbandId;
-        var sourceWifeId = sourceFamily.WifeId;
+        var sourceChildren = sourceFamily.Children?.ToList() ?? new List<string>();
+        var candidateSignature = BuildCandidateSignature(sourceFamily, sourceToDestMap, sourceChildren);
+        var allChildrenMapped = sourceChildren.Count == candidateSignature.Children.Count;
 
-        // Try to map source spouse IDs to destination IDs
-        var destHusbandId = sourceHusbandId != null && sourceToDestMap.ContainsKey(sourceHusbandId)
-            ? sourceToDestMap[sourceHusbandId]
-            : null;
+        var matchedFamily = MatchBySignature(
+            candidateSignature,
+            destFamilies,
+            destFamilySignatures,
+            matchedDestFamilyIds,
+            allowUnmappedSpouses: false);
 
-        var destWifeId = sourceWifeId != null && sourceToDestMap.ContainsKey(sourceWifeId)
-            ? sourceToDestMap[sourceWifeId]
-            : null;
-
-        // Family is matched if both spouses are matched
-        if (destHusbandId != null && destWifeId != null)
+        if (matchedFamily == null && allChildrenMapped && candidateSignature.Children.Count > 0)
         {
-            // Find family in destination with these spouse IDs
-            foreach (var destFamily in destFamilies.Values)
+            matchedFamily = MatchBySignature(
+                candidateSignature,
+                destFamilies,
+                destFamilySignatures,
+                matchedDestFamilyIds,
+                allowUnmappedSpouses: true);
+        }
+
+        return matchedFamily;
+    }
+
+    private Family? MatchBySignature(
+        FamilyMemberSignature candidate,
+        Dictionary<string, Family> destFamilies,
+        Dictionary<string, FamilyMemberSignature> destFamilySignatures,
+        HashSet<string> matchedDestFamilyIds,
+        bool allowUnmappedSpouses)
+    {
+        foreach (var (destId, signature) in destFamilySignatures)
+        {
+            if (matchedDestFamilyIds.Contains(destId))
             {
-                if (destFamily.HusbandId == destHusbandId && destFamily.WifeId == destWifeId)
-                {
-                    return destFamily;
-                }
+                continue;
+            }
+
+            if (SignatureMatches(candidate, signature, allowUnmappedSpouses))
+            {
+                return destFamilies[destId];
             }
         }
 
         return null;
+    }
+
+    private bool SignatureMatches(
+        FamilyMemberSignature candidate,
+        FamilyMemberSignature destination,
+        bool allowUnmappedSpouses)
+    {
+        if (candidate.HusbandId != null && destination.HusbandId != candidate.HusbandId)
+        {
+            return false;
+        }
+
+        if (candidate.WifeId != null && destination.WifeId != candidate.WifeId)
+        {
+            return false;
+        }
+
+        if (!allowUnmappedSpouses)
+        {
+            if (candidate.HusbandId == null && destination.HusbandId != null)
+            {
+                return false;
+            }
+
+            if (candidate.WifeId == null && destination.WifeId != null)
+            {
+                return false;
+            }
+        }
+
+        return candidate.Children.IsSubsetOf(destination.Children);
+    }
+
+    private FamilyMemberSignature BuildCandidateSignature(
+        Family sourceFamily,
+        Dictionary<string, string> sourceToDestMap,
+        IReadOnlyCollection<string> sourceChildren)
+    {
+        var mappedChildren = sourceChildren
+            .Select(id => sourceToDestMap.TryGetValue(id, out var mappedId) ? mappedId : null)
+            .Where(id => id != null)
+            .Select(id => id!)
+            .ToImmutableHashSet();
+
+        var destHusbandId = sourceFamily.HusbandId != null && sourceToDestMap.ContainsKey(sourceFamily.HusbandId)
+            ? sourceToDestMap[sourceFamily.HusbandId]
+            : null;
+
+        var destWifeId = sourceFamily.WifeId != null && sourceToDestMap.ContainsKey(sourceFamily.WifeId)
+            ? sourceToDestMap[sourceFamily.WifeId]
+            : null;
+
+        return new FamilyMemberSignature(destHusbandId, destWifeId, mappedChildren);
+    }
+
+    private Dictionary<string, FamilyMemberSignature> BuildDestinationSignatures(
+        Dictionary<string, Family> destFamilies)
+    {
+        return destFamilies.ToDictionary(
+            pair => pair.Key,
+            pair => new FamilyMemberSignature(
+                pair.Value.HusbandId,
+                pair.Value.WifeId,
+                pair.Value.Children?.ToImmutableHashSet() ?? ImmutableHashSet<string>.Empty));
     }
 
     private (bool HasUpdates, FamilyToUpdate ToUpdate) CompareFamilyDetails(
@@ -197,9 +342,12 @@ public class FamilyCompareService : IFamilyCompareService
         var childrenMapping = new Dictionary<string, string>();
         var sourceChildren = sourceFamily.Children?.ToList() ?? new List<string>();
 
+        var destChildren = destFamily.Children?.ToImmutableHashSet() ?? ImmutableHashSet<string>.Empty;
+
         foreach (var sourceChildId in sourceChildren)
         {
-            if (sourceToDestMap.TryGetValue(sourceChildId, out var destChildId))
+            if (sourceToDestMap.TryGetValue(sourceChildId, out var destChildId)
+                && destChildren.Contains(destChildId))
             {
                 childrenMapping[sourceChildId] = destChildId;
             }
@@ -249,4 +397,6 @@ public class FamilyCompareService : IFamilyCompareService
             MarriagePlace = null
         };
     }
+
+    private record FamilyMemberSignature(string? HusbandId, string? WifeId, ImmutableHashSet<string> Children);
 }

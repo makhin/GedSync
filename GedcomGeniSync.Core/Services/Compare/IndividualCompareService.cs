@@ -28,7 +28,8 @@ public class IndividualCompareService : IIndividualCompareService
     public IndividualCompareResult CompareIndividuals(
         Dictionary<string, PersonRecord> sourcePersons,
         Dictionary<string, PersonRecord> destPersons,
-        CompareOptions options)
+        CompareOptions options,
+        IReadOnlyDictionary<string, string>? existingMatches = null)
     {
         _logger.LogInformation("Starting individual comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourcePersons.Count, destPersons.Count);
@@ -46,9 +47,58 @@ public class IndividualCompareService : IIndividualCompareService
         // Track which destination persons have been matched
         var matchedDestinationIds = new HashSet<string>();
 
+        // Apply existing matches (from anchors or previous iterations)
+        if (existingMatches != null)
+        {
+            foreach (var (sourceId, destId) in existingMatches)
+            {
+                if (!sourcePersons.TryGetValue(sourceId, out var sourcePerson)
+                    || !destPersons.TryGetValue(destId, out var destPerson))
+                {
+                    continue;
+                }
+
+                var fieldDifferences = _fieldComparer.CompareFields(sourcePerson, destPerson);
+                matchedDestinationIds.Add(destId);
+
+                if (fieldDifferences.Count == 0)
+                {
+                    matchedNodes.Add(new MatchedNode
+                    {
+                        SourceId = sourceId,
+                        DestinationId = destId,
+                        GeniProfileId = destPerson.GeniProfileId,
+                        MatchScore = 100,
+                        MatchedBy = "ExistingMapping",
+                        PersonSummary = GetPersonSummary(sourcePerson)
+                    });
+                }
+                else
+                {
+                    nodesToUpdate.Add(new NodeToUpdate
+                    {
+                        SourceId = sourceId,
+                        DestinationId = destId,
+                        GeniProfileId = destPerson.GeniProfileId,
+                        MatchScore = 100,
+                        MatchedBy = "ExistingMapping",
+                        PersonSummary = GetPersonSummary(sourcePerson),
+                        FieldsToUpdate = fieldDifferences
+                    });
+                }
+            }
+        }
+
         // Step 1: Process each source person
         foreach (var sourcePerson in sourcePersons.Values)
         {
+            if (existingMatches != null
+                && existingMatches.TryGetValue(sourcePerson.Id, out var mappedDestinationId)
+                && matchedDestinationIds.Contains(mappedDestinationId))
+            {
+                continue;
+            }
+
             var matchResult = FindBestMatch(sourcePerson, destPersons, options);
 
             if (matchResult == null)

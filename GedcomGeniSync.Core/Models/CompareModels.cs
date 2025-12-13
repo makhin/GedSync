@@ -48,6 +48,11 @@ public record CompareResult
     /// Family (FAM) comparison results
     /// </summary>
     public required FamilyCompareResult Families { get; init; }
+
+    /// <summary>
+    /// Detailed results for each comparison iteration
+    /// </summary>
+    public ImmutableList<CompareIterationResult> Iterations { get; init; } = ImmutableList<CompareIterationResult>.Empty;
 }
 
 /// <summary>
@@ -119,6 +124,15 @@ public record CompareStatistics
 {
     public required IndividualStats Individuals { get; init; }
     public required FamilyStats Families { get; init; }
+}
+
+public record CompareIterationResult
+{
+    public int Iteration { get; init; }
+    public required IndividualCompareResult Individuals { get; init; }
+    public required FamilyCompareResult Families { get; init; }
+    public required CompareStatistics Statistics { get; init; }
+    public int NewPersonMappings { get; init; }
 }
 
 public record IndividualStats
@@ -339,6 +353,7 @@ public record FamilyCompareResult
     public ImmutableList<FamilyToUpdate> FamiliesToUpdate { get; init; } = ImmutableList<FamilyToUpdate>.Empty;
     public ImmutableList<FamilyToAdd> FamiliesToAdd { get; init; } = ImmutableList<FamilyToAdd>.Empty;
     public ImmutableList<FamilyToDelete> FamiliesToDelete { get; init; } = ImmutableList<FamilyToDelete>.Empty;
+    public ImmutableDictionary<string, string> NewPersonMappings { get; init; } = ImmutableDictionary<string, string>.Empty;
 }
 
 /// <summary>
