@@ -34,7 +34,8 @@
       "Bash(powershell:*)",
       "Bash(python:*)",
       "Bash(git add:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(del c:codeGedSyncGedcomGeniSync.TestsWaveWaveCompareIntegrationTests.cs)"
     ],
     "deny": [],
     "ask": []

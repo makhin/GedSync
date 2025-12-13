@@ -13,6 +13,7 @@ public static class GedcomIdNormalizer
     /// - "@I1" -> "@I1@"
     /// - "I1@" -> "@I1@"
     /// - " I1 " -> "@I1@"
+    /// - "\@I1@" -> "@I1@" (strips backslash escape from System.CommandLine)
     /// </summary>
     /// <param name="id">The GEDCOM ID to normalize.</param>
     /// <returns>Normalized GEDCOM ID with @ delimiters.</returns>
@@ -22,6 +23,10 @@ public static class GedcomIdNormalizer
             return id;
 
         id = id.Trim();
+
+        // Remove leading backslash (used to escape @ in command-line args)
+        if (id.StartsWith("\\@"))
+            id = id.Substring(1);
 
         if (!id.StartsWith("@"))
             id = "@" + id;

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
 
 namespace GedcomGeniSync;
 
@@ -14,34 +15,35 @@ class Program
 {
     static async Task<int> Main(string[] args)
     {
-        // Workaround for System.CommandLine treating @ as response file indicator
-        // Escape @ symbols in GEDCOM IDs by doubling them (@@) before parsing
-        // System.CommandLine will convert @@ back to @ internally
-        var escapedArgs = args.Select(arg =>
-        {
-            // Only escape arguments that look like GEDCOM IDs (@I123@, @F456@, etc.)
-            if (arg.StartsWith("@") && arg.EndsWith("@") && arg.Length > 2)
-            {
-                return $"@{arg}"; // Add extra @ prefix: @I123@ becomes @@I123@
-            }
-            return arg;
-        }).ToArray();
+        // Preprocess args to escape @ symbols that would be treated as response files
+        // System.CommandLine treats @ as a response file indicator, so we need to prevent
+        // GEDCOM IDs like @I123@ from being interpreted as file paths
+        args = PreprocessArgs(args);
 
         var rootCommand = new RootCommand("GEDCOM to Geni synchronization tool");
 
         var syncCommand = BuildSyncCommand();
         var analyzeCommand = BuildAnalyzeCommand();
         var compareCommand = BuildCompareCommand();
+        var waveCompareCommand = BuildWaveCompareCommand();
         var authCommand = BuildAuthCommand();
         var profileCommand = BuildProfileCommand();
 
         rootCommand.AddCommand(syncCommand);
         rootCommand.AddCommand(analyzeCommand);
         rootCommand.AddCommand(compareCommand);
+        rootCommand.AddCommand(waveCompareCommand);
         rootCommand.AddCommand(authCommand);
         rootCommand.AddCommand(profileCommand);
 
-        return await rootCommand.InvokeAsync(escapedArgs);
+        // Use CommandLineBuilder with custom configuration
+        // Note: System.CommandLine treats @ as response file indicator by default
+        // Users must quote @ symbols: '@I123@' or use shell escaping
+        var commandLineBuilder = new CommandLineBuilder(rootCommand)
+            .UseDefaults()
+            .UseParseErrorReporting();
+
+        return await commandLineBuilder.Build().InvokeAsync(args);
     }
 
     private static Command BuildCompareCommand()
@@ -204,6 +206,150 @@ class Program
         });
 
         return compareCommand;
+    }
+
+    private static Command BuildWaveCompareCommand()
+    {
+        var waveCompareCommand = new Command("wave-compare", "Compare two GEDCOM files using wave algorithm and output detailed analysis");
+
+        var sourceOption = new Option<string>("--source", description: "Path to source GEDCOM file") { IsRequired = true };
+        var destOption = new Option<string>("--destination", description: "Path to destination GEDCOM file") { IsRequired = true };
+        var anchorSourceOption = new Option<string>("--anchor-source", description: "GEDCOM ID of anchor person in source (e.g., @I123@)") { IsRequired = true };
+        var anchorDestOption = new Option<string>("--anchor-destination", description: "GEDCOM ID of anchor person in destination (e.g., @I456@)") { IsRequired = true };
+        var maxLevelOption = new Option<int>("--max-level", () => 10, description: "Maximum BFS level depth (default: 10)");
+        var thresholdStrategyOption = new Option<string>("--threshold-strategy", () => "adaptive", description: "Threshold strategy: fixed, adaptive, aggressive, conservative");
+        var baseThresholdOption = new Option<int>("--base-threshold", () => 60, description: "Base matching threshold (0-100, default: 60)");
+        var outputOption = new Option<string?>("--output", description: "Output JSON file path (default: stdout)");
+        var verboseOption = new Option<bool>("--verbose", () => false, description: "Enable verbose logging");
+
+        waveCompareCommand.AddOption(sourceOption);
+        waveCompareCommand.AddOption(destOption);
+        waveCompareCommand.AddOption(anchorSourceOption);
+        waveCompareCommand.AddOption(anchorDestOption);
+        waveCompareCommand.AddOption(maxLevelOption);
+        waveCompareCommand.AddOption(thresholdStrategyOption);
+        waveCompareCommand.AddOption(baseThresholdOption);
+        waveCompareCommand.AddOption(outputOption);
+        waveCompareCommand.AddOption(verboseOption);
+
+        waveCompareCommand.SetHandler(async context =>
+        {
+            var sourcePath = context.ParseResult.GetValueForOption(sourceOption)!;
+            var destPath = context.ParseResult.GetValueForOption(destOption)!;
+            var anchorSource = context.ParseResult.GetValueForOption(anchorSourceOption)!;
+            var anchorDest = context.ParseResult.GetValueForOption(anchorDestOption)!;
+            var maxLevel = context.ParseResult.GetValueForOption(maxLevelOption);
+            var thresholdStrategyStr = context.ParseResult.GetValueForOption(thresholdStrategyOption)!;
+            var baseThreshold = context.ParseResult.GetValueForOption(baseThresholdOption);
+            var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+
+            await using var provider = BuildServiceProvider(verbose, services =>
+            {
+                services.AddSingleton<INameVariantsService, NameVariantsService>();
+                services.AddSingleton<IFuzzyMatcherService>(sp => new FuzzyMatcherService(
+                    sp.GetRequiredService<INameVariantsService>(),
+                    sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
+                    new MatchingOptions()));
+                services.AddSingleton<IGedcomLoader>(sp => new GedcomLoader(
+                    sp.GetRequiredService<ILogger<GedcomLoader>>()));
+                services.AddSingleton<GedcomGeniSync.Core.Services.Wave.WaveCompareService>(sp =>
+                    new GedcomGeniSync.Core.Services.Wave.WaveCompareService(
+                        sp.GetRequiredService<IFuzzyMatcherService>(),
+                        sp.GetRequiredService<ILogger<GedcomGeniSync.Core.Services.Wave.WaveCompareService>>()));
+            });
+
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("WaveCompare");
+
+            try
+            {
+                logger.LogInformation("=== Wave Compare ===");
+                logger.LogInformation("Source: {Source}", sourcePath);
+                logger.LogInformation("Destination: {Dest}", destPath);
+                logger.LogInformation("Anchor Source: {AnchorSource}", anchorSource);
+                logger.LogInformation("Anchor Dest: {AnchorDest}", anchorDest);
+                logger.LogInformation("Max Level: {MaxLevel}, Strategy: {Strategy}, Base Threshold: {Threshold}",
+                    maxLevel, thresholdStrategyStr, baseThreshold);
+
+                // Load GEDCOM files
+                var loader = provider.GetRequiredService<IGedcomLoader>();
+                logger.LogInformation("Loading source GEDCOM...");
+                var sourceLoadResult = loader.Load(sourcePath);
+                logger.LogInformation("Loading destination GEDCOM...");
+                var destLoadResult = loader.Load(destPath);
+
+                // Normalize anchor IDs
+                var normalizedAnchorSource = GedcomIdNormalizer.Normalize(anchorSource);
+                var normalizedAnchorDest = GedcomIdNormalizer.Normalize(anchorDest);
+
+                // Parse threshold strategy
+                var thresholdStrategy = thresholdStrategyStr.ToLowerInvariant() switch
+                {
+                    "fixed" => GedcomGeniSync.Core.Models.Wave.ThresholdStrategy.Fixed,
+                    "adaptive" => GedcomGeniSync.Core.Models.Wave.ThresholdStrategy.Adaptive,
+                    "aggressive" => GedcomGeniSync.Core.Models.Wave.ThresholdStrategy.Aggressive,
+                    "conservative" => GedcomGeniSync.Core.Models.Wave.ThresholdStrategy.Conservative,
+                    _ => GedcomGeniSync.Core.Models.Wave.ThresholdStrategy.Adaptive
+                };
+
+                // Create options
+                var options = new GedcomGeniSync.Core.Models.Wave.WaveCompareOptions
+                {
+                    MaxLevel = maxLevel,
+                    ThresholdStrategy = thresholdStrategy,
+                    BaseThreshold = baseThreshold
+                };
+
+                // Run wave compare
+                var waveCompare = provider.GetRequiredService<GedcomGeniSync.Core.Services.Wave.WaveCompareService>();
+                logger.LogInformation("Starting wave compare algorithm...");
+                var result = waveCompare.Compare(
+                    sourceLoadResult,
+                    destLoadResult,
+                    normalizedAnchorSource,
+                    normalizedAnchorDest,
+                    options);
+
+                logger.LogInformation("Wave compare completed!");
+                logger.LogInformation("Mapped: {Mapped}/{Total} persons",
+                    result.Statistics.TotalMappings,
+                    result.Statistics.TotalSourcePersons);
+                logger.LogInformation("Unmatched Source: {UnmatchedSource}",
+                    result.Statistics.UnmatchedSourceCount);
+                logger.LogInformation("Unmatched Destination: {UnmatchedDest}",
+                    result.Statistics.UnmatchedDestinationCount);
+                logger.LogInformation("Validation Issues: {Issues}",
+                    result.Statistics.ValidationIssuesCount);
+
+                // Serialize to JSON
+                var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                });
+
+                // Output to file or stdout
+                if (!string.IsNullOrEmpty(outputPath))
+                {
+                    await File.WriteAllTextAsync(outputPath, json);
+                    logger.LogInformation("Result saved to: {Path}", outputPath);
+                }
+                else
+                {
+                    Console.WriteLine(json);
+                }
+
+                context.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Wave compare failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return waveCompareCommand;
     }
 
     private static Command BuildAuthCommand()
@@ -667,5 +813,24 @@ class Program
 
         configureServices(services);
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// Preprocesses command-line arguments to prevent System.CommandLine from treating @ symbols as response files.
+    /// GEDCOM IDs like @I123@ would otherwise trigger file-not-found errors.
+    /// We prepend \@ to disable response file processing for those arguments.
+    /// </summary>
+    private static string[] PreprocessArgs(string[] args)
+    {
+        return args.Select(arg =>
+        {
+            // If arg looks like a GEDCOM ID (@I123@, @F456@, etc.), prepend backslash to escape it
+            if (arg.StartsWith("@") && arg.EndsWith("@") && arg.Length > 2)
+            {
+                // Use backslash-@ prefix which System.CommandLine recognizes as escaped response file
+                return "\\" + arg;
+            }
+            return arg;
+        }).ToArray();
     }
 }
