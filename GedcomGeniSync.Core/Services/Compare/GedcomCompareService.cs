@@ -16,17 +16,20 @@ public class GedcomCompareService : IGedcomCompareService
     private readonly IGedcomLoader _gedcomLoader;
     private readonly IIndividualCompareService _individualCompareService;
     private readonly IFamilyCompareService _familyCompareService;
+    private readonly IMappingValidationService _validationService;
 
     public GedcomCompareService(
         ILogger<GedcomCompareService> logger,
         IGedcomLoader gedcomLoader,
         IIndividualCompareService individualCompareService,
-        IFamilyCompareService familyCompareService)
+        IFamilyCompareService familyCompareService,
+        IMappingValidationService validationService)
     {
         _logger = logger;
         _gedcomLoader = gedcomLoader;
         _individualCompareService = individualCompareService;
         _familyCompareService = familyCompareService;
+        _validationService = validationService;
     }
 
     public CompareResult Compare(string sourceFilePath, string destinationFilePath, CompareOptions options)
@@ -102,7 +105,9 @@ public class GedcomCompareService : IGedcomCompareService
                 sourcePersonsInScope,
                 destPersonsInScope,
                 options,
-                existingMappings);
+                existingMappings,
+                sourceResult.Families,
+                destResult.Families);
 
             var newIndividualMappings = AddNewMappings(existingMappings, BuildIdMapping(individualResult));
 
@@ -111,10 +116,45 @@ public class GedcomCompareService : IGedcomCompareService
                 sourceResult.Families,
                 destResult.Families,
                 individualResult,
-                options);
+                options,
+                sourcePersonsInScope,
+                destPersonsInScope);
 
             var newFamilyMappings = AddNewMappings(existingMappings, familyResult.NewPersonMappings);
             var totalNewMappings = newIndividualMappings + newFamilyMappings;
+
+            // Validate mappings after this iteration
+            _logger.LogInformation("Comparison iteration {Iteration} - validating mappings", iteration);
+            var validation = _validationService.ValidateMappings(
+                existingMappings,
+                sourcePersonsInScope,
+                destPersonsInScope,
+                sourceResult.Families,
+                destResult.Families);
+
+            // Rollback suspicious mappings if validation found high severity issues
+            if (!validation.IsValid)
+            {
+                _logger.LogWarning(
+                    "Validation found {Count} high severity issues. Rolling back suspicious mappings.",
+                    validation.HighSeverityCount);
+
+                var cleanedMappings = _validationService.RollbackSuspiciousMappings(
+                    existingMappings,
+                    validation,
+                    sourceResult.Families);
+
+                var removedCount = existingMappings.Count - cleanedMappings.Count;
+                if (removedCount > 0)
+                {
+                    _logger.LogWarning("Removed {Count} suspicious mappings", removedCount);
+                    existingMappings.Clear();
+                    foreach (var (key, value) in cleanedMappings)
+                    {
+                        existingMappings[key] = value;
+                    }
+                }
+            }
 
             statistics = BuildStatistics(
                 sourcePersonsInScope.Count,

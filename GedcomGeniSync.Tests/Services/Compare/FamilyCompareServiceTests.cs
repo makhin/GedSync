@@ -1,5 +1,6 @@
 using FluentAssertions;
 using GedcomGeniSync.Models;
+using GedcomGeniSync.Services;
 using GedcomGeniSync.Services.Compare;
 using Microsoft.Extensions.Logging.Abstractions;
 using Patagames.GedcomNetSdk.Records.Ver551;
@@ -9,7 +10,16 @@ namespace GedcomGeniSync.Tests.Services.Compare;
 
 public class FamilyCompareServiceTests
 {
-    private readonly FamilyCompareService _service = new(NullLogger<FamilyCompareService>.Instance);
+    private readonly FamilyCompareService _service;
+
+    public FamilyCompareServiceTests()
+    {
+        var fuzzyMatcher = new FuzzyMatcherService(
+            new NameVariantsService(NullLogger<NameVariantsService>.Instance),
+            NullLogger<FuzzyMatcherService>.Instance,
+            new MatchingOptions { MatchThreshold = 70 });
+        _service = new FamilyCompareService(NullLogger<FamilyCompareService>.Instance, fuzzyMatcher);
+    }
 
     [Fact]
     public void CompareFamilies_ShouldSkipDeleteSuggestions_WhenDisabled()

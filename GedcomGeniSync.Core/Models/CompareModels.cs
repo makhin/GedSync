@@ -429,3 +429,120 @@ public record FamilyToDelete
 }
 
 #endregion
+
+#region Mapping Validation Models
+
+/// <summary>
+/// Validation result for person mappings
+/// </summary>
+public record ValidationResult
+{
+    public ImmutableList<MappingIssue> Issues { get; init; } = ImmutableList<MappingIssue>.Empty;
+
+    /// <summary>
+    /// Whether validation passed (no high severity issues)
+    /// </summary>
+    public bool IsValid => !Issues.Any(i => i.Severity == IssueSeverity.High);
+
+    /// <summary>
+    /// Count of issues by severity
+    /// </summary>
+    public int HighSeverityCount => Issues.Count(i => i.Severity == IssueSeverity.High);
+    public int MediumSeverityCount => Issues.Count(i => i.Severity == IssueSeverity.Medium);
+    public int LowSeverityCount => Issues.Count(i => i.Severity == IssueSeverity.Low);
+}
+
+/// <summary>
+/// Issue found during mapping validation
+/// </summary>
+public record MappingIssue
+{
+    public required string SourceId { get; init; }
+    public required string DestId { get; init; }
+    public required IssueType Type { get; init; }
+    public required IssueSeverity Severity { get; init; }
+    public string? Description { get; init; }
+}
+
+/// <summary>
+/// Type of validation issue
+/// </summary>
+public enum IssueType
+{
+    /// <summary>
+    /// Gender mismatch between source and destination
+    /// </summary>
+    GenderMismatch,
+
+    /// <summary>
+    /// Birth/death dates contradict (e.g., birth year difference > 5 years)
+    /// </summary>
+    DateContradiction,
+
+    /// <summary>
+    /// Family role inconsistency (e.g., child in one, parent in another)
+    /// </summary>
+    FamilyRoleInconsistency,
+
+    /// <summary>
+    /// Person appears as both child and parent in same family
+    /// </summary>
+    GenerationalInconsistency,
+
+    /// <summary>
+    /// Multiple persons from source mapped to same destination
+    /// </summary>
+    DuplicateMapping
+}
+
+/// <summary>
+/// Severity level for validation issues
+/// </summary>
+public enum IssueSeverity
+{
+    /// <summary>
+    /// Critical issue - mapping should be removed
+    /// </summary>
+    High,
+
+    /// <summary>
+    /// Suspicious issue - should be reviewed
+    /// </summary>
+    Medium,
+
+    /// <summary>
+    /// Minor issue - informational only
+    /// </summary>
+    Low
+}
+
+/// <summary>
+/// Person mapping with confidence level
+/// </summary>
+public record MappingEntry
+{
+    public required string SourceId { get; init; }
+    public required string DestId { get; init; }
+
+    /// <summary>
+    /// Confidence level 0.0 - 1.0
+    /// </summary>
+    public double Confidence { get; init; }
+
+    /// <summary>
+    /// How the match was made: "RFN", "Fuzzy", "Family", etc.
+    /// </summary>
+    public required string MatchedBy { get; init; }
+
+    /// <summary>
+    /// Iteration when mapping was found
+    /// </summary>
+    public int IterationFound { get; init; }
+
+    /// <summary>
+    /// Match score (0-100)
+    /// </summary>
+    public int MatchScore { get; init; }
+}
+
+#endregion

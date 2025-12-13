@@ -16,10 +16,14 @@ public interface IFamilyCompareService
     /// <param name="destFamilies">Families from destination GEDCOM</param>
     /// <param name="individualResult">Results from individual comparison (for ID mapping)</param>
     /// <param name="options">Comparison options</param>
+    /// <param name="sourcePersons">Source persons dictionary (for fuzzy matching unmapped children)</param>
+    /// <param name="destPersons">Destination persons dictionary (for fuzzy matching unmapped children)</param>
     /// <returns>Family comparison result</returns>
     FamilyCompareResult CompareFamilies(
         Dictionary<string, Family> sourceFamilies,
         Dictionary<string, Family> destFamilies,
         IndividualCompareResult individualResult,
-        CompareOptions options);
+        CompareOptions options,
+        IReadOnlyDictionary<string, PersonRecord>? sourcePersons = null,
+        IReadOnlyDictionary<string, PersonRecord>? destPersons = null);
 }

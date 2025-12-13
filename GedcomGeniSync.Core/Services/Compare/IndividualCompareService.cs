@@ -2,6 +2,7 @@ using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
+using Family = Patagames.GedcomNetSdk.Records.Ver551.Family;
 
 namespace GedcomGeniSync.Services.Compare;
 
@@ -29,7 +30,9 @@ public class IndividualCompareService : IIndividualCompareService
         Dictionary<string, PersonRecord> sourcePersons,
         Dictionary<string, PersonRecord> destPersons,
         CompareOptions options,
-        IReadOnlyDictionary<string, string>? existingMatches = null)
+        IReadOnlyDictionary<string, string>? existingMatches = null,
+        IReadOnlyDictionary<string, Family>? sourceFamilies = null,
+        IReadOnlyDictionary<string, Family>? destFamilies = null)
     {
         _logger.LogInformation("Starting individual comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourcePersons.Count, destPersons.Count);
@@ -118,16 +121,66 @@ public class IndividualCompareService : IIndividualCompareService
             }
             else if (matchResult.IsAmbiguous)
             {
-                // Multiple candidates - ambiguous match
-                ambiguousMatches.Add(new AmbiguousMatch
-                {
-                    SourceId = sourcePerson.Id,
-                    PersonSummary = GetPersonSummary(sourcePerson),
-                    Candidates = matchResult.Candidates
-                });
+                // Try to resolve ambiguous match using family context
+                var resolved = TryResolveAmbiguousMatch(
+                    sourcePerson,
+                    matchResult.Candidates,
+                    existingMatches ?? new Dictionary<string, string>(),
+                    sourceFamilies,
+                    destFamilies);
 
-                _logger.LogWarning("Ambiguous match for {SourceId} - {PersonSummary}: {CandidateCount} candidates",
-                    sourcePerson.Id, GetPersonSummary(sourcePerson), matchResult.Candidates.Count);
+                if (resolved != null)
+                {
+                    // Successfully resolved using family context
+                    matchedDestinationIds.Add(resolved.DestinationId);
+
+                    var fieldDifferences = _fieldComparer.CompareFields(sourcePerson, resolved.MatchedPerson!);
+
+                    if (fieldDifferences.Count == 0)
+                    {
+                        matchedNodes.Add(new MatchedNode
+                        {
+                            SourceId = sourcePerson.Id,
+                            DestinationId = resolved.DestinationId,
+                            GeniProfileId = resolved.MatchedPerson!.GeniProfileId,
+                            MatchScore = resolved.Score,
+                            MatchedBy = resolved.MatchedBy,
+                            PersonSummary = GetPersonSummary(sourcePerson)
+                        });
+
+                        _logger.LogInformation("Resolved ambiguous match for {SourceId} using family context: {DestId} (matched by: {MatchedBy})",
+                            sourcePerson.Id, resolved.DestinationId, resolved.MatchedBy);
+                    }
+                    else
+                    {
+                        nodesToUpdate.Add(new NodeToUpdate
+                        {
+                            SourceId = sourcePerson.Id,
+                            DestinationId = resolved.DestinationId,
+                            GeniProfileId = resolved.MatchedPerson!.GeniProfileId,
+                            MatchScore = resolved.Score,
+                            MatchedBy = resolved.MatchedBy,
+                            PersonSummary = GetPersonSummary(sourcePerson),
+                            FieldsToUpdate = fieldDifferences
+                        });
+
+                        _logger.LogInformation("Resolved ambiguous match for {SourceId} using family context: {DestId} ({FieldCount} fields to update)",
+                            sourcePerson.Id, resolved.DestinationId, fieldDifferences.Count);
+                    }
+                }
+                else
+                {
+                    // Could not resolve - add to ambiguous matches
+                    ambiguousMatches.Add(new AmbiguousMatch
+                    {
+                        SourceId = sourcePerson.Id,
+                        PersonSummary = GetPersonSummary(sourcePerson),
+                        Candidates = matchResult.Candidates
+                    });
+
+                    _logger.LogWarning("Ambiguous match for {SourceId} - {PersonSummary}: {CandidateCount} candidates (could not resolve using family context)",
+                        sourcePerson.Id, GetPersonSummary(sourcePerson), matchResult.Candidates.Count);
+                }
             }
             else
             {
@@ -326,6 +379,113 @@ public class IndividualCompareService : IIndividualCompareService
         };
     }
 
+    /// <summary>
+    /// Try to resolve ambiguous match using family context
+    /// </summary>
+    private ResolvedMatch? TryResolveAmbiguousMatch(
+        PersonRecord source,
+        ImmutableList<Models.MatchCandidate> candidates,
+        IReadOnlyDictionary<string, string> existingMappings,
+        IReadOnlyDictionary<string, Family>? sourceFamilies,
+        IReadOnlyDictionary<string, Family>? destFamilies)
+    {
+        if (sourceFamilies == null || destFamilies == null || candidates.Count == 0)
+        {
+            return null;
+        }
+
+        // Find families where source person is a member
+        var sourceFamiliesContaining = sourceFamilies.Values
+            .Where(f => f.HusbandId == source.Id ||
+                       f.WifeId == source.Id ||
+                       (f.Children != null && f.Children.Contains(source.Id)))
+            .ToList();
+
+        if (sourceFamiliesContaining.Count == 0)
+        {
+            return null;
+        }
+
+        // Score each candidate based on mapped family members
+        var candidateScores = new List<(Models.MatchCandidate candidate, int mappedMembersCount)>();
+
+        foreach (var candidate in candidates)
+        {
+            var destFamiliesContaining = destFamilies.Values
+                .Where(f => f.HusbandId == candidate.Target.Id ||
+                           f.WifeId == candidate.Target.Id ||
+                           (f.Children != null && f.Children.Contains(candidate.Target.Id)))
+                .ToList();
+
+            int maxMappedMembers = 0;
+
+            // Check each dest family for mapped members
+            foreach (var destFamily in destFamiliesContaining)
+            {
+                var mappedCount = CountMappedMembers(destFamily, existingMappings);
+                if (mappedCount > maxMappedMembers)
+                {
+                    maxMappedMembers = mappedCount;
+                }
+            }
+
+            if (maxMappedMembers >= 2)
+            {
+                candidateScores.Add((candidate, maxMappedMembers));
+            }
+        }
+
+        if (candidateScores.Count == 0)
+        {
+            return null; // No candidate has enough mapped family members
+        }
+
+        // Select candidate with most mapped family members
+        var best = candidateScores.OrderByDescending(c => c.mappedMembersCount).First();
+
+        // Check if there's a clear winner (no ties)
+        var topCount = best.mappedMembersCount;
+        var tiedCandidates = candidateScores.Count(c => c.mappedMembersCount == topCount);
+
+        if (tiedCandidates > 1)
+        {
+            return null; // Still ambiguous
+        }
+
+        return new ResolvedMatch
+        {
+            MatchedPerson = best.candidate.Target,
+            DestinationId = best.candidate.Target.Id,
+            Score = (int)best.candidate.Score,
+            MatchedBy = "AmbiguousResolvedByFamily"
+        };
+    }
+
+    /// <summary>
+    /// Count how many family members are already mapped
+    /// </summary>
+    private int CountMappedMembers(Family family, IReadOnlyDictionary<string, string> mappings)
+    {
+        var count = 0;
+
+        if (family.HusbandId != null && mappings.ContainsKey(family.HusbandId))
+        {
+            count++;
+        }
+
+        if (family.WifeId != null && mappings.ContainsKey(family.WifeId))
+        {
+            count++;
+        }
+
+        if (family.Children != null)
+        {
+            count += family.Children.Count(childId => mappings.ContainsKey(childId));
+        }
+
+        return count;
+    }
+
     private class MatchResult
     {
         public PersonRecord? MatchedPerson { get; init; }
@@ -333,5 +493,13 @@ public class IndividualCompareService : IIndividualCompareService
         public string MatchedBy { get; init; } = "";
         public bool IsAmbiguous { get; init; }
         public ImmutableList<Models.MatchCandidate> Candidates { get; init; } = ImmutableList<Models.MatchCandidate>.Empty;
+    }
+
+    private class ResolvedMatch
+    {
+        public required PersonRecord MatchedPerson { get; init; }
+        public required string DestinationId { get; init; }
+        public int Score { get; init; }
+        public required string MatchedBy { get; init; }
     }
 }

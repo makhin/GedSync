@@ -15,17 +15,23 @@ namespace GedcomGeniSync.Services.Compare;
 public class FamilyCompareService : IFamilyCompareService
 {
     private readonly ILogger<FamilyCompareService> _logger;
+    private readonly IFuzzyMatcherService _fuzzyMatcher;
 
-    public FamilyCompareService(ILogger<FamilyCompareService> logger)
+    public FamilyCompareService(
+        ILogger<FamilyCompareService> logger,
+        IFuzzyMatcherService fuzzyMatcher)
     {
         _logger = logger;
+        _fuzzyMatcher = fuzzyMatcher;
     }
 
     public FamilyCompareResult CompareFamilies(
         Dictionary<string, Family> sourceFamilies,
         Dictionary<string, Family> destFamilies,
         IndividualCompareResult individualResult,
-        CompareOptions options)
+        CompareOptions options,
+        IReadOnlyDictionary<string, PersonRecord>? sourcePersons = null,
+        IReadOnlyDictionary<string, PersonRecord>? destPersons = null)
     {
         _logger.LogInformation("Starting family comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourceFamilies.Count, destFamilies.Count);
@@ -43,8 +49,13 @@ public class FamilyCompareService : IFamilyCompareService
         var matchedDestFamilyIds = new HashSet<string>();
         var destFamilySignatures = BuildDestinationSignatures(destFamilies);
 
-        // Process each source family
-        foreach (var (sourceFamId, sourceFamily) in sourceFamilies)
+        // Prioritize families by number of mapped members for better matching accuracy
+        var prioritizedFamilies = PrioritizeFamilies(sourceFamilies, sourceToDestMap);
+
+        _logger.LogDebug("Processing {Count} families in priority order (by mapped member count)", sourceFamilies.Count);
+
+        // Process each source family in priority order
+        foreach (var (sourceFamId, sourceFamily) in prioritizedFamilies)
         {
             var matchedDestFamily = FindMatchingFamily(
                 sourceFamily,
@@ -63,7 +74,7 @@ public class FamilyCompareService : IFamilyCompareService
             {
                 matchedDestFamilyIds.Add(matchedDestFamily.FamilyId);
 
-                CaptureNewPersonMappings(sourceFamily, matchedDestFamily, sourceToDestMap, newPersonMappings);
+                CaptureNewPersonMappings(sourceFamily, matchedDestFamily, sourceToDestMap, newPersonMappings, sourcePersons, destPersons);
 
                 // Check if family needs updates
                 var updates = CompareFamilyDetails(sourceFamily, matchedDestFamily, sourceToDestMap);
@@ -113,11 +124,100 @@ public class FamilyCompareService : IFamilyCompareService
         };
     }
 
+    private Dictionary<string, string> TryMatchUnmappedChildren(
+        List<string> unmappedSourceChildren,
+        List<string> unmappedDestChildren,
+        IReadOnlyDictionary<string, PersonRecord>? sourcePersons,
+        IReadOnlyDictionary<string, PersonRecord>? destPersons)
+    {
+        var mappings = new Dictionary<string, string>();
+
+        // If person records are not provided, cannot perform fuzzy matching
+        if (sourcePersons == null || destPersons == null)
+        {
+            return mappings;
+        }
+
+        // Determine threshold based on child counts
+        // Equal counts: use standard threshold (70)
+        // Unequal counts: use very high threshold (85) to avoid incorrect mappings
+        var threshold = unmappedSourceChildren.Count == unmappedDestChildren.Count ? 70 : 85;
+
+        // Build candidate matrix with fuzzy scores
+        var candidates = new List<ChildMatchCandidate>();
+
+        foreach (var sourceChildId in unmappedSourceChildren)
+        {
+            if (!sourcePersons.TryGetValue(sourceChildId, out var sourcePerson))
+            {
+                continue;
+            }
+
+            foreach (var destChildId in unmappedDestChildren)
+            {
+                if (!destPersons.TryGetValue(destChildId, out var destPerson))
+                {
+                    continue;
+                }
+
+                var matchResult = _fuzzyMatcher.Compare(sourcePerson, destPerson);
+
+                if (matchResult.Score >= threshold)
+                {
+                    candidates.Add(new ChildMatchCandidate
+                    {
+                        SourceId = sourceChildId,
+                        DestId = destChildId,
+                        Score = matchResult.Score
+                    });
+                }
+            }
+        }
+
+        // Greedy algorithm: select best pairs without conflicts
+        var usedSourceIds = new HashSet<string>();
+        var usedDestIds = new HashSet<string>();
+
+        foreach (var candidate in candidates.OrderByDescending(c => c.Score))
+        {
+            if (usedSourceIds.Contains(candidate.SourceId) || usedDestIds.Contains(candidate.DestId))
+            {
+                continue;
+            }
+
+            mappings[candidate.SourceId] = candidate.DestId;
+            usedSourceIds.Add(candidate.SourceId);
+            usedDestIds.Add(candidate.DestId);
+
+            _logger.LogDebug(
+                "Fuzzy matched children: {SourceId} -> {DestId} (score: {Score})",
+                candidate.SourceId, candidate.DestId, candidate.Score);
+        }
+
+        if (mappings.Count > 0)
+        {
+            _logger.LogInformation(
+                "Fuzzy matched {Count} children pairs using threshold {Threshold}",
+                mappings.Count, threshold);
+        }
+
+        return mappings;
+    }
+
+    private record ChildMatchCandidate
+    {
+        public required string SourceId { get; init; }
+        public required string DestId { get; init; }
+        public double Score { get; init; }
+    }
+
     private void CaptureNewPersonMappings(
         Family sourceFamily,
         Family destFamily,
         Dictionary<string, string> sourceToDestMap,
-        Dictionary<string, string> newPersonMappings)
+        Dictionary<string, string> newPersonMappings,
+        IReadOnlyDictionary<string, PersonRecord>? sourcePersons,
+        IReadOnlyDictionary<string, PersonRecord>? destPersons)
     {
         void TryAddMapping(string? sourceId, string? destId)
         {
@@ -151,9 +251,19 @@ public class FamilyCompareService : IFamilyCompareService
             .Where(id => !mappedDestinationIds.Contains(id))
             .ToList();
 
-        if (unmappedSourceChildren.Count == 1 && unmappedDestChildren.Count == 1)
+        // Try fuzzy matching for unmapped children
+        if (unmappedSourceChildren.Count > 0 && unmappedDestChildren.Count > 0)
         {
-            TryAddMapping(unmappedSourceChildren[0], unmappedDestChildren[0]);
+            var childMappings = TryMatchUnmappedChildren(
+                unmappedSourceChildren,
+                unmappedDestChildren,
+                sourcePersons,
+                destPersons);
+
+            foreach (var (sourceChildId, destChildId) in childMappings)
+            {
+                TryAddMapping(sourceChildId, destChildId);
+            }
         }
     }
 
@@ -399,4 +509,70 @@ public class FamilyCompareService : IFamilyCompareService
     }
 
     private record FamilyMemberSignature(string? HusbandId, string? WifeId, ImmutableHashSet<string> Children);
+
+    private IEnumerable<KeyValuePair<string, Family>> PrioritizeFamilies(
+        Dictionary<string, Family> families,
+        Dictionary<string, string> existingMappings)
+    {
+        return families
+            .Select(kvp => new
+            {
+                Pair = kvp,
+                MappedCount = CountMappedMembers(kvp.Value, existingMappings),
+                TotalCount = GetTotalMemberCount(kvp.Value),
+                Confidence = CalculateFamilyConfidence(kvp.Value, existingMappings)
+            })
+            .OrderByDescending(x => x.Confidence)
+            .ThenByDescending(x => x.MappedCount)
+            .Select(x => x.Pair);
+    }
+
+    private double CalculateFamilyConfidence(Family family, Dictionary<string, string> mappings)
+    {
+        var total = GetTotalMemberCount(family);
+        var mapped = CountMappedMembers(family, mappings);
+
+        if (total == 0) return 0;
+
+        var ratio = (double)mapped / total;
+
+        // Bonus if both spouses are mapped
+        var bothSpousesMapped =
+            (family.HusbandId == null || mappings.ContainsKey(family.HusbandId)) &&
+            (family.WifeId == null || mappings.ContainsKey(family.WifeId));
+
+        if (bothSpousesMapped)
+            ratio += 0.2;
+
+        return Math.Min(ratio, 1.0);
+    }
+
+    private int CountMappedMembers(Family family, Dictionary<string, string> mappings)
+    {
+        var count = 0;
+
+        if (family.HusbandId != null && mappings.ContainsKey(family.HusbandId))
+            count++;
+
+        if (family.WifeId != null && mappings.ContainsKey(family.WifeId))
+            count++;
+
+        if (family.Children != null)
+        {
+            count += family.Children.Count(childId => mappings.ContainsKey(childId));
+        }
+
+        return count;
+    }
+
+    private int GetTotalMemberCount(Family family)
+    {
+        var count = 0;
+
+        if (family.HusbandId != null) count++;
+        if (family.WifeId != null) count++;
+        if (family.Children != null) count += family.Children.Count();
+
+        return count;
+    }
 }

@@ -127,7 +127,12 @@ class Program
 
                 services.AddSingleton<Services.Compare.IFamilyCompareService>(sp =>
                     new Services.Compare.FamilyCompareService(
-                        sp.GetRequiredService<ILogger<Services.Compare.FamilyCompareService>>()));
+                        sp.GetRequiredService<ILogger<Services.Compare.FamilyCompareService>>(),
+                        sp.GetRequiredService<IFuzzyMatcherService>()));
+
+                services.AddSingleton<Services.Compare.IMappingValidationService>(sp =>
+                    new Services.Compare.MappingValidationService(
+                        sp.GetRequiredService<ILogger<Services.Compare.MappingValidationService>>()));
 
                 services.AddSingleton<IGedcomLoader>(sp =>
                     new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
@@ -137,7 +142,8 @@ class Program
                         sp.GetRequiredService<ILogger<Services.Compare.GedcomCompareService>>(),
                         sp.GetRequiredService<IGedcomLoader>(),
                         sp.GetRequiredService<Services.Compare.IIndividualCompareService>(),
-                        sp.GetRequiredService<Services.Compare.IFamilyCompareService>()));
+                        sp.GetRequiredService<Services.Compare.IFamilyCompareService>(),
+                        sp.GetRequiredService<Services.Compare.IMappingValidationService>()));
 
                 services.AddSingleton<INameVariantsService, NameVariantsService>();
             });
