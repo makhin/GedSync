@@ -1198,7 +1198,7 @@ public enum IssueType
 ## Структура файлов
 
 ```
-GedcomGeniSync.Wave/
+GedcomGeniSync.Core/
 ├── Models/
 │   ├── Wave/
 │   │   ├── TreeGraph.cs                 # Граф с индексами
