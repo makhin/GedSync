@@ -1,0 +1,65 @@
+using System;
+using System.Collections.Generic;
+using GedcomGeniSync.Cli.Services;
+using GedcomGeniSync.Services;
+using GedcomGeniSync.Services.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+namespace GedcomGeniSync.Cli;
+
+public class Startup
+{
+    private readonly IReadOnlyCollection<ServiceDescriptor> _baseServices;
+
+    public Startup()
+    {
+        var services = new ServiceCollection();
+        ConfigureBaseServices(services);
+        _baseServices = services.ToList().AsReadOnly();
+    }
+
+    public AsyncServiceScope CreateScope(bool verbose, Action<IServiceCollection>? configureServices = null)
+    {
+        var services = new ServiceCollection();
+
+        foreach (var descriptor in _baseServices)
+        {
+            services.Add(descriptor);
+        }
+
+        services.AddLogging(builder =>
+        {
+            builder.ClearProviders();
+            builder.AddSimpleConsole(options =>
+            {
+                options.TimestampFormat = "HH:mm:ss ";
+                options.SingleLine = true;
+            });
+            builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+        });
+
+        configureServices?.Invoke(services);
+
+        var provider = services.BuildServiceProvider();
+        return provider.CreateAsyncScope();
+    }
+
+    private static void ConfigureBaseServices(IServiceCollection services)
+    {
+        services.AddSingleton<IConfigurationLoader, ConfigurationLoader>();
+        services.AddSingleton<IConfigurationService, ConfigurationService>();
+        services.AddSingleton<INameVariantsService, NameVariantsService>();
+        services.AddSingleton<IGedcomLoader, GedcomLoader>();
+
+        services.AddHttpClient("GeniApi", client =>
+        {
+            client.BaseAddress = new Uri("https://www.geni.com/api");
+        });
+
+        services.AddHttpClient("MyHeritagePhoto", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(5);
+        });
+    }
+}
