@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Services;
 
 /// <summary>
 /// Base class for Geni API clients

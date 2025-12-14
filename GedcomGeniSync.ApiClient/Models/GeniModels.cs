@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Models;
 
 #region DTOs
 

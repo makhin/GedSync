@@ -1,4 +1,4 @@
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Services;
 
 /// <summary>
 /// Stores rate limit information from Geni API response headers

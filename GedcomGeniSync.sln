@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GedcomGeniSync.Cli", "Gedco
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GedcomGeniSync.Tests", "GedcomGeniSync.Tests\GedcomGeniSync.Tests.csproj", "{391432AF-7B1F-4795-B588-8E70EEDDC869}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GedcomGeniSync.ApiClient", "GedcomGeniSync.ApiClient\GedcomGeniSync.ApiClient.csproj", "{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{391432AF-7B1F-4795-B588-8E70EEDDC869}.Release|x64.Build.0 = Release|Any CPU
 		{391432AF-7B1F-4795-B588-8E70EEDDC869}.Release|x86.ActiveCfg = Release|Any CPU
 		{391432AF-7B1F-4795-B588-8E70EEDDC869}.Release|x86.Build.0 = Release|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Debug|x64.Build.0 = Debug|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Debug|x86.Build.0 = Debug|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Release|x64.ActiveCfg = Release|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Release|x64.Build.0 = Release|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Release|x86.ActiveCfg = Release|Any CPU
+		{5CD46D88-42B6-4BFC-AB53-4B9847D8249B}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

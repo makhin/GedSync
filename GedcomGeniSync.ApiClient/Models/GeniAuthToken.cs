@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Models;
 
 [ExcludeFromCodeCoverage]
 public class GeniAuthToken

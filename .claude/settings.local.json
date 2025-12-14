@@ -35,7 +35,9 @@
       "Bash(python:*)",
       "Bash(git add:*)",
       "Bash(find:*)",
-      "Bash(del c:codeGedSyncGedcomGeniSync.TestsWaveWaveCompareIntegrationTests.cs)"
+      "Bash(del c:codeGedSyncGedcomGeniSync.TestsWaveWaveCompareIntegrationTests.cs)",
+      "Bash(dotnet sln:*)",
+      "Bash(del GedcomGeniSync.ApiClientClass1.cs)"
     ],
     "deny": [],
     "ask": []

@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Collections.Immutable;
 using System.Text.RegularExpressions;
+using GedcomGeniSync.ApiClient.Utils;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;

@@ -1,3 +1,6 @@
+using GedcomGeniSync.ApiClient.Models;
+using GedcomGeniSync.ApiClient.Services;
+using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using GedcomGeniSync.Services.Compare;

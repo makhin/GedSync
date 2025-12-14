@@ -1,8 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Json;
+using GedcomGeniSync.ApiClient.Models;
+using GedcomGeniSync.ApiClient.Services.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Services;
 
 /// <summary>
 /// Geni Profile API Client

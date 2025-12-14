@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using GedcomGeniSync.Services;
+using GedcomGeniSync.ApiClient.Services;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;

@@ -1,4 +1,4 @@
-using GedcomGeniSync.Services;
+using GedcomGeniSync.ApiClient.Services;
 using Xunit;
 
 namespace GedcomGeniSync.Tests;

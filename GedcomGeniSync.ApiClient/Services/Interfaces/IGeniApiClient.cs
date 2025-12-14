@@ -1,4 +1,4 @@
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Services.Interfaces;
 
 /// <summary>
 /// Interface for Geni API Client

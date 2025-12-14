@@ -1,4 +1,6 @@
-namespace GedcomGeniSync.Services;
+using GedcomGeniSync.ApiClient.Models;
+
+namespace GedcomGeniSync.ApiClient.Services.Interfaces;
 
 /// <summary>
 /// Interface for Geni Profile API operations

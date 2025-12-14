@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GedcomGeniSync.Core\GedcomGeniSync.Core.csproj" />
+    <ProjectReference Include="..\GedcomGeniSync.ApiClient\GedcomGeniSync.ApiClient.csproj" />
   </ItemGroup>
 
   <ItemGroup>

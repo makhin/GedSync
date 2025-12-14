@@ -1,8 +1,6 @@
-using System.Threading;
-using System.Threading.Tasks;
-using GedcomGeniSync.Services;
+using GedcomGeniSync.ApiClient.Models;
 
-namespace GedcomGeniSync.Services.Interfaces;
+namespace GedcomGeniSync.ApiClient.Services.Interfaces;
 
 /// <summary>
 /// Interface for authenticating against the Geni platform and persisting tokens.

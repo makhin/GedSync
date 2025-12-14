@@ -2,9 +2,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using GedcomGeniSync.ApiClient.Models;
+using GedcomGeniSync.ApiClient.Services.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Services;
 
 /// <summary>
 /// Geni Photo API Client

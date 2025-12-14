@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace GedcomGeniSync.Utils;
+namespace GedcomGeniSync.ApiClient.Utils;
 
 /// <summary>
 /// Helper class for working with Geni Profile IDs in different formats

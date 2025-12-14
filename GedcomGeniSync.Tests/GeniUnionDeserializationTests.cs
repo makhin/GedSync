@@ -1,6 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
-using GedcomGeniSync.Services;
+using GedcomGeniSync.ApiClient.Models;
 
 namespace GedcomGeniSync.Tests;
 

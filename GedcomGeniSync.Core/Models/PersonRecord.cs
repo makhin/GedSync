@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using GedcomGeniSync.ApiClient.Utils;
 
 namespace GedcomGeniSync.Models;
 
@@ -197,13 +198,13 @@ public record PersonRecord
         // Try to extract from RFN first (most reliable for Geni-exported files)
         if (!string.IsNullOrEmpty(GeniProfileId))
         {
-            var numericFromRfn = Utils.GeniIdHelper.ExtractNumericId(GeniProfileId);
+            var numericFromRfn = GeniIdHelper.ExtractNumericId(GeniProfileId);
             if (numericFromRfn != null)
                 return numericFromRfn;
         }
 
         // Fall back to GEDCOM ID (works if GEDCOM was exported from Geni)
-        return Utils.GeniIdHelper.ExtractNumericId(Id);
+        return GeniIdHelper.ExtractNumericId(Id);
     }
 
     /// <summary>

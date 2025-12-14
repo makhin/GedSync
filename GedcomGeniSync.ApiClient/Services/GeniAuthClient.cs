@@ -1,9 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
-using GedcomGeniSync.Services.Interfaces;
+using GedcomGeniSync.ApiClient.Models;
+using GedcomGeniSync.ApiClient.Services.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace GedcomGeniSync.Services;
+namespace GedcomGeniSync.ApiClient.Services;
 
 public class GeniAuthClient : IGeniAuthClient
 {
@@ -100,7 +101,7 @@ public class GeniAuthClient : IGeniAuthClient
         return ParseTokenFromUrl(url);
     }
 
-    internal GeniAuthToken? ParseTokenFromUrl(string url)
+    public GeniAuthToken? ParseTokenFromUrl(string url)
     {
         try
         {

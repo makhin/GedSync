@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using GedcomGeniSync.ApiClient.Models;
+using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;

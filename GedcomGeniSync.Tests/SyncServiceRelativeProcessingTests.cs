@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using System.Reflection;
 using FluentAssertions;
+using GedcomGeniSync.ApiClient.Models;
+using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using Microsoft.Extensions.Logging;
