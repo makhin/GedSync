@@ -701,11 +701,19 @@ class Program
                     sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
                     sp.GetRequiredService<MatchingOptions>()));
                 services.AddSingleton<IGedcomLoader>(sp => new GedcomLoader(sp.GetRequiredService<ILogger<GedcomLoader>>()));
-                services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
+                services.AddSingleton<IGeniProfileClient>(sp => new GeniProfileClient(
                     sp.GetRequiredService<IHttpClientFactory>(),
                     token ?? string.Empty,
                     dryRun,
-                    sp.GetRequiredService<ILogger<GeniApiClient>>()));
+                    sp.GetRequiredService<ILogger<GeniProfileClient>>()));
+                services.AddSingleton<IGeniPhotoClient>(sp => new GeniPhotoClient(
+                    sp.GetRequiredService<IHttpClientFactory>(),
+                    token ?? string.Empty,
+                    dryRun,
+                    sp.GetRequiredService<ILogger<GeniPhotoClient>>()));
+                services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
+                    sp.GetRequiredService<IGeniProfileClient>(),
+                    sp.GetRequiredService<IGeniPhotoClient>()));
                 services.AddSingleton<IMyHeritagePhotoService>(sp => new MyHeritagePhotoService(
                     sp.GetRequiredService<IHttpClientFactory>(),
                     sp.GetRequiredService<ILogger<MyHeritagePhotoService>>(),
@@ -881,7 +889,7 @@ class Program
 
             await using var provider = BuildServiceProvider(verbose, services =>
             {
-                services.AddSingleton<IGeniApiClient>(sp =>
+                services.AddSingleton<IGeniProfileClient>(sp =>
                 {
                     var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
 
@@ -899,12 +907,41 @@ class Program
                         throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
                     }
 
-                    return new GeniApiClient(
+                    return new GeniProfileClient(
                         sp.GetRequiredService<IHttpClientFactory>(),
                         resolvedToken,
                         dryRun: false,
-                        sp.GetRequiredService<ILogger<GeniApiClient>>());
+                        sp.GetRequiredService<ILogger<GeniProfileClient>>());
                 });
+
+                services.AddSingleton<IGeniPhotoClient>(sp =>
+                {
+                    var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
+
+                    if (string.IsNullOrWhiteSpace(resolvedToken))
+                    {
+                        var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile).Result;
+                        if (storedToken != null && !storedToken.IsExpired)
+                        {
+                            resolvedToken = storedToken.AccessToken;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(resolvedToken))
+                    {
+                        throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
+                    }
+
+                    return new GeniPhotoClient(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        resolvedToken,
+                        dryRun: false,
+                        sp.GetRequiredService<ILogger<GeniPhotoClient>>());
+                });
+
+                services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
+                    sp.GetRequiredService<IGeniProfileClient>(),
+                    sp.GetRequiredService<IGeniPhotoClient>()));
             });
 
             var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Profile");
