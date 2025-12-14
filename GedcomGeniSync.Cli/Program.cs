@@ -11,6 +11,8 @@ using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
+using System.Collections.Immutable;
+using System.Linq;
 
 namespace GedcomGeniSync;
 
@@ -151,6 +153,9 @@ class Program
                         sp.GetRequiredService<Services.Compare.IMappingValidationService>()));
 
                 services.AddSingleton<INameVariantsService, NameVariantsService>();
+                services.AddSingleton<IPersonFieldComparer>(sp =>
+                    new Services.Compare.PersonFieldComparer(
+                        sp.GetRequiredService<ILogger<Services.Compare.PersonFieldComparer>>()));
             });
 
             var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Compare");
@@ -257,6 +262,9 @@ class Program
                     sp.GetRequiredService<INameVariantsService>(),
                     sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
                     new MatchingOptions()));
+                services.AddSingleton<IPersonFieldComparer>(sp =>
+                    new Services.Compare.PersonFieldComparer(
+                        sp.GetRequiredService<ILogger<Services.Compare.PersonFieldComparer>>()));
                 services.AddSingleton<IGedcomLoader>(sp => new GedcomLoader(
                     sp.GetRequiredService<ILogger<GedcomLoader>>()));
                 services.AddSingleton<GedcomGeniSync.Core.Services.Wave.WaveCompareService>(sp =>
@@ -327,8 +335,36 @@ class Program
                 logger.LogInformation("Validation Issues: {Issues}",
                     result.Statistics.ValidationIssuesCount);
 
+                const int highConfidenceThreshold = 90;
+                var fieldComparer = provider.GetRequiredService<IPersonFieldComparer>();
+                var highConfidenceReport = BuildWaveReport(
+                    result,
+                    sourcePath,
+                    destPath,
+                    sourceLoadResult,
+                    destLoadResult,
+                    fieldComparer,
+                    highConfidenceThreshold);
+
+                logger.LogInformation(
+                    "High-confidence report prepared: {ToUpdate} updates, {ToAdd} additions",
+                    highConfidenceReport.Individuals.NodesToUpdate.Count,
+                    highConfidenceReport.Individuals.NodesToAdd.Count);
+
+                var payload = new
+                {
+                    Summary = new
+                    {
+                        Source = sourcePath,
+                        Destination = destPath,
+                        HighConfidenceThreshold = highConfidenceThreshold
+                    },
+                    Report = highConfidenceReport,
+                    WaveResult = result
+                };
+
                 // Serialize to JSON
-                var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions
+                var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions
                 {
                     WriteIndented = true,
                     PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
@@ -373,6 +409,161 @@ class Program
         });
 
         return waveCompareCommand;
+    }
+
+    private static WaveHighConfidenceReport BuildWaveReport(
+        GedcomGeniSync.Core.Models.Wave.WaveCompareResult result,
+        string sourceFile,
+        string destinationFile,
+        GedcomLoadResult sourceLoadResult,
+        GedcomLoadResult destLoadResult,
+        IPersonFieldComparer fieldComparer,
+        int confidenceThreshold)
+    {
+        var mappingBySource = result.Mappings.ToDictionary(m => m.SourceId);
+
+        var updates = ImmutableList.CreateBuilder<NodeToUpdate>();
+        foreach (var mapping in mappingBySource.Values.Where(m => m.MatchScore >= confidenceThreshold))
+        {
+            if (!sourceLoadResult.Persons.TryGetValue(mapping.SourceId, out var sourcePerson)
+                || !destLoadResult.Persons.TryGetValue(mapping.DestinationId, out var destPerson))
+            {
+                continue;
+            }
+
+            var differences = fieldComparer.CompareFields(sourcePerson, destPerson);
+            if (differences.Any())
+            {
+                updates.Add(new NodeToUpdate
+                {
+                    SourceId = mapping.SourceId,
+                    DestinationId = mapping.DestinationId,
+                    GeniProfileId = destPerson.GeniProfileId,
+                    MatchScore = mapping.MatchScore,
+                    MatchedBy = mapping.FoundVia.ToString(),
+                    PersonSummary = sourcePerson.ToString(),
+                    FieldsToUpdate = differences
+                });
+            }
+        }
+
+        var additions = ImmutableList.CreateBuilder<NodeToAdd>();
+        foreach (var unmatched in result.UnmatchedSource)
+        {
+            if (!sourceLoadResult.Persons.TryGetValue(unmatched.Id, out var sourcePerson))
+            {
+                continue;
+            }
+
+            var relation = FindHighConfidenceRelation(sourcePerson, mappingBySource, confidenceThreshold);
+            if (relation == null)
+            {
+                continue;
+            }
+
+            additions.Add(new NodeToAdd
+            {
+                SourceId = sourcePerson.Id,
+                PersonData = ConvertToPersonData(sourcePerson),
+                RelatedToNodeId = relation.Value.RelatedSourceId,
+                RelationType = relation.Value.RelationType,
+                DepthFromExisting = unmatched.NearestMatchedLevel ?? 1
+            });
+        }
+
+        return new WaveHighConfidenceReport
+        {
+            SourceFile = sourceFile,
+            DestinationFile = destinationFile,
+            Anchors = result.Anchors,
+            Options = result.Options,
+            Individuals = new WaveIndividualsReport
+            {
+                NodesToUpdate = updates.ToImmutable(),
+                NodesToAdd = additions.ToImmutable()
+            }
+        };
+    }
+
+    private static (string RelatedSourceId, CompareRelationType RelationType)? FindHighConfidenceRelation(
+        PersonRecord person,
+        IReadOnlyDictionary<string, GedcomGeniSync.Core.Models.Wave.PersonMapping> mappingBySource,
+        int confidenceThreshold)
+    {
+        bool HasHighConfidence(string? relativeId) =>
+            !string.IsNullOrWhiteSpace(relativeId)
+            && mappingBySource.TryGetValue(relativeId!, out var mapping)
+            && mapping.MatchScore >= confidenceThreshold;
+
+        if (person.SpouseIds.FirstOrDefault(HasHighConfidence) is { } spouseId)
+        {
+            return (spouseId, CompareRelationType.Spouse);
+        }
+
+        if (HasHighConfidence(person.FatherId))
+        {
+            return (person.FatherId!, CompareRelationType.Child);
+        }
+
+        if (HasHighConfidence(person.MotherId))
+        {
+            return (person.MotherId!, CompareRelationType.Child);
+        }
+
+        var childRelation = person.ChildrenIds.FirstOrDefault(HasHighConfidence);
+        if (!string.IsNullOrEmpty(childRelation))
+        {
+            return (childRelation!, CompareRelationType.Parent);
+        }
+
+        var siblingRelation = person.SiblingIds.FirstOrDefault(HasHighConfidence);
+        if (!string.IsNullOrEmpty(siblingRelation))
+        {
+            return (siblingRelation!, CompareRelationType.Sibling);
+        }
+
+        return null;
+    }
+
+    private static PersonData ConvertToPersonData(PersonRecord person)
+    {
+        return new PersonData
+        {
+            FirstName = person.FirstName,
+            LastName = person.LastName,
+            MaidenName = person.MaidenName,
+            MiddleName = person.MiddleName,
+            Suffix = person.Suffix,
+            Nickname = person.Nickname,
+            Gender = person.Gender == Gender.Unknown ? null : person.Gender.ToString(),
+            BirthDate = person.BirthDate?.Original ?? person.BirthDate?.ToGeniFormat(),
+            BirthPlace = person.BirthPlace,
+            DeathDate = person.DeathDate?.Original ?? person.DeathDate?.ToGeniFormat(),
+            DeathPlace = person.DeathPlace,
+            BurialDate = person.BurialDate?.Original ?? person.BurialDate?.ToGeniFormat(),
+            BurialPlace = person.BurialPlace,
+            PhotoUrl = person.PhotoUrls.FirstOrDefault()
+        };
+    }
+
+    private record WaveHighConfidenceReport
+    {
+        public required string SourceFile { get; init; }
+
+        public required string DestinationFile { get; init; }
+
+        public required GedcomGeniSync.Core.Models.Wave.AnchorInfo Anchors { get; init; }
+
+        public required GedcomGeniSync.Core.Models.Wave.WaveCompareOptions Options { get; init; }
+
+        public required WaveIndividualsReport Individuals { get; init; }
+    }
+
+    private record WaveIndividualsReport
+    {
+        public required ImmutableList<NodeToUpdate> NodesToUpdate { get; init; }
+
+        public required ImmutableList<NodeToAdd> NodesToAdd { get; init; }
     }
 
     private static Command BuildAuthCommand()
