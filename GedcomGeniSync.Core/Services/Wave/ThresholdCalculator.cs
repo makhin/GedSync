@@ -32,10 +32,10 @@ public class ThresholdCalculator
         var baseByRelation = relation switch
         {
             RelationType.Anchor => 100,   // Якорь всегда 100%
-            RelationType.Spouse => 40,    // Супруги в семье
-            RelationType.Parent => 45,    // Родители
+            RelationType.Spouse => 55,    // Супруги в семье (было 40, повышено для точности)
+            RelationType.Parent => 55,    // Родители (было 45, повышено для точности)
             RelationType.Child => 50,     // Дети
-            RelationType.Sibling => 55,   // Сиблинги
+            RelationType.Sibling => 60,   // Сиблинги (было 55, повышено для точности)
             _ => 60
         };
 

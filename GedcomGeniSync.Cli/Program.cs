@@ -223,6 +223,7 @@ class Program
         var thresholdStrategyOption = new Option<string>("--threshold-strategy", () => "adaptive", description: "Threshold strategy: fixed, adaptive, aggressive, conservative");
         var baseThresholdOption = new Option<int>("--base-threshold", () => 60, description: "Base matching threshold (0-100, default: 60)");
         var outputOption = new Option<string?>("--output", description: "Output JSON file path (default: stdout)");
+        var detailedLogOption = new Option<string?>("--detailed-log", description: "Output detailed text log file path (optional)");
         var verboseOption = new Option<bool>("--verbose", () => false, description: "Enable verbose logging");
 
         waveCompareCommand.AddOption(sourceOption);
@@ -233,6 +234,7 @@ class Program
         waveCompareCommand.AddOption(thresholdStrategyOption);
         waveCompareCommand.AddOption(baseThresholdOption);
         waveCompareCommand.AddOption(outputOption);
+        waveCompareCommand.AddOption(detailedLogOption);
         waveCompareCommand.AddOption(verboseOption);
 
         waveCompareCommand.SetHandler(async context =>
@@ -245,6 +247,7 @@ class Program
             var thresholdStrategyStr = context.ParseResult.GetValueForOption(thresholdStrategyOption)!;
             var baseThreshold = context.ParseResult.GetValueForOption(baseThresholdOption);
             var outputPath = context.ParseResult.GetValueForOption(outputOption);
+            var detailedLogPath = context.ParseResult.GetValueForOption(detailedLogOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
 
             await using var provider = BuildServiceProvider(verbose, services =>
@@ -341,6 +344,23 @@ class Program
                 else
                 {
                     Console.WriteLine(json);
+                }
+
+                // Output detailed log if requested
+                if (!string.IsNullOrEmpty(detailedLogPath))
+                {
+                    var detailedLog = waveCompare.GetDetailedLog();
+                    if (detailedLog != null)
+                    {
+                        var formatter = new GedcomGeniSync.Core.Services.Wave.WaveCompareLogFormatter();
+                        var formattedLog = formatter.FormatLog(detailedLog);
+                        await File.WriteAllTextAsync(detailedLogPath, formattedLog);
+                        logger.LogInformation("Detailed log saved to: {Path}", detailedLogPath);
+                    }
+                    else
+                    {
+                        logger.LogWarning("No detailed log available");
+                    }
                 }
 
                 context.ExitCode = 0;

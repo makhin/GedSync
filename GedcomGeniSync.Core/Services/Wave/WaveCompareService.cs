@@ -27,7 +27,7 @@ public class WaveCompareService
         _fuzzyMatcher = fuzzyMatcher;
         _logger = logger;
         _treeIndexer = new TreeIndexer(logger: null);
-        _familyMatcher = new FamilyMatcher(logger: null);
+        _familyMatcher = new FamilyMatcher(logger: null, fuzzyMatcher: _fuzzyMatcher);
         _validator = new WaveMappingValidator(logger: null);
     }
 
@@ -97,6 +97,23 @@ public class WaveCompareService
         var levelStats = new List<LevelStatistics>();
         var validationIssues = new List<ValidationIssue>();
 
+        // Детализированное логирование
+        var detailedLog = new WaveCompareLog
+        {
+            SourceFile = "source.ged", // TODO: Pass actual file paths
+            DestinationFile = "dest.ged",
+            AnchorSourceId = anchorSourceId,
+            AnchorDestId = anchorDestId,
+            MaxLevel = options.MaxLevel,
+            Strategy = options.ThresholdStrategy,
+            StartTime = startTime,
+            EndTime = DateTime.UtcNow, // Will update at end
+            Levels = new List<WaveLevelLog>(),
+            Result = null! // Will set at end
+        };
+
+        var currentLevelLog = new Dictionary<int, WaveLevelLog>();
+
         // ═══════════════════════════════════════════════════════════
         // ОСНОВНОЙ ЦИКЛ BFS
         // ═══════════════════════════════════════════════════════════
@@ -115,11 +132,59 @@ public class WaveCompareService
                 continue;
             }
 
+            // Проверяем, сопоставлена ли персона
+            if (!mappings.ContainsKey(currentSourceId))
+            {
+                // Персона НЕ сопоставлена, но мы добавили её для исследования потомков
+                _logger.LogDebug(
+                    "Processing unmatched person {PersonId} at level {Level} for exploration only",
+                    currentSourceId,
+                    level);
+
+                // Для несопоставленной персоны мы НЕ можем обрабатывать её семьи,
+                // так как у нас нет соответствующих destination families.
+                // Пропускаем её - она уже в processed, поэтому не будет добавлена снова.
+                continue;
+            }
+
             // Получаем сопоставленный ID в destination
             var currentDestId = mappings[currentSourceId].DestinationId;
 
             var newMappingsThisLevel = 0;
             var familiesProcessed = 0;
+
+            // Инициализируем лог для текущего уровня если нужно
+            if (!currentLevelLog.ContainsKey(level))
+            {
+                currentLevelLog[level] = new WaveLevelLog
+                {
+                    Level = level,
+                    PersonsProcessedAtLevel = 0,
+                    FamiliesExaminedAtLevel = 0,
+                    NewMappingsAtLevel = 0,
+                    PersonsProcessed = new List<PersonProcessingLog>()
+                };
+            }
+
+            // Создаем лог обработки текущей персоны
+            var sourcePerson = sourceTree.PersonsById[currentSourceId];
+            var destPerson = destTree.PersonsById[currentDestId];
+            var personLog = new PersonProcessingLog
+            {
+                SourceId = currentSourceId,
+                SourceName = sourcePerson.ToString(),
+                DestinationId = currentDestId,
+                DestinationName = destPerson.ToString(),
+                MappedVia = mappings[currentSourceId].FoundVia,
+                Level = level,
+                FamiliesAsSpouse = new List<FamilyMatchAttemptLog>(),
+                FamiliesAsChild = new List<FamilyMatchAttemptLog>()
+            };
+
+            currentLevelLog[level] = currentLevelLog[level] with
+            {
+                PersonsProcessedAtLevel = currentLevelLog[level].PersonsProcessedAtLevel + 1
+            };
 
             // ─────────────────────────────────────────────────────────
             // Обрабатываем семьи, где персона — СУПРУГ/РОДИТЕЛЬ
@@ -130,10 +195,14 @@ public class WaveCompareService
 
             foreach (var sourceFamily in sourceFamiliesAsSpouse)
             {
-                var destFamily = _familyMatcher.FindMatchingFamily(
+                var (destFamily, familyLog) = _familyMatcher.FindMatchingFamilyWithLog(
                     sourceFamily,
                     destFamiliesAsSpouse,
-                    mappings);
+                    mappings,
+                    sourceTree,
+                    destTree);
+
+                personLog.FamiliesAsSpouse.Add(familyLog);
 
                 if (destFamily != null)
                 {
@@ -148,46 +217,19 @@ public class WaveCompareService
                         FromPersonId = currentSourceId
                     };
 
-                    var newMappings = familyMemberMatcher.MatchMembers(context, sourceTree, destTree);
-
-                    foreach (var mapping in newMappings)
-                    {
-                        if (!processed.Contains(mapping.SourceId))
-                        {
-                            // Валидируем новое сопоставление
-                            var validationResult = _validator.ValidateMapping(
-                                mapping,
-                                mappings,
-                                sourceTree,
-                                destTree);
-
-                            // Добавляем issues к общему списку
-                            validationIssues.AddRange(validationResult.Issues);
-
-                            // Добавляем mapping только если валидация прошла
-                            if (validationResult.IsValid)
-                            {
-                                mappings[mapping.SourceId] = mapping;
-                                queue.Enqueue((mapping.SourceId, level + 1));
-                                processed.Add(mapping.SourceId);
-                                newMappingsThisLevel++;
-
-                                _logger.LogDebug(
-                                    "Added mapping {SourceId} -> {DestId} via {RelationType} at level {Level}",
-                                    mapping.SourceId,
-                                    mapping.DestinationId,
-                                    mapping.FoundVia,
-                                    mapping.Level);
-                            }
-                            else
-                            {
-                                _logger.LogWarning(
-                                    "Rejected mapping {SourceId} -> {DestId} due to validation failures",
-                                    mapping.SourceId,
-                                    mapping.DestinationId);
-                            }
-                        }
-                    }
+                    ProcessMatchedFamily(
+                        sourceFamily,
+                        destFamily,
+                        context,
+                        familyMemberMatcher,
+                        sourceTree,
+                        destTree,
+                        mappings,
+                        processed,
+                        queue,
+                        validationIssues,
+                        level,
+                        ref newMappingsThisLevel);
                 }
             }
 
@@ -200,10 +242,14 @@ public class WaveCompareService
 
             foreach (var sourceFamily in sourceFamiliesAsChild)
             {
-                var destFamily = _familyMatcher.FindMatchingFamily(
+                var (destFamily, familyLog) = _familyMatcher.FindMatchingFamilyWithLog(
                     sourceFamily,
                     destFamiliesAsChild,
-                    mappings);
+                    mappings,
+                    sourceTree,
+                    destTree);
+
+                personLog.FamiliesAsChild.Add(familyLog);
 
                 if (destFamily != null)
                 {
@@ -218,48 +264,31 @@ public class WaveCompareService
                         FromPersonId = currentSourceId
                     };
 
-                    var newMappings = familyMemberMatcher.MatchMembers(context, sourceTree, destTree);
-
-                    foreach (var mapping in newMappings)
-                    {
-                        if (!processed.Contains(mapping.SourceId))
-                        {
-                            // Валидируем новое сопоставление
-                            var validationResult = _validator.ValidateMapping(
-                                mapping,
-                                mappings,
-                                sourceTree,
-                                destTree);
-
-                            // Добавляем issues к общему списку
-                            validationIssues.AddRange(validationResult.Issues);
-
-                            // Добавляем mapping только если валидация прошла
-                            if (validationResult.IsValid)
-                            {
-                                mappings[mapping.SourceId] = mapping;
-                                queue.Enqueue((mapping.SourceId, level + 1));
-                                processed.Add(mapping.SourceId);
-                                newMappingsThisLevel++;
-
-                                _logger.LogDebug(
-                                    "Added mapping {SourceId} -> {DestId} via {RelationType} at level {Level}",
-                                    mapping.SourceId,
-                                    mapping.DestinationId,
-                                    mapping.FoundVia,
-                                    mapping.Level);
-                            }
-                            else
-                            {
-                                _logger.LogWarning(
-                                    "Rejected mapping {SourceId} -> {DestId} due to validation failures",
-                                    mapping.SourceId,
-                                    mapping.DestinationId);
-                            }
-                        }
-                    }
+                    ProcessMatchedFamily(
+                        sourceFamily,
+                        destFamily,
+                        context,
+                        familyMemberMatcher,
+                        sourceTree,
+                        destTree,
+                        mappings,
+                        processed,
+                        queue,
+                        validationIssues,
+                        level,
+                        ref newMappingsThisLevel);
                 }
             }
+
+            // Добавляем лог персоны к лог-уровню
+            var updatedPersons = currentLevelLog[level].PersonsProcessed.ToList();
+            updatedPersons.Add(personLog);
+            currentLevelLog[level] = currentLevelLog[level] with
+            {
+                PersonsProcessed = updatedPersons,
+                FamiliesExaminedAtLevel = currentLevelLog[level].FamiliesExaminedAtLevel + familiesProcessed,
+                NewMappingsAtLevel = currentLevelLog[level].NewMappingsAtLevel + newMappingsThisLevel
+            };
 
             // Собираем статистику по уровню
             var levelDuration = DateTime.UtcNow - levelStartTime;
@@ -317,7 +346,7 @@ public class WaveCompareService
             sourceLoadResult.Persons.Count,
             totalDuration);
 
-        return new WaveCompareResult
+        var result = new WaveCompareResult
         {
             SourceFile = "source.ged", // TODO: Pass actual file paths
             DestinationFile = "dest.ged",
@@ -337,7 +366,30 @@ public class WaveCompareService
             StatisticsByLevel = levelStats,
             Statistics = statistics
         };
+
+        // Завершаем детализированный лог
+        detailedLog = detailedLog with
+        {
+            EndTime = DateTime.UtcNow,
+            Levels = currentLevelLog.Values.OrderBy(l => l.Level).ToList(),
+            Result = result
+        };
+
+        // Сохраняем для последующего доступа
+        _lastDetailedLog = detailedLog;
+
+        return result;
     }
+
+    /// <summary>
+    /// Получить детализированный лог последнего сравнения.
+    /// </summary>
+    public WaveCompareLog? GetDetailedLog()
+    {
+        return _lastDetailedLog;
+    }
+
+    private WaveCompareLog? _lastDetailedLog;
 
     private List<UnmatchedPerson> FindUnmatchedSource(
         GedcomLoadResult loadResult,
@@ -368,5 +420,102 @@ public class WaveCompareService
                 PersonSummary = kv.Value.ToString()
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Обработать найденную семью: сопоставить членов и добавить в очередь.
+    /// Если хотя бы один член семьи был сопоставлен, добавляет несопоставленных членов
+    /// в очередь для исследования их потомков.
+    /// </summary>
+    private void ProcessMatchedFamily(
+        FamilyRecord sourceFamily,
+        FamilyRecord destFamily,
+        FamilyMatchContext context,
+        FamilyMemberMatcher familyMemberMatcher,
+        TreeGraph sourceTree,
+        TreeGraph destTree,
+        Dictionary<string, PersonMapping> mappings,
+        HashSet<string> processed,
+        Queue<(string sourceId, int level)> queue,
+        List<ValidationIssue> validationIssues,
+        int level,
+        ref int newMappingsThisLevel)
+    {
+        var newMappings = familyMemberMatcher.MatchMembers(context, sourceTree, destTree);
+
+        // Собираем всех членов source семьи
+        var allSourceFamilyMembers = new HashSet<string>();
+        if (sourceFamily.HusbandId != null) allSourceFamilyMembers.Add(sourceFamily.HusbandId);
+        if (sourceFamily.WifeId != null) allSourceFamilyMembers.Add(sourceFamily.WifeId);
+        foreach (var childId in sourceFamily.ChildIds)
+            allSourceFamilyMembers.Add(childId);
+
+        bool anyMemberMatched = false;
+
+        foreach (var mapping in newMappings)
+        {
+            if (!processed.Contains(mapping.SourceId))
+            {
+                // Валидируем новое сопоставление
+                var validationResult = _validator.ValidateMapping(
+                    mapping,
+                    mappings,
+                    sourceTree,
+                    destTree);
+
+                // Добавляем issues к общему списку
+                validationIssues.AddRange(validationResult.Issues);
+
+                // Добавляем mapping только если валидация прошла
+                if (validationResult.IsValid)
+                {
+                    mappings[mapping.SourceId] = mapping;
+                    queue.Enqueue((mapping.SourceId, level + 1));
+                    processed.Add(mapping.SourceId);
+                    newMappingsThisLevel++;
+                    anyMemberMatched = true;
+                    allSourceFamilyMembers.Remove(mapping.SourceId);
+
+                    _logger.LogDebug(
+                        "Added mapping {SourceId} -> {DestId} via {RelationType} at level {Level}",
+                        mapping.SourceId,
+                        mapping.DestinationId,
+                        mapping.FoundVia,
+                        mapping.Level);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Rejected mapping {SourceId} -> {DestId} due to validation failures",
+                        mapping.SourceId,
+                        mapping.DestinationId);
+                }
+            }
+            else
+            {
+                // Член семьи уже был обработан ранее
+                allSourceFamilyMembers.Remove(mapping.SourceId);
+                anyMemberMatched = true;
+            }
+        }
+
+        // Добавляем несопоставленных членов семьи в очередь для исследования,
+        // ТОЛЬКО если хотя бы один член семьи был успешно сопоставлен
+        if (anyMemberMatched)
+        {
+            foreach (var unmatchedMemberId in allSourceFamilyMembers)
+            {
+                if (!processed.Contains(unmatchedMemberId))
+                {
+                    queue.Enqueue((unmatchedMemberId, level + 1));
+                    processed.Add(unmatchedMemberId);
+
+                    _logger.LogDebug(
+                        "Added unmatched family member {SourceId} to queue for exploration at level {Level}",
+                        unmatchedMemberId,
+                        level + 1);
+                }
+            }
+        }
     }
 }
