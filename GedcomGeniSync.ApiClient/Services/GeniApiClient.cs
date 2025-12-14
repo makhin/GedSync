@@ -1,7 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
-using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.ApiClient.Services;
 
@@ -16,17 +15,11 @@ public class GeniApiClient : IGeniApiClient
     private readonly IGeniPhotoClient _photoClient;
 
     public GeniApiClient(
-        IHttpClientFactory httpClientFactory,
-        string accessToken,
-        bool dryRun,
-        ILogger<GeniApiClient> logger)
+        IGeniProfileClient profileClient,
+        IGeniPhotoClient photoClient)
     {
-        // Create specialized clients
-        var profileLogger = new LoggerAdapter<GeniProfileClient>(logger);
-        var photoLogger = new LoggerAdapter<GeniPhotoClient>(logger);
-
-        _profileClient = new GeniProfileClient(httpClientFactory, accessToken, dryRun, profileLogger);
-        _photoClient = new GeniPhotoClient(httpClientFactory, accessToken, dryRun, photoLogger);
+        _profileClient = profileClient;
+        _photoClient = photoClient;
     }
 
     #region Profile Operations - Delegated to IGeniProfileClient
@@ -105,26 +98,4 @@ public class GeniApiClient : IGeniApiClient
         => _photoClient.UntagPhotoAsync(photoId, profileId);
 
     #endregion
-
-    /// <summary>
-    /// Logger adapter to convert ILogger<GeniApiClient> to ILogger<T>
-    /// </summary>
-    private class LoggerAdapter<T> : ILogger<T>
-    {
-        private readonly ILogger _logger;
-
-        public LoggerAdapter(ILogger logger)
-        {
-            _logger = logger;
-        }
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull
-            => _logger.BeginScope(state);
-
-        public bool IsEnabled(LogLevel logLevel)
-            => _logger.IsEnabled(logLevel);
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            => _logger.Log(logLevel, eventId, state, exception, formatter);
-    }
 }
