@@ -194,3 +194,38 @@ public enum FamilyRole
     Spouse,  // Персона — супруг/родитель в этой семье
     Child    // Персона — ребёнок в этой семье
 }
+
+/// <summary>
+/// High-confidence report generated from wave compare results.
+/// Contains lists of individuals to add and update based on confidence threshold.
+/// </summary>
+public record WaveHighConfidenceReport
+{
+    /// <summary>Source GEDCOM file path</summary>
+    public required string SourceFile { get; init; }
+
+    /// <summary>Destination GEDCOM file path</summary>
+    public required string DestinationFile { get; init; }
+
+    /// <summary>Anchor information</summary>
+    public required AnchorInfo Anchors { get; init; }
+
+    /// <summary>Wave compare options used</summary>
+    public required WaveCompareOptions Options { get; init; }
+
+    /// <summary>Individual comparison results with high-confidence matches</summary>
+    public required WaveIndividualsReport Individuals { get; init; }
+}
+
+/// <summary>
+/// Individual results from wave compare with high-confidence filtering.
+/// Contains lists of nodes to update and add, similar to regular compare command.
+/// </summary>
+public record WaveIndividualsReport
+{
+    /// <summary>Nodes that exist in both trees but need updates</summary>
+    public required System.Collections.Immutable.ImmutableList<GedcomGeniSync.Models.NodeToUpdate> NodesToUpdate { get; init; }
+
+    /// <summary>Nodes to add to destination tree</summary>
+    public required System.Collections.Immutable.ImmutableList<GedcomGeniSync.Models.NodeToAdd> NodesToAdd { get; init; }
+}

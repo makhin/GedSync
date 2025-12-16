@@ -208,7 +208,7 @@ public class WaveCompareCommandHandler : IHostedCommand
         }
     }
 
-    private static WaveHighConfidenceReport BuildWaveReport(
+    private static GedcomGeniSync.Core.Models.Wave.WaveHighConfidenceReport BuildWaveReport(
         GedcomGeniSync.Core.Models.Wave.WaveCompareResult result,
         string sourceFile,
         string destinationFile,
@@ -268,13 +268,13 @@ public class WaveCompareCommandHandler : IHostedCommand
             });
         }
 
-        return new WaveHighConfidenceReport
+        return new GedcomGeniSync.Core.Models.Wave.WaveHighConfidenceReport
         {
             SourceFile = sourceFile,
             DestinationFile = destinationFile,
             Anchors = result.Anchors,
             Options = result.Options,
-            Individuals = new WaveIndividualsReport
+            Individuals = new GedcomGeniSync.Core.Models.Wave.WaveIndividualsReport
             {
                 NodesToUpdate = updates.ToImmutable(),
                 NodesToAdd = additions.ToImmutable()
@@ -354,12 +354,5 @@ public class WaveCompareCommandHandler : IHostedCommand
             ChildrenConfidence = person.ChildrenConfidence,
             SiblingsConfidence = person.SiblingsConfidence
         };
-    }
-
-    private record WaveIndividualsReport
-    {
-        public required ImmutableList<NodeToUpdate> NodesToUpdate { get; init; }
-
-        public required ImmutableList<NodeToAdd> NodesToAdd { get; init; }
     }
 }
