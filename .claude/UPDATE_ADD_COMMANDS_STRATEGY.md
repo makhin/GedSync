@@ -45,6 +45,7 @@
 | gender | ✅ | OK |
 | occupation | ✅ | OK |
 | about_me | ✅ | OK |
+| **names** | ❌ | **Нужно добавить** (мультиязычность) |
 | nicknames | ❌ | Нужно добавить |
 | title | ❌ | Нужно добавить |
 | birth (Event) | ⚠️ Заготовка | Нужно реализовать |
@@ -53,6 +54,18 @@
 | burial (Event) | ❌ | Нужно добавить |
 | is_alive | ❌ | Нужно добавить |
 | cause_of_death | ❌ | Нужно добавить |
+
+**Формат поля `names` (мультиязычные имена):**
+```json
+{
+  "names": {
+    "ru": {"first_name": "Иван", "last_name": "Иванов"},
+    "en": {"first_name": "Ivan", "last_name": "Ivanov"},
+    "he": {"first_name": "איוון", "last_name": "איבנוב"}
+  }
+}
+```
+Поддерживаемые поля внутри locale: `first_name`, `middle_name`, `last_name`, `maiden_name`, `suffix`, `title`
 
 **Формат Event объектов:**
 ```json
@@ -149,6 +162,10 @@ public class GeniProfileUpdate
     // Существующие поля...
 
     // Новые поля:
+    [JsonPropertyName("names")]
+    public Dictionary<string, Dictionary<string, string>>? Names { get; set; }
+    // Пример: {"ru": {"first_name": "Иван"}, "he": {"first_name": "איוון"}}
+
     [JsonPropertyName("nicknames")]
     public string? Nicknames { get; set; }  // comma-delimited
 
@@ -202,6 +219,19 @@ private static FormUrlEncodedContent CreateFormContent(GeniProfileUpdate update)
     var values = new Dictionary<string, string>();
 
     // Существующие поля...
+
+    // Multilingual names
+    if (update.Names != null)
+    {
+        foreach (var (locale, fields) in update.Names)
+        {
+            foreach (var (field, value) in fields)
+            {
+                // Формат: names[ru][first_name]=Иван
+                values[$"names[{locale}][{field}]"] = value;
+            }
+        }
+    }
 
     // Birth event
     if (update.Birth is GeniEventInput birth)
