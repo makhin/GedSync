@@ -1,0 +1,5 @@
+{
+  "shellCommand": "wsl.exe",
+  "shellArgs": ["-d", "Ubuntu"],
+  "workingDirectory": "/home/username/project-path"
+}

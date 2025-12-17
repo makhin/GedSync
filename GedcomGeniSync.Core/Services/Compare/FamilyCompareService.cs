@@ -36,6 +36,13 @@ public class FamilyCompareService : IFamilyCompareService
         _logger.LogInformation("Starting family comparison. Source: {SourceCount}, Destination: {DestCount}",
             sourceFamilies.Count, destFamilies.Count);
 
+        // Set person dictionaries for fuzzy matching
+        if (sourcePersons != null && destPersons != null)
+        {
+            _fuzzyMatcher.SetPersonDictionaries(sourcePersons, destPersons);
+            _logger.LogDebug("Person dictionaries set for fuzzy child matching");
+        }
+
         var matchedFamilies = ImmutableList.CreateBuilder<MatchedFamily>();
         var familiesToUpdate = ImmutableList.CreateBuilder<FamilyToUpdate>();
         var familiesToAdd = ImmutableList.CreateBuilder<FamilyToAdd>();

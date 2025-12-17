@@ -579,16 +579,16 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     #region Family Relations Comparison
 
-    private Dictionary<string, PersonRecord>? _sourcePersonsCache;
-    private Dictionary<string, PersonRecord>? _destPersonsCache;
+    private IReadOnlyDictionary<string, PersonRecord>? _sourcePersonsCache;
+    private IReadOnlyDictionary<string, PersonRecord>? _destPersonsCache;
 
     /// <summary>
     /// Set person dictionaries for family relations comparison
     /// This allows comparing family members by name when IDs don't match
     /// </summary>
     public void SetPersonDictionaries(
-        Dictionary<string, PersonRecord>? sourcePersons,
-        Dictionary<string, PersonRecord>? destPersons)
+        IReadOnlyDictionary<string, PersonRecord>? sourcePersons,
+        IReadOnlyDictionary<string, PersonRecord>? destPersons)
     {
         _sourcePersonsCache = sourcePersons;
         _destPersonsCache = destPersons;

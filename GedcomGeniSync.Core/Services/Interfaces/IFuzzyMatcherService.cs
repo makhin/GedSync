@@ -16,8 +16,8 @@ public interface IFuzzyMatcherService
     /// <param name="sourcePersons">Dictionary of source persons by ID</param>
     /// <param name="destPersons">Dictionary of destination persons by ID</param>
     void SetPersonDictionaries(
-        Dictionary<string, PersonRecord>? sourcePersons,
-        Dictionary<string, PersonRecord>? destPersons);
+        IReadOnlyDictionary<string, PersonRecord>? sourcePersons,
+        IReadOnlyDictionary<string, PersonRecord>? destPersons);
 
     /// <summary>
     /// Compare two persons and return match score with detailed reasoning

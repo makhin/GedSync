@@ -469,19 +469,19 @@ public class IndividualCompareService : IIndividualCompareService
     {
         var count = 0;
 
-        if (family.HusbandId != null && mappings.ContainsKey(family.HusbandId))
+        if (family.HusbandId != null && mappings.Values.Contains(family.HusbandId))
         {
             count++;
         }
 
-        if (family.WifeId != null && mappings.ContainsKey(family.WifeId))
+        if (family.WifeId != null && mappings.Values.Contains(family.WifeId))
         {
             count++;
         }
 
         if (family.Children != null)
         {
-            count += family.Children.Count(childId => mappings.ContainsKey(childId));
+            count += family.Children.Count(childId => mappings.Values.Contains(childId));
         }
 
         return count;
