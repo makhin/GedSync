@@ -20,6 +20,8 @@ class Program
             new AnalyzeCommandHandler(startup),
             new CompareCommandHandler(startup),
             new WaveCompareCommandHandler(startup),
+            new UpdateCommandHandler(startup),
+            new AddCommandHandler(startup),
             new AuthCommandHandler(),
             new ProfileCommandHandler(startup)
         };
