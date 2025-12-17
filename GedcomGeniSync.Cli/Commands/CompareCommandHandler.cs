@@ -4,9 +4,11 @@ using System.CommandLine.Invocation;
 using System.Linq;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.Cli.Services;
+using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using GedcomGeniSync.Services.Compare;
 using GedcomGeniSync.Services.Interfaces;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

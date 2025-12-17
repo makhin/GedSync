@@ -1,6 +1,7 @@
 using System;
 using System.CommandLine;
 using System.CommandLine.Invocation;
+using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Services;

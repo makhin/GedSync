@@ -2,6 +2,9 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Linq;
+using GedcomGeniSync.Services;
+using GedcomGeniSync.Utils;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Cli.Commands;

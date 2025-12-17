@@ -25,7 +25,7 @@ public class Startup
 
         foreach (var descriptor in _baseServices)
         {
-            services.Add(descriptor);
+            ((IList<ServiceDescriptor>)services).Add(descriptor);
         }
 
         services.AddLogging(builder =>

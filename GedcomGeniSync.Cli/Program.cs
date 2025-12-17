@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
+using GedcomGeniSync.Cli;
 using GedcomGeniSync.Cli.Commands;
 using System.Linq;
 

@@ -5,9 +5,11 @@ using System.CommandLine.Invocation;
 using System.Linq;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.Cli.Services;
+using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using GedcomGeniSync.Services.Compare;
 using GedcomGeniSync.Services.Interfaces;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -326,33 +328,13 @@ public class WaveCompareCommandHandler : IHostedCommand
     {
         return new PersonData
         {
-            Id = person.Id,
-            Name = person.Name,
             FirstName = person.FirstName,
             LastName = person.LastName,
-            Gender = person.Gender,
-            BirthDate = person.BirthDate,
+            Gender = person.Gender.ToString(),
+            BirthDate = person.BirthDate?.ToString(),
             BirthPlace = person.BirthPlace,
-            DeathDate = person.DeathDate,
-            DeathPlace = person.DeathPlace,
-            FatherId = person.FatherId,
-            MotherId = person.MotherId,
-            SpouseIds = person.SpouseIds.ToArray(),
-            ChildrenIds = person.ChildrenIds.ToArray(),
-            SiblingIds = person.SiblingIds.ToArray(),
-            GeniProfileId = person.GeniProfileId,
-            ProfileUrl = person.ProfileUrl,
-            RevisionNumber = person.RevisionNumber,
-            MatchScore = person.MatchScore,
-            FoundVia = person.FoundVia,
-            MatchStatus = person.MatchStatus,
-            NameConfidence = person.NameConfidence,
-            BirthConfidence = person.BirthConfidence,
-            DeathConfidence = person.DeathConfidence,
-            ParentsConfidence = person.ParentsConfidence,
-            SpousesConfidence = person.SpousesConfidence,
-            ChildrenConfidence = person.ChildrenConfidence,
-            SiblingsConfidence = person.SiblingsConfidence
+            DeathDate = person.DeathDate?.ToString(),
+            DeathPlace = person.DeathPlace
         };
     }
 }

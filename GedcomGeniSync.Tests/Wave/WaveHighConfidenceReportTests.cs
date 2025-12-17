@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using GedcomGeniSync.Core.Models.Wave;
 using GedcomGeniSync.Models;
+using AnchorInfo = GedcomGeniSync.Core.Models.Wave.AnchorInfo;
 
 namespace GedcomGeniSync.Tests.Wave;
 
