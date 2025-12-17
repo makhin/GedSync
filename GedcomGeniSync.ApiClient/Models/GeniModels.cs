@@ -191,16 +191,81 @@ public class GeniProfileUpdate
     public string? Gender { get; set; }
 
     [JsonPropertyName("birth")]
-    public object? Birth { get; set; }
+    public GeniEventInput? Birth { get; set; }
 
     [JsonPropertyName("death")]
-    public object? Death { get; set; }
+    public GeniEventInput? Death { get; set; }
+
+    [JsonPropertyName("baptism")]
+    public GeniEventInput? Baptism { get; set; }
+
+    [JsonPropertyName("burial")]
+    public GeniEventInput? Burial { get; set; }
 
     [JsonPropertyName("occupation")]
     public string? Occupation { get; set; }
 
     [JsonPropertyName("about_me")]
     public string? AboutMe { get; set; }
+
+    /// <summary>
+    /// Multilingual names support
+    /// Example: {"ru": {"first_name": "Иван", "last_name": "Иванов"}, "en": {"first_name": "Ivan", "last_name": "Ivanov"}}
+    /// Supported fields per locale: first_name, middle_name, last_name, maiden_name, suffix, title
+    /// </summary>
+    [JsonPropertyName("names")]
+    public Dictionary<string, Dictionary<string, string>>? Names { get; set; }
+
+    [JsonPropertyName("nicknames")]
+    public string? Nicknames { get; set; }  // comma-delimited
+
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
+
+    [JsonPropertyName("is_alive")]
+    public bool? IsAlive { get; set; }
+
+    [JsonPropertyName("cause_of_death")]
+    public string? CauseOfDeath { get; set; }
+}
+
+/// <summary>
+/// Input model for creating/updating events (birth, death, baptism, burial) in Geni API
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniEventInput
+{
+    [JsonPropertyName("date")]
+    public GeniDateInput? Date { get; set; }
+
+    [JsonPropertyName("location")]
+    public GeniLocationInput? Location { get; set; }
+}
+
+/// <summary>
+/// Input model for date values when creating/updating events
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniDateInput
+{
+    [JsonPropertyName("day")]
+    public int? Day { get; set; }
+
+    [JsonPropertyName("month")]
+    public int? Month { get; set; }
+
+    [JsonPropertyName("year")]
+    public int? Year { get; set; }
+}
+
+/// <summary>
+/// Input model for location values when creating/updating events
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniLocationInput
+{
+    [JsonPropertyName("place_name")]
+    public string? PlaceName { get; set; }
 }
 
 [ExcludeFromCodeCoverage]

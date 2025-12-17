@@ -609,10 +609,84 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         if (!string.IsNullOrEmpty(update.AboutMe))
             values["about_me"] = update.AboutMe;
 
-        // Note: Birth and Death are complex objects and would need special handling
-        // For now, we'll skip them as they require structured data
+        // Multilingual names
+        // Format: names[locale][field]=value
+        // Example: names[ru][first_name]=Иван, names[en][first_name]=Ivan
+        if (update.Names != null)
+        {
+            foreach (var (locale, fields) in update.Names)
+            {
+                foreach (var (field, value) in fields)
+                {
+                    if (!string.IsNullOrEmpty(value))
+                    {
+                        values[$"names[{locale}][{field}]"] = value;
+                    }
+                }
+            }
+        }
+
+        if (!string.IsNullOrEmpty(update.Nicknames))
+            values["nicknames"] = update.Nicknames;
+
+        if (!string.IsNullOrEmpty(update.Title))
+            values["title"] = update.Title;
+
+        if (update.IsAlive.HasValue)
+            values["is_alive"] = update.IsAlive.Value.ToString().ToLower();
+
+        if (!string.IsNullOrEmpty(update.CauseOfDeath))
+            values["cause_of_death"] = update.CauseOfDeath;
+
+        // Birth event
+        if (update.Birth != null)
+        {
+            AddEventToFormData(values, "birth", update.Birth);
+        }
+
+        // Death event
+        if (update.Death != null)
+        {
+            AddEventToFormData(values, "death", update.Death);
+        }
+
+        // Baptism event
+        if (update.Baptism != null)
+        {
+            AddEventToFormData(values, "baptism", update.Baptism);
+        }
+
+        // Burial event
+        if (update.Burial != null)
+        {
+            AddEventToFormData(values, "burial", update.Burial);
+        }
 
         return new FormUrlEncodedContent(values);
+    }
+
+    /// <summary>
+    /// Helper method to add event data to form values
+    /// Format: event[date][year]=1950, event[date][month]=3, event[date][day]=15, event[location][place_name]=Moscow
+    /// </summary>
+    private static void AddEventToFormData(Dictionary<string, string> values, string eventName, GeniEventInput eventData)
+    {
+        if (eventData.Date != null)
+        {
+            if (eventData.Date.Year.HasValue)
+                values[$"{eventName}[date][year]"] = eventData.Date.Year.Value.ToString();
+
+            if (eventData.Date.Month.HasValue)
+                values[$"{eventName}[date][month]"] = eventData.Date.Month.Value.ToString();
+
+            if (eventData.Date.Day.HasValue)
+                values[$"{eventName}[date][day]"] = eventData.Date.Day.Value.ToString();
+        }
+
+        if (eventData.Location != null && !string.IsNullOrEmpty(eventData.Location.PlaceName))
+        {
+            values[$"{eventName}[location][place_name]"] = eventData.Location.PlaceName;
+        }
     }
 
     private static GeniProfile CreateDryRunProfile(GeniProfileCreate create)
