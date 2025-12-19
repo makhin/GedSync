@@ -16,9 +16,7 @@ class Program
         var startup = new Startup();
         var commands = new IHostedCommand[]
         {
-            new SyncCommandHandler(startup),
             new AnalyzeCommandHandler(startup),
-            new CompareCommandHandler(startup),
             new WaveCompareCommandHandler(startup),
             new UpdateCommandHandler(startup),
             new AddCommandHandler(startup),

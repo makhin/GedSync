@@ -40,7 +40,8 @@
       "Bash(del GedcomGeniSync.ApiClientClass1.cs)",
       "Bash(./TestPhase1Models.exe)",
       "Bash(dotnet clean:*)",
-      "Bash(dotnet restore:*)"
+      "Bash(dotnet restore:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []
