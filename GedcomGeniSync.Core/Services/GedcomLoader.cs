@@ -472,6 +472,8 @@ public class GedcomLoader : IGedcomLoader
 
         // Extract photo URLs from multimedia records
         var photoUrlsBuilder = ImmutableList.CreateBuilder<string>();
+
+        // Handle linked multimedia (OBJE @M1@)
         if (individual.MultimediaLinks != null)
         {
             foreach (var multimediaLink in individual.MultimediaLinks)
@@ -484,10 +486,46 @@ public class GedcomLoader : IGedcomLoader
                         if (!string.IsNullOrEmpty(photoUrl))
                         {
                             photoUrlsBuilder.Add(photoUrl);
+                            _logger.LogDebug("Found photo URL from linked multimedia for {Id}: {Url}",
+                                individual.IndividualId, photoUrl);
                         }
                     }
                 }
             }
+        }
+
+        // Handle inline multimedia objects (embedded OBJE records)
+        // Check if Individual has MultimediaObjects property for inline OBJE
+        var multimediaObjectsProp = individual.GetType().GetProperty("MultimediaObjects");
+        if (multimediaObjectsProp != null)
+        {
+            var inlineMultimedia = multimediaObjectsProp.GetValue(individual);
+            if (inlineMultimedia != null)
+            {
+                var multimediaCollection = inlineMultimedia as System.Collections.IEnumerable;
+                if (multimediaCollection != null)
+                {
+                    foreach (var item in multimediaCollection)
+                    {
+                        if (item is Multimedia mediaObj)
+                        {
+                            var photoUrl = ExtractPhotoUrl(mediaObj);
+                            if (!string.IsNullOrEmpty(photoUrl))
+                            {
+                                photoUrlsBuilder.Add(photoUrl);
+                                _logger.LogDebug("Found photo URL from inline multimedia for {Id}: {Url}",
+                                    individual.IndividualId, photoUrl);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (photoUrlsBuilder.Count > 0)
+        {
+            _logger.LogDebug("Total {Count} photo(s) found for {Id}",
+                photoUrlsBuilder.Count, individual.IndividualId);
         }
 
         // Extract Geni Profile ID from RFN tag (Reference Number / PermanentRecordFileNumber)

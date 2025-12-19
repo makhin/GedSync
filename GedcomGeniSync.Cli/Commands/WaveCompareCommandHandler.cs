@@ -334,7 +334,8 @@ public class WaveCompareCommandHandler : IHostedCommand
             BirthDate = person.BirthDate?.ToString(),
             BirthPlace = person.BirthPlace,
             DeathDate = person.DeathDate?.ToString(),
-            DeathPlace = person.DeathPlace
+            DeathPlace = person.DeathPlace,
+            PhotoUrl = person.PhotoUrls.FirstOrDefault()
         };
     }
 }

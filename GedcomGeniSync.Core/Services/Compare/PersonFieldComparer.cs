@@ -154,6 +154,9 @@ public class PersonFieldComparer : IPersonFieldComparer
         ImmutableList<string> sourcePhotos,
         ImmutableList<string> destPhotos)
     {
+        _logger.LogDebug("Comparing photos: Source has {SourceCount} photo(s), Dest has {DestCount} photo(s)",
+            sourcePhotos.Count, destPhotos.Count);
+
         // Find photos in source that are not in destination
         var newPhotos = sourcePhotos.Except(destPhotos).ToList();
 
@@ -169,7 +172,16 @@ public class PersonFieldComparer : IPersonFieldComparer
                 Action = FieldAction.AddPhoto
             });
 
-            _logger.LogDebug("Photo difference found: {Count} new photo(s) in source", newPhotos.Count);
+            _logger.LogInformation("Photo difference found: {Count} new photo(s) in source. First URL: {Url}",
+                newPhotos.Count, newPhotos[0]);
+        }
+        else if (sourcePhotos.Count > 0 && destPhotos.Count > 0)
+        {
+            _logger.LogDebug("Photos match between source and destination");
+        }
+        else if (sourcePhotos.Count == 0)
+        {
+            _logger.LogDebug("Source has no photos to compare");
         }
     }
 }
