@@ -41,7 +41,8 @@
       "Bash(./TestPhase1Models.exe)",
       "Bash(dotnet clean:*)",
       "Bash(dotnet restore:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(./GedcomGeniSync.Cli.exe wave-compare:*)"
     ],
     "deny": [],
     "ask": []

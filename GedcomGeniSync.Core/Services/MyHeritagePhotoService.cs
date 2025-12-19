@@ -18,7 +18,8 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
         "myheritage.com",
         "www.myheritage.com",
         "familysearch.myheritage.com",
-        "media.myheritage.com"
+        "media.myheritage.com",
+        "mhcache.com"  // MyHeritage CDN for photo storage
     };
 
     public MyHeritagePhotoService(

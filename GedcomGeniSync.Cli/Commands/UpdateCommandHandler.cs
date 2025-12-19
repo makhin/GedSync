@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Text.Json;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Cli.Services;
 using GedcomGeniSync.Core.Models.Wave;
 using GedcomGeniSync.Services;
@@ -10,6 +11,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Cli.Commands;
+
+/// <summary>
+/// Wrapper for wave-compare JSON output that includes summary, report, and wave result
+/// </summary>
+internal record WaveCompareJsonWrapper
+{
+    public WaveHighConfidenceReport? Report { get; init; }
+}
 
 /// <summary>
 /// Command handler for updating existing Geni profiles based on wave-compare results
@@ -25,6 +34,7 @@ public class UpdateCommandHandler : IHostedCommand
     private readonly Option<bool> _verboseOption = new("--verbose", () => false, description: "Enable verbose logging");
     private readonly Option<bool> _syncPhotosOption = new("--sync-photos", () => true, description: "Synchronize photos from MyHeritage");
     private readonly Option<string?> _skipFieldsOption = new("--skip-fields", description: "Comma-separated list of fields to skip (e.g., BirthPlace,DeathPlace)");
+    private readonly Option<bool> _resumeOption = new("--resume", () => false, description: "Resume from previous progress");
 
     public UpdateCommandHandler(Startup startup)
     {
@@ -42,6 +52,7 @@ public class UpdateCommandHandler : IHostedCommand
         updateCommand.AddOption(_verboseOption);
         updateCommand.AddOption(_syncPhotosOption);
         updateCommand.AddOption(_skipFieldsOption);
+        updateCommand.AddOption(_resumeOption);
 
         updateCommand.SetHandler(HandleAsync);
         return updateCommand;
@@ -57,6 +68,7 @@ public class UpdateCommandHandler : IHostedCommand
         var verbose = parseResult.GetValueForOption(_verboseOption);
         var syncPhotos = parseResult.GetValueForOption(_syncPhotosOption);
         var skipFieldsStr = parseResult.GetValueForOption(_skipFieldsOption);
+        var resume = parseResult.GetValueForOption(_resumeOption);
 
         // Parse skip fields
         var skipFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -132,14 +144,27 @@ public class UpdateCommandHandler : IHostedCommand
             }
 
             var jsonContent = await File.ReadAllTextAsync(inputPath);
-            var report = JsonSerializer.Deserialize<WaveHighConfidenceReport>(jsonContent, new JsonSerializerOptions
+
+            // Try to deserialize as wrapped format first (from wave-compare command)
+            var wrapper = JsonSerializer.Deserialize<WaveCompareJsonWrapper>(jsonContent, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });
 
+            WaveHighConfidenceReport? report = wrapper?.Report;
+
+            // If that didn't work, try direct deserialization (for standalone report files)
             if (report == null)
             {
-                logger.LogError("Failed to parse wave-compare report");
+                report = JsonSerializer.Deserialize<WaveHighConfidenceReport>(jsonContent, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+
+            if (report == null)
+            {
+                logger.LogError("Failed to parse wave-compare report. Expected JSON from wave-compare command or standalone report.");
                 context.ExitCode = 1;
                 return;
             }
@@ -154,7 +179,35 @@ public class UpdateCommandHandler : IHostedCommand
 
             logger.LogInformation("GEDCOM loaded: {Count} individuals", gedcomResult.Persons.Count);
 
-            // 3. Execute updates
+            // 3. Check for existing progress
+            var progressTracker = new ProgressTracker(provider.GetRequiredService<ILogger<ProgressTracker>>());
+            UpdateProgress? existingProgress = null;
+
+            if (resume)
+            {
+                existingProgress = progressTracker.LoadUpdateProgress(inputPath);
+                if (existingProgress != null)
+                {
+                    logger.LogInformation("Resuming from previous progress...");
+                    logger.LogInformation("Previous run: {Processed}/{Total} profiles processed",
+                        existingProgress.ProcessedSourceIds.Count, existingProgress.TotalProfiles);
+                }
+                else
+                {
+                    logger.LogWarning("No previous progress found. Starting from beginning.");
+                }
+            }
+            else
+            {
+                // Check if there's existing progress and warn user
+                var hasProgress = progressTracker.LoadUpdateProgress(inputPath) != null;
+                if (hasProgress)
+                {
+                    logger.LogWarning("Found existing progress file. Use --resume to continue from where you left off, or this will start from the beginning.");
+                }
+            }
+
+            // 4. Execute updates
             var profileClient = provider.GetRequiredService<IGeniProfileClient>();
             var photoClient = provider.GetRequiredService<IGeniPhotoClient>();
             var photoService = provider.GetRequiredService<IMyHeritagePhotoService>();
@@ -164,12 +217,22 @@ public class UpdateCommandHandler : IHostedCommand
                 photoClient,
                 photoService,
                 gedcomResult,
-                logger);
+                logger,
+                progressTracker,
+                inputPath);
+
+            var updateProgress = existingProgress ?? new UpdateProgress
+            {
+                InputFile = inputPath,
+                GedcomFile = gedcomPath,
+                TotalProfiles = report.Individuals.NodesToUpdate.Count
+            };
 
             var result = await updateService.ExecuteUpdatesAsync(
                 report.Individuals.NodesToUpdate,
                 skipFields,
-                syncPhotos);
+                syncPhotos,
+                updateProgress);
 
             // 4. Display results
             logger.LogInformation("");

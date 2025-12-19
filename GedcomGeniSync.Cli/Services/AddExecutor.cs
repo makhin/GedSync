@@ -1,5 +1,6 @@
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using Microsoft.Extensions.Logging;
@@ -16,25 +17,32 @@ public class AddExecutor
     private readonly IMyHeritagePhotoService _photoService;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
+    private readonly ProgressTracker? _progressTracker;
+    private readonly string? _inputFile;
 
     public AddExecutor(
         IGeniProfileClient profileClient,
         IGeniPhotoClient photoClient,
         IMyHeritagePhotoService photoService,
         GedcomLoadResult gedcom,
-        ILogger logger)
+        ILogger logger,
+        ProgressTracker? progressTracker = null,
+        string? inputFile = null)
     {
         _profileClient = profileClient;
         _photoClient = photoClient;
         _photoService = photoService;
         _gedcom = gedcom;
         _logger = logger;
+        _progressTracker = progressTracker;
+        _inputFile = inputFile;
     }
 
     public async Task<Commands.AddResult> ExecuteAdditionsAsync(
         List<NodeToAdd> nodesToAdd,
         System.Collections.Immutable.ImmutableList<NodeToUpdate> existingNodes,
-        bool syncPhotos)
+        bool syncPhotos,
+        AddProgress? resumeProgress = null)
     {
         var result = new Commands.AddResult();
 
@@ -51,13 +59,40 @@ public class AddExecutor
             }
         }
 
+        // Add previously created profiles from resume progress
+        if (resumeProgress != null)
+        {
+            foreach (var (sourceId, geniId) in resumeProgress.CreatedProfiles)
+            {
+                profileMap[sourceId] = geniId;
+            }
+            _logger.LogInformation("Resuming: loaded {Count} previously created profiles", resumeProgress.CreatedProfiles.Count);
+        }
+
         _logger.LogInformation("Built map of {Count} existing profiles", profileMap.Count);
 
+        // Track progress
+        var processedIds = resumeProgress?.ProcessedSourceIds ?? new HashSet<string>();
+        var createdProfiles = resumeProgress?.CreatedProfiles ?? new Dictionary<string, string>();
+        var addedCount = resumeProgress?.AddedProfiles ?? 0;
+        var failedCount = resumeProgress?.FailedProfiles ?? 0;
+
         // 2. Sort nodes by depth (process closest to existing nodes first)
-        var sortedNodes = nodesToAdd
+        var allNodes = nodesToAdd
             .OrderBy(n => n.DepthFromExisting)
             .ThenBy(n => n.SourceId)
             .ToList();
+
+        // Skip already processed nodes if resuming
+        var sortedNodes = resumeProgress != null
+            ? allNodes.Where(n => !processedIds.Contains(n.SourceId)).ToList()
+            : allNodes;
+
+        if (resumeProgress != null)
+        {
+            _logger.LogInformation("Resuming from previous progress: {Processed}/{Total} already processed",
+                processedIds.Count, allNodes.Count);
+        }
 
         _logger.LogInformation("Processing {Count} nodes to add, sorted by depth", sortedNodes.Count);
 
@@ -156,7 +191,9 @@ public class AddExecutor
                 // Add to map for future references
                 profileMap[node.SourceId] = createdProfile.Id;
                 result.CreatedProfiles[node.SourceId] = createdProfile.Id;
+                createdProfiles[node.SourceId] = createdProfile.Id;
                 result.Successful++;
+                addedCount++;
 
                 // Upload photo if available
                 if (syncPhotos && !string.IsNullOrEmpty(node.PersonData.PhotoUrl))
@@ -172,6 +209,7 @@ public class AddExecutor
             {
                 _logger.LogError(ex, "  ✗ Error processing node {SourceId}", node.SourceId);
                 result.Failed++;
+                failedCount++;
                 result.Errors.Add(new Commands.AddError
                 {
                     SourceId = node.SourceId,
@@ -179,6 +217,35 @@ public class AddExecutor
                     ErrorMessage = ex.Message
                 });
             }
+            finally
+            {
+                // Mark this node as processed
+                processedIds.Add(node.SourceId);
+
+                // Save progress after each profile
+                if (_progressTracker != null && !string.IsNullOrEmpty(_inputFile))
+                {
+                    var progress = new AddProgress
+                    {
+                        InputFile = _inputFile,
+                        GedcomFile = resumeProgress?.GedcomFile ?? "",
+                        ProcessedSourceIds = processedIds,
+                        CreatedProfiles = createdProfiles,
+                        TotalProfiles = allNodes.Count,
+                        AddedProfiles = addedCount,
+                        FailedProfiles = failedCount
+                    };
+
+                    _progressTracker.SaveAddProgress(_inputFile, progress);
+                }
+            }
+        }
+
+        // Clean up progress file on successful completion
+        if (_progressTracker != null && !string.IsNullOrEmpty(_inputFile) && result.Failed == 0)
+        {
+            _progressTracker.DeleteAddProgress(_inputFile);
+            _logger.LogInformation("All profiles processed successfully. Progress file deleted.");
         }
 
         return result;

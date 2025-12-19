@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Text.Json;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Cli.Services;
 using GedcomGeniSync.Core.Models.Wave;
 using GedcomGeniSync.Services;
@@ -25,6 +26,7 @@ public class AddCommandHandler : IHostedCommand
     private readonly Option<bool> _verboseOption = new("--verbose", () => false, description: "Enable verbose logging");
     private readonly Option<bool> _syncPhotosOption = new("--sync-photos", () => true, description: "Upload photos from MyHeritage");
     private readonly Option<int> _maxDepthOption = new("--max-depth", () => int.MaxValue, description: "Maximum depth from existing nodes to add");
+    private readonly Option<bool> _resumeOption = new("--resume", () => false, description: "Resume from previous progress");
 
     public AddCommandHandler(Startup startup)
     {
@@ -42,6 +44,7 @@ public class AddCommandHandler : IHostedCommand
         addCommand.AddOption(_verboseOption);
         addCommand.AddOption(_syncPhotosOption);
         addCommand.AddOption(_maxDepthOption);
+        addCommand.AddOption(_resumeOption);
 
         addCommand.SetHandler(HandleAsync);
         return addCommand;
@@ -54,6 +57,7 @@ public class AddCommandHandler : IHostedCommand
         var gedcomPath = parseResult.GetValueForOption(_gedcomOption)!;
         var tokenFile = parseResult.GetValueForOption(_tokenFileOption)!;
         var dryRun = parseResult.GetValueForOption(_dryRunOption);
+        var resume = parseResult.GetValueForOption(_resumeOption);
         var verbose = parseResult.GetValueForOption(_verboseOption);
         var syncPhotos = parseResult.GetValueForOption(_syncPhotosOption);
         var maxDepth = parseResult.GetValueForOption(_maxDepthOption);
@@ -119,14 +123,27 @@ public class AddCommandHandler : IHostedCommand
             }
 
             var jsonContent = await File.ReadAllTextAsync(inputPath);
-            var report = JsonSerializer.Deserialize<WaveHighConfidenceReport>(jsonContent, new JsonSerializerOptions
+
+            // Try to deserialize as wrapped format first (from wave-compare command)
+            var wrapper = JsonSerializer.Deserialize<WaveCompareJsonWrapper>(jsonContent, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });
 
+            WaveHighConfidenceReport? report = wrapper?.Report;
+
+            // If that didn't work, try direct deserialization (for standalone report files)
             if (report == null)
             {
-                logger.LogError("Failed to parse wave-compare report");
+                report = JsonSerializer.Deserialize<WaveHighConfidenceReport>(jsonContent, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+
+            if (report == null)
+            {
+                logger.LogError("Failed to parse wave-compare report. Expected JSON from wave-compare command or standalone report.");
                 context.ExitCode = 1;
                 return;
             }
@@ -152,7 +169,36 @@ public class AddCommandHandler : IHostedCommand
 
             logger.LogInformation("GEDCOM loaded: {Count} individuals", gedcomResult.Persons.Count);
 
-            // 3. Execute additions
+            // 3. Check for existing progress
+            var progressTracker = new ProgressTracker(provider.GetRequiredService<ILogger<ProgressTracker>>());
+            AddProgress? existingProgress = null;
+
+            if (resume)
+            {
+                existingProgress = progressTracker.LoadAddProgress(inputPath);
+                if (existingProgress != null)
+                {
+                    logger.LogInformation("Resuming from previous progress...");
+                    logger.LogInformation("Previous run: {Processed}/{Total} profiles processed, {Created} created",
+                        existingProgress.ProcessedSourceIds.Count, existingProgress.TotalProfiles,
+                        existingProgress.CreatedProfiles.Count);
+                }
+                else
+                {
+                    logger.LogWarning("No previous progress found. Starting from beginning.");
+                }
+            }
+            else
+            {
+                // Check if there's existing progress and warn user
+                var hasProgress = progressTracker.LoadAddProgress(inputPath) != null;
+                if (hasProgress)
+                {
+                    logger.LogWarning("Found existing progress file. Use --resume to continue from where you left off, or this will start from the beginning.");
+                }
+            }
+
+            // 4. Execute additions
             var profileClient = provider.GetRequiredService<IGeniProfileClient>();
             var photoClient = provider.GetRequiredService<IGeniPhotoClient>();
             var photoService = provider.GetRequiredService<IMyHeritagePhotoService>();
@@ -162,12 +208,22 @@ public class AddCommandHandler : IHostedCommand
                 photoClient,
                 photoService,
                 gedcomResult,
-                logger);
+                logger,
+                progressTracker,
+                inputPath);
+
+            var addProgress = existingProgress ?? new AddProgress
+            {
+                InputFile = inputPath,
+                GedcomFile = gedcomPath,
+                TotalProfiles = nodesToAdd.Count
+            };
 
             var result = await addService.ExecuteAdditionsAsync(
                 nodesToAdd,
                 report.Individuals.NodesToUpdate,
-                syncPhotos);
+                syncPhotos,
+                addProgress);
 
             // 4. Display results
             logger.LogInformation("");

@@ -1,5 +1,6 @@
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using Microsoft.Extensions.Logging;
@@ -16,29 +17,52 @@ public class UpdateExecutor
     private readonly IMyHeritagePhotoService _photoService;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
+    private readonly ProgressTracker? _progressTracker;
+    private readonly string? _inputFile;
 
     public UpdateExecutor(
         IGeniProfileClient profileClient,
         IGeniPhotoClient photoClient,
         IMyHeritagePhotoService photoService,
         GedcomLoadResult gedcom,
-        ILogger logger)
+        ILogger logger,
+        ProgressTracker? progressTracker = null,
+        string? inputFile = null)
     {
         _profileClient = profileClient;
         _photoClient = photoClient;
         _photoService = photoService;
         _gedcom = gedcom;
         _logger = logger;
+        _progressTracker = progressTracker;
+        _inputFile = inputFile;
     }
 
     public async Task<Commands.UpdateResult> ExecuteUpdatesAsync(
         System.Collections.Immutable.ImmutableList<NodeToUpdate> nodesToUpdate,
         HashSet<string> skipFields,
-        bool syncPhotos)
+        bool syncPhotos,
+        UpdateProgress? resumeProgress = null)
     {
         var result = new Commands.UpdateResult();
 
-        foreach (var node in nodesToUpdate)
+        // Track progress
+        var processedIds = resumeProgress?.ProcessedSourceIds ?? new HashSet<string>();
+        var updatedCount = resumeProgress?.UpdatedProfiles ?? 0;
+        var failedCount = resumeProgress?.FailedProfiles ?? 0;
+
+        // Skip already processed nodes if resuming
+        var nodesToProcess = resumeProgress != null
+            ? nodesToUpdate.Where(n => !processedIds.Contains(n.SourceId)).ToList()
+            : nodesToUpdate.ToList();
+
+        if (resumeProgress != null)
+        {
+            _logger.LogInformation("Resuming from previous progress: {Processed}/{Total} already processed",
+                processedIds.Count, nodesToUpdate.Count);
+        }
+
+        foreach (var node in nodesToProcess)
         {
             result.TotalProcessed++;
 
@@ -95,29 +119,37 @@ public class UpdateExecutor
                 {
                     var profileUpdate = MapToGeniProfileUpdate(fieldsForProfile, sourcePerson);
 
-                    _logger.LogInformation("  Updating {Count} field(s): {Fields}",
-                        fieldsForProfile.Count,
-                        string.Join(", ", fieldsForProfile.Select(f => f.FieldName)));
-
-                    var updated = await _profileClient.UpdateProfileAsync(
-                        node.GeniProfileId.Replace("profile-", ""),
-                        profileUpdate);
-
-                    if (updated != null)
+                    // Check if there are actually any non-empty fields to update
+                    if (HasNonEmptyFields(profileUpdate))
                     {
-                        updatesMade = true;
-                        _logger.LogInformation("  ✓ Profile updated successfully");
+                        _logger.LogInformation("  Updating {Count} field(s): {Fields}",
+                            fieldsForProfile.Count,
+                            string.Join(", ", fieldsForProfile.Select(f => f.FieldName)));
+
+                        var updated = await _profileClient.UpdateProfileAsync(
+                            node.GeniProfileId.Replace("profile-", ""),
+                            profileUpdate);
+
+                        if (updated != null)
+                        {
+                            updatesMade = true;
+                            _logger.LogInformation("  ✓ Profile updated successfully");
+                        }
+                        else
+                        {
+                            _logger.LogError("  ✗ Failed to update profile");
+                            result.Errors.Add(new Commands.UpdateError
+                            {
+                                SourceId = node.SourceId,
+                                GeniProfileId = node.GeniProfileId,
+                                FieldName = string.Join(",", fieldsForProfile.Select(f => f.FieldName)),
+                                ErrorMessage = "Profile update failed"
+                            });
+                        }
                     }
                     else
                     {
-                        _logger.LogError("  ✗ Failed to update profile");
-                        result.Errors.Add(new Commands.UpdateError
-                        {
-                            SourceId = node.SourceId,
-                            GeniProfileId = node.GeniProfileId,
-                            FieldName = string.Join(",", fieldsForProfile.Select(f => f.FieldName)),
-                            ErrorMessage = "Profile update failed"
-                        });
+                        _logger.LogDebug("  Skipping profile update - all field values are empty");
                     }
                 }
 
@@ -201,6 +233,7 @@ public class UpdateExecutor
                 if (updatesMade)
                 {
                     result.Successful++;
+                    updatedCount++;
                 }
                 else if (fieldsForProfile.Count == 0 && photoFields.Count == 0)
                 {
@@ -212,6 +245,7 @@ public class UpdateExecutor
             {
                 _logger.LogError(ex, "  Error processing node");
                 result.Failed++;
+                failedCount++;
                 result.Errors.Add(new Commands.UpdateError
                 {
                     SourceId = node.SourceId,
@@ -220,6 +254,34 @@ public class UpdateExecutor
                     ErrorMessage = ex.Message
                 });
             }
+            finally
+            {
+                // Mark this node as processed
+                processedIds.Add(node.SourceId);
+
+                // Save progress after each profile (or every N profiles for performance)
+                if (_progressTracker != null && !string.IsNullOrEmpty(_inputFile))
+                {
+                    var progress = new UpdateProgress
+                    {
+                        InputFile = _inputFile,
+                        GedcomFile = resumeProgress?.GedcomFile ?? "",
+                        ProcessedSourceIds = processedIds,
+                        TotalProfiles = nodesToUpdate.Count,
+                        UpdatedProfiles = updatedCount,
+                        FailedProfiles = failedCount
+                    };
+
+                    _progressTracker.SaveUpdateProgress(_inputFile, progress);
+                }
+            }
+        }
+
+        // Clean up progress file on successful completion
+        if (_progressTracker != null && !string.IsNullOrEmpty(_inputFile) && result.Failed == 0)
+        {
+            _progressTracker.DeleteUpdateProgress(_inputFile);
+            _logger.LogInformation("All profiles processed successfully. Progress file deleted.");
         }
 
         return result;
@@ -309,6 +371,24 @@ public class UpdateExecutor
         }
 
         return update;
+    }
+
+    /// <summary>
+    /// Check if GeniProfileUpdate has any non-empty fields
+    /// </summary>
+    private bool HasNonEmptyFields(GeniProfileUpdate update)
+    {
+        return !string.IsNullOrEmpty(update.FirstName) ||
+               !string.IsNullOrEmpty(update.MiddleName) ||
+               !string.IsNullOrEmpty(update.LastName) ||
+               !string.IsNullOrEmpty(update.MaidenName) ||
+               !string.IsNullOrEmpty(update.Suffix) ||
+               !string.IsNullOrEmpty(update.Gender) ||
+               !string.IsNullOrEmpty(update.Nicknames) ||
+               !string.IsNullOrEmpty(update.Occupation) ||
+               update.Birth != null ||
+               update.Death != null ||
+               update.Burial != null;
     }
 
     /// <summary>

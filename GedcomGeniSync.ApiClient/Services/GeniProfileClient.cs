@@ -515,8 +515,22 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
     {
         if (DryRun)
         {
-            Logger.LogInformation("[DRY-RUN] Would update profile {ProfileId} with: FirstName={FirstName}, MiddleName={MiddleName}, LastName={LastName}, MaidenName={MaidenName}, Suffix={Suffix}",
-                profileId, update.FirstName, update.MiddleName, update.LastName, update.MaidenName, update.Suffix);
+            // Build list of fields being updated (only non-null values)
+            var updateFields = new List<string>();
+            if (!string.IsNullOrEmpty(update.FirstName)) updateFields.Add($"FirstName={update.FirstName}");
+            if (!string.IsNullOrEmpty(update.MiddleName)) updateFields.Add($"MiddleName={update.MiddleName}");
+            if (!string.IsNullOrEmpty(update.LastName)) updateFields.Add($"LastName={update.LastName}");
+            if (!string.IsNullOrEmpty(update.MaidenName)) updateFields.Add($"MaidenName={update.MaidenName}");
+            if (!string.IsNullOrEmpty(update.Suffix)) updateFields.Add($"Suffix={update.Suffix}");
+            if (!string.IsNullOrEmpty(update.Gender)) updateFields.Add($"Gender={update.Gender}");
+            if (!string.IsNullOrEmpty(update.Occupation)) updateFields.Add($"Occupation={update.Occupation}");
+            if (update.Birth != null) updateFields.Add("Birth");
+            if (update.Death != null) updateFields.Add("Death");
+            if (update.Burial != null) updateFields.Add("Burial");
+
+            var fieldsStr = updateFields.Count > 0 ? string.Join(", ", updateFields) : "(no fields to update)";
+            Logger.LogInformation("[DRY-RUN] Would update profile {ProfileId} with: {Fields}",
+                profileId, fieldsStr);
 
             // In dry-run mode, return the current profile (simulating no change)
             return await GetProfileAsync(profileId);

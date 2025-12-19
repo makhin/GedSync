@@ -473,11 +473,15 @@ public class GedcomLoader : IGedcomLoader
         // Extract photo URLs from multimedia records
         var photoUrlsBuilder = ImmutableList.CreateBuilder<string>();
 
-        // Handle linked multimedia (OBJE @M1@)
+        // Handle multimedia (both linked and inline OBJE records)
+        // MultimediaLinks can contain:
+        // 1. Links to external multimedia records (OBJE @M1@) - have MultimediaId
+        // 2. Inline multimedia (embedded OBJE) - exposed via MultimediaLinkDescripted with File property
         if (individual.MultimediaLinks != null)
         {
             foreach (var multimediaLink in individual.MultimediaLinks)
             {
+                // Case 1: Link to external multimedia record (OBJE @M1@)
                 if (multimediaLink is MultimediaLink ml && !string.IsNullOrEmpty(ml.MultimediaId))
                 {
                     if (multimedia.TryGetValue(ml.MultimediaId, out var mediaRecord))
@@ -491,30 +495,60 @@ public class GedcomLoader : IGedcomLoader
                         }
                     }
                 }
-            }
-        }
-
-        // Handle inline multimedia objects (embedded OBJE records)
-        // Check if Individual has MultimediaObjects property for inline OBJE
-        var multimediaObjectsProp = individual.GetType().GetProperty("MultimediaObjects");
-        if (multimediaObjectsProp != null)
-        {
-            var inlineMultimedia = multimediaObjectsProp.GetValue(individual);
-            if (inlineMultimedia != null)
-            {
-                var multimediaCollection = inlineMultimedia as System.Collections.IEnumerable;
-                if (multimediaCollection != null)
+                // Case 2: Inline multimedia (embedded OBJE records)
+                // MultimediaLinkDescripted has a "File" property (singular, not "Files")
+                else
                 {
-                    foreach (var item in multimediaCollection)
+                    // MultimediaLinkDescripted may have embedded Multimedia property
+                    var multimediaProp = multimediaLink.GetType().GetProperty("Multimedia");
+                    object? mediaObject = null;
+
+                    if (multimediaProp != null)
                     {
-                        if (item is Multimedia mediaObj)
+                        mediaObject = multimediaProp.GetValue(multimediaLink);
+                    }
+
+                    // If no Multimedia property, use the link object itself
+                    if (mediaObject == null)
+                    {
+                        mediaObject = multimediaLink;
+                    }
+
+                    // Try to get Files property (collection, for external multimedia records)
+                    var filesProp = mediaObject.GetType().GetProperty("Files");
+                    if (filesProp != null)
+                    {
+                        var files = filesProp.GetValue(mediaObject);
+                        if (files is System.Collections.IEnumerable filesCollection)
                         {
-                            var photoUrl = ExtractPhotoUrl(mediaObj);
-                            if (!string.IsNullOrEmpty(photoUrl))
+                            foreach (var fileRecord in filesCollection)
                             {
-                                photoUrlsBuilder.Add(photoUrl);
+                                var fileProp = fileRecord.GetType().GetProperty("File");
+                                if (fileProp != null)
+                                {
+                                    var fileValue = fileProp.GetValue(fileRecord)?.ToString();
+                                    if (!string.IsNullOrWhiteSpace(fileValue))
+                                    {
+                                        photoUrlsBuilder.Add(fileValue.Trim());
+                                        _logger.LogDebug("Found photo URL from multimedia Files collection for {Id}: {Url}",
+                                            individual.IndividualId, fileValue);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Try to get File property (singular, for inline multimedia)
+                        var fileProp = mediaObject.GetType().GetProperty("File");
+                        if (fileProp != null)
+                        {
+                            var fileValue = fileProp.GetValue(mediaObject)?.ToString();
+                            if (!string.IsNullOrWhiteSpace(fileValue))
+                            {
+                                photoUrlsBuilder.Add(fileValue.Trim());
                                 _logger.LogDebug("Found photo URL from inline multimedia for {Id}: {Url}",
-                                    individual.IndividualId, photoUrl);
+                                    individual.IndividualId, fileValue);
                             }
                         }
                     }
