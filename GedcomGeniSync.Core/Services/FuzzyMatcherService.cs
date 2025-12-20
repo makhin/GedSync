@@ -297,8 +297,8 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         }
 
         // Use pre-normalized names if available, otherwise normalize on-the-fly
-        var sourceNorm = source.NormalizedFirstName ?? NormalizeForComparison(sourceName);
-        var targetNorm = target.NormalizedFirstName ?? NormalizeForComparison(targetName);
+        var sourceNorm = source.NormalizedFirstName ?? NormalizeForComparison(sourceName, source.TransliteratedFirstName);
+        var targetNorm = target.NormalizedFirstName ?? NormalizeForComparison(targetName, target.TransliteratedFirstName);
 
         // 4. Check if one name is the first word of the other (e.g., "Владимир" vs "Владимир Витальевич")
         // This is common when one source has patronymic included and the other doesn't
@@ -352,7 +352,7 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         if (string.IsNullOrEmpty(sourceName) && !string.IsNullOrEmpty(source.MaidenName) && !string.IsNullOrEmpty(targetName))
         {
             var normalizedMaiden = NormalizeForComparison(source.MaidenName);
-            var targetNorm = target.NormalizedLastName ?? NormalizeForComparison(targetName);
+            var targetNorm = target.NormalizedLastName ?? NormalizeForComparison(targetName, target.TransliteratedLastName);
             if (normalizedMaiden == targetNorm)
                 return 1.0; // Exact match via MaidenName
         }
@@ -361,7 +361,7 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         if (string.IsNullOrEmpty(targetName) && !string.IsNullOrEmpty(target.MaidenName) && !string.IsNullOrEmpty(sourceName))
         {
             var normalizedMaiden = NormalizeForComparison(target.MaidenName);
-            var sourceNorm = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
+            var sourceNorm = source.NormalizedLastName ?? NormalizeForComparison(sourceName, source.TransliteratedLastName);
             _logger.LogDebug("Comparing target MaidenName '{TargetMaidenName}' (normalized: '{NormMaiden}') with source LastName '{SourceLastName}' (normalized: '{NormSource}')",
                 target.MaidenName, normalizedMaiden, sourceName, sourceNorm);
             if (normalizedMaiden == sourceNorm)
@@ -386,14 +386,14 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         if (!string.IsNullOrEmpty(source.MaidenName))
         {
             var normalizedMaiden = NormalizeForComparison(source.MaidenName);
-            var targetNorm = target.NormalizedLastName ?? NormalizeForComparison(targetName);
+            var targetNorm = target.NormalizedLastName ?? NormalizeForComparison(targetName, target.TransliteratedLastName);
             if (normalizedMaiden == targetNorm)
                 return 0.95;
         }
         if (!string.IsNullOrEmpty(target.MaidenName))
         {
             var normalizedMaiden = NormalizeForComparison(target.MaidenName);
-            var sourceNorm = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
+            var sourceNorm = source.NormalizedLastName ?? NormalizeForComparison(sourceName, source.TransliteratedLastName);
             if (normalizedMaiden == sourceNorm)
                 return 0.95;
         }
@@ -403,8 +403,8 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             return 0.90;
 
         // Use pre-normalized names if available, otherwise normalize on-the-fly
-        var sourceNormalized = source.NormalizedLastName ?? NormalizeForComparison(sourceName);
-        var targetNormalized = target.NormalizedLastName ?? NormalizeForComparison(targetName);
+        var sourceNormalized = source.NormalizedLastName ?? NormalizeForComparison(sourceName, source.TransliteratedLastName);
+        var targetNormalized = target.NormalizedLastName ?? NormalizeForComparison(targetName, target.TransliteratedLastName);
 
         // 4. Jaro-Winkler similarity (better for transliteration and declensions in Slavic surnames)
         var similarity = _jaroWinkler.Similarity(sourceNormalized, targetNormalized);
@@ -780,8 +780,8 @@ public class FuzzyMatcherService : IFuzzyMatcherService
     private double CompareRelativesByName(PersonRecord person1, PersonRecord person2)
     {
         // Compare first names
-        var firstName1 = person1.NormalizedFirstName ?? NormalizeForComparison(person1.FirstName ?? "");
-        var firstName2 = person2.NormalizedFirstName ?? NormalizeForComparison(person2.FirstName ?? "");
+        var firstName1 = person1.NormalizedFirstName ?? NormalizeForComparison(person1.FirstName ?? string.Empty, person1.TransliteratedFirstName);
+        var firstName2 = person2.NormalizedFirstName ?? NormalizeForComparison(person2.FirstName ?? string.Empty, person2.TransliteratedFirstName);
 
         if (string.IsNullOrEmpty(firstName1) || string.IsNullOrEmpty(firstName2))
             return 0.0;
@@ -791,8 +791,8 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             return 0.0; // First name must match well
 
         // Compare last names (or maiden names)
-        var lastName1 = person1.NormalizedLastName ?? NormalizeForComparison(person1.LastName ?? person1.MaidenName ?? "");
-        var lastName2 = person2.NormalizedLastName ?? NormalizeForComparison(person2.LastName ?? person2.MaidenName ?? "");
+        var lastName1 = person1.NormalizedLastName ?? NormalizeForComparison(person1.LastName ?? person1.MaidenName ?? string.Empty, person1.TransliteratedLastName);
+        var lastName2 = person2.NormalizedLastName ?? NormalizeForComparison(person2.LastName ?? person2.MaidenName ?? string.Empty, person2.TransliteratedLastName);
 
         if (string.IsNullOrEmpty(lastName1) || string.IsNullOrEmpty(lastName2))
         {
@@ -813,15 +813,15 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     #region Normalization
 
-    private string NormalizeForComparison(string text)
+    private string NormalizeForComparison(string text, string? transliterated = null)
     {
         if (string.IsNullOrEmpty(text))
             return string.Empty;
 
         // Transliterate to common alphabet
-        var transliterated = _nameVariants.Transliterate(text);
+        var transliteratedText = transliterated ?? _nameVariants.Transliterate(text);
 
-        return RemoveComparisonNoise(transliterated.ToLowerInvariant());
+        return RemoveComparisonNoise(transliteratedText.ToLowerInvariant());
     }
 
     private static string RemoveComparisonNoise(string value)
