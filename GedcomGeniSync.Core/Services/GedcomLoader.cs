@@ -24,6 +24,13 @@ public class GedcomLoader : IGedcomLoader
 {
     private readonly ILogger<GedcomLoader> _logger;
 
+    private static readonly Regex NameWithParenthesesPattern = new(@"^(.+?)\s*\(([^)]+)\)\s*$", RegexOptions.Compiled);
+    private static readonly Regex NameWithBackslashPattern = new(@"^(.+?)\\(.+)$", RegexOptions.Compiled);
+    private static readonly Regex CleanNameSpecialCharsPattern = new(@"[^\p{L}\p{M}0-9 '-]", RegexOptions.Compiled);
+    private static readonly Regex CleanNameWhitespacePattern = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex GedcomNamePattern = new(@"^([^/]*?)/?([^/]*)?/?$", RegexOptions.Compiled);
+    private static readonly Regex GedcomLinePattern = new(@"^(\d+)\s+([A-Z_@][A-Z0-9_@]*)(\s|$)", RegexOptions.Compiled);
+
     public GedcomLoader(ILogger<GedcomLoader> logger)
     {
         _logger = logger;
@@ -1026,7 +1033,7 @@ public class GedcomLoader : IGedcomLoader
             return variants;
 
         // Pattern 1: Extract name with parentheses "Мустафа (Mustafa)"
-        var parenthesesMatch = Regex.Match(name, @"^(.+?)\s*\(([^)]+)\)\s*$");
+        var parenthesesMatch = NameWithParenthesesPattern.Match(name);
         if (parenthesesMatch.Success)
         {
             var primary = CleanNameSimple(parenthesesMatch.Groups[1].Value);
@@ -1041,7 +1048,7 @@ public class GedcomLoader : IGedcomLoader
         }
 
         // Pattern 2: Extract name with backslash "Иванов\Ivanov"
-        var backslashMatch = Regex.Match(name, @"^(.+?)\\(.+)$");
+        var backslashMatch = NameWithBackslashPattern.Match(name);
         if (backslashMatch.Success)
         {
             var primary = CleanNameSimple(backslashMatch.Groups[1].Value);
@@ -1084,8 +1091,8 @@ public class GedcomLoader : IGedcomLoader
         // Remove GEDCOM-specific markers and special characters
         // Keep only Unicode letters, digits, spaces, hyphens, and apostrophes
         // This includes Latin (A-Z), Cyrillic (А-Я), Lithuanian (Š,ž,č,ė,ū), and other European characters
-        name = Regex.Replace(name, @"[^\p{L}\p{M}0-9 '-]", "");
-        name = Regex.Replace(name, @"\s+", " ");
+        name = CleanNameSpecialCharsPattern.Replace(name, "");
+        name = CleanNameWhitespacePattern.Replace(name, " ");
 
         return name.Trim();
     }
@@ -1099,7 +1106,7 @@ public class GedcomLoader : IGedcomLoader
             return;
 
         // GEDCOM name format: "Given Names /Surname/"
-        var match = Regex.Match(fullName, @"^([^/]*?)/?([^/]*)?/?$");
+        var match = GedcomNamePattern.Match(fullName);
         if (match.Success)
         {
             firstName = CleanName(match.Groups[1].Value);
@@ -1177,7 +1184,7 @@ public class GedcomLoader : IGedcomLoader
                 }
 
                 // Check if this is a proper GEDCOM line (level + tag)
-                var gedcomLineMatch = Regex.Match(line, @"^(\d+)\s+([A-Z_@][A-Z0-9_@]*)(\s|$)");
+                var gedcomLineMatch = GedcomLinePattern.Match(line);
                 if (gedcomLineMatch.Success)
                 {
                     var level = int.Parse(gedcomLineMatch.Groups[1].Value);

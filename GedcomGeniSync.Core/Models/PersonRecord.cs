@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using GedcomGeniSync.ApiClient.Utils;
@@ -340,6 +341,32 @@ public record DateInfo
         return $"{prefix}{date}";
     }
 
+    private static readonly Dictionary<string, int> Months = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // English (GEDCOM standard)
+        ["JAN"] = 1, ["FEB"] = 2, ["MAR"] = 3, ["APR"] = 4,
+        ["MAY"] = 5, ["JUN"] = 6, ["JUL"] = 7, ["AUG"] = 8,
+        ["SEP"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DEC"] = 12,
+        // English full names
+        ["JANUARY"] = 1, ["FEBRUARY"] = 2, ["MARCH"] = 3, ["APRIL"] = 4,
+        ["JUNE"] = 6, ["JULY"] = 7, ["AUGUST"] = 8,
+        ["SEPTEMBER"] = 9, ["OCTOBER"] = 10, ["NOVEMBER"] = 11, ["DECEMBER"] = 12,
+        // Russian (common in Slavic GEDCOM files)
+        ["ЯНВ"] = 1, ["ФЕВ"] = 2, ["МАР"] = 3, ["АПР"] = 4,
+        ["МАЙ"] = 5, ["ИЮН"] = 6, ["ИЮЛ"] = 7, ["АВГ"] = 8,
+        ["СЕН"] = 9, ["ОКТ"] = 10, ["НОЯ"] = 11, ["ДЕК"] = 12,
+        // Russian full names
+        ["ЯНВАРЬ"] = 1, ["ФЕВРАЛЬ"] = 2, ["МАРТ"] = 3, ["АПРЕЛЬ"] = 4,
+        ["МАЙТ"] = 5, ["ИЮНЬ"] = 6, ["ИЮЛЬ"] = 7, ["АВГУСТ"] = 8,
+        ["СЕНТЯБРЬ"] = 9, ["ОКТЯБРЬ"] = 10, ["НОЯБРЬ"] = 11, ["ДЕКАБРЬ"] = 12,
+        // German
+        ["MÄR"] = 3, ["MAI"] = 5, ["OKT"] = 10, ["DEZ"] = 12,
+        // French
+        ["JANV"] = 1, ["FÉVR"] = 2, ["MARS"] = 3, ["AVR"] = 4,
+        ["JUIN"] = 6, ["JUIL"] = 7, ["AOÛT"] = 8,
+        ["SEPT"] = 9, ["DÉC"] = 12
+    };
+
     /// <summary>
     /// Parse GEDCOM date string
     /// </summary>
@@ -438,34 +465,6 @@ public record DateInfo
     private static (int? year, int? month, int? day) ParseDatePart(string dateStr)
     {
         // Multi-language month names support (GEDCOM standard + common variations)
-        var months = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-        {
-            // English (GEDCOM standard)
-            ["JAN"] = 1, ["FEB"] = 2, ["MAR"] = 3, ["APR"] = 4,
-            ["MAY"] = 5, ["JUN"] = 6, ["JUL"] = 7, ["AUG"] = 8,
-            ["SEP"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DEC"] = 12,
-            // English full names
-            ["JANUARY"] = 1, ["FEBRUARY"] = 2, ["MARCH"] = 3, ["APRIL"] = 4,
-            ["JUNE"] = 6, ["JULY"] = 7, ["AUGUST"] = 8,
-            ["SEPTEMBER"] = 9, ["OCTOBER"] = 10, ["NOVEMBER"] = 11, ["DECEMBER"] = 12,
-            // Russian (common in Slavic GEDCOM files)
-            ["ЯНВ"] = 1, ["ФЕВ"] = 2, ["МАР"] = 3, ["АПР"] = 4,
-            ["МАЙ"] = 5, ["ИЮН"] = 6, ["ИЮЛ"] = 7, ["АВГ"] = 8,
-            ["СЕН"] = 9, ["ОКТ"] = 10, ["НОЯ"] = 11, ["ДЕК"] = 12,
-            // Russian full names
-            ["ЯНВАРЬ"] = 1, ["ФЕВРАЛЬ"] = 2, ["МАРТ"] = 3, ["АПРЕЛЬ"] = 4,
-            ["МАЙТ"] = 5, ["ИЮНЬ"] = 6, ["ИЮЛЬ"] = 7, ["АВГУСТ"] = 8,
-            ["СЕНТЯБРЬ"] = 9, ["ОКТЯБРЬ"] = 10, ["НОЯБРЬ"] = 11, ["ДЕКАБРЬ"] = 12,
-            // German
-            ["JAN"] = 1, ["FEB"] = 2, ["MÄR"] = 3, ["APR"] = 4,
-            ["MAI"] = 5, ["JUN"] = 6, ["JUL"] = 7, ["AUG"] = 8,
-            ["SEP"] = 9, ["OKT"] = 10, ["NOV"] = 11, ["DEZ"] = 12,
-            // French
-            ["JANV"] = 1, ["FÉVR"] = 2, ["MARS"] = 3, ["AVR"] = 4,
-            ["JUIN"] = 6, ["JUIL"] = 7, ["AOÛT"] = 8,
-            ["SEPT"] = 9, ["DÉC"] = 12
-        };
-
         var parts = dateStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         int? year = null;
@@ -475,7 +474,7 @@ public record DateInfo
         foreach (var part in parts)
         {
             // Check if it's a month name
-            if (months.TryGetValue(part, out var monthValue))
+            if (Months.TryGetValue(part, out var monthValue))
             {
                 month = monthValue;
             }

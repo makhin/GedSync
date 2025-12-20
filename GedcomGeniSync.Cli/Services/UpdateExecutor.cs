@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
@@ -19,6 +20,21 @@ public class UpdateExecutor
     private readonly ILogger _logger;
     private readonly ProgressTracker? _progressTracker;
     private readonly string? _inputFile;
+    private static readonly System.Text.RegularExpressions.Regex DateQualifierPattern = new(
+        @"^(ABT|AFT|BEF|EST|CAL|BET)\s+",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex YearPattern = new(
+        @"\b(\d{4})\b",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex DayPattern = new(
+        @"\b(\d{1,2})\b(?!\d)",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly Dictionary<string, int> MonthNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "JAN", 1 }, { "FEB", 2 }, { "MAR", 3 }, { "APR", 4 },
+        { "MAY", 5 }, { "JUN", 6 }, { "JUL", 7 }, { "AUG", 8 },
+        { "SEP", 9 }, { "OCT", 10 }, { "NOV", 11 }, { "DEC", 12 }
+    };
 
     public UpdateExecutor(
         IGeniProfileClient profileClient,
@@ -403,26 +419,19 @@ public class UpdateExecutor
             return null;
 
         // Remove qualifiers like "ABT", "AFT", "BEF", "EST"
-        dateStr = System.Text.RegularExpressions.Regex.Replace(dateStr, @"^(ABT|AFT|BEF|EST|CAL|BET)\s+", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+        dateStr = DateQualifierPattern.Replace(dateStr, string.Empty).Trim();
 
         var result = new GeniDateInput();
 
         // Try to parse year (4 digits)
-        var yearMatch = System.Text.RegularExpressions.Regex.Match(dateStr, @"\b(\d{4})\b");
+        var yearMatch = YearPattern.Match(dateStr);
         if (yearMatch.Success && int.TryParse(yearMatch.Groups[1].Value, out var year))
         {
             result.Year = year;
         }
 
         // Try to parse month (as number or name)
-        var monthNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "JAN", 1 }, { "FEB", 2 }, { "MAR", 3 }, { "APR", 4 },
-            { "MAY", 5 }, { "JUN", 6 }, { "JUL", 7 }, { "AUG", 8 },
-            { "SEP", 9 }, { "OCT", 10 }, { "NOV", 11 }, { "DEC", 12 }
-        };
-
-        foreach (var (monthName, monthNum) in monthNames)
+        foreach (var (monthName, monthNum) in MonthNames)
         {
             if (dateStr.Contains(monthName, StringComparison.OrdinalIgnoreCase))
             {
@@ -432,7 +441,7 @@ public class UpdateExecutor
         }
 
         // Try to parse day (1-2 digits, not part of year)
-        var dayMatch = System.Text.RegularExpressions.Regex.Match(dateStr, @"\b(\d{1,2})\b(?!\d)");
+        var dayMatch = DayPattern.Match(dateStr);
         if (dayMatch.Success && int.TryParse(dayMatch.Groups[1].Value, out var day) && day >= 1 && day <= 31)
         {
             result.Day = day;
