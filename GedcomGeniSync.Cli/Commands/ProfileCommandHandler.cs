@@ -47,7 +47,9 @@ public class ProfileCommandHandler : IHostedCommand
 
                 if (string.IsNullOrWhiteSpace(resolvedToken))
                 {
-                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile).Result;
+                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile)
+                        .GetAwaiter()
+                        .GetResult();
                     if (storedToken != null && !storedToken.IsExpired)
                     {
                         resolvedToken = storedToken.AccessToken;
@@ -72,7 +74,9 @@ public class ProfileCommandHandler : IHostedCommand
 
                 if (string.IsNullOrWhiteSpace(resolvedToken))
                 {
-                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile).Result;
+                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile)
+                        .GetAwaiter()
+                        .GetResult();
                     if (storedToken != null && !storedToken.IsExpired)
                     {
                         resolvedToken = storedToken.AccessToken;

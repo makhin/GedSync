@@ -84,7 +84,10 @@ public class UpdateCommandHandler : IHostedCommand
         {
             services.AddSingleton<IGeniProfileClient>(sp =>
             {
-                var storedToken = GedcomGeniSync.ApiClient.Services.GeniAuthClient.LoadTokenFromFileAsync(tokenFile).Result;
+                var storedToken = GedcomGeniSync.ApiClient.Services.GeniAuthClient
+                    .LoadTokenFromFileAsync(tokenFile)
+                    .GetAwaiter()
+                    .GetResult();
                 if (storedToken == null || storedToken.IsExpired)
                 {
                     throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
@@ -99,7 +102,10 @@ public class UpdateCommandHandler : IHostedCommand
 
             services.AddSingleton<IGeniPhotoClient>(sp =>
             {
-                var storedToken = GedcomGeniSync.ApiClient.Services.GeniAuthClient.LoadTokenFromFileAsync(tokenFile).Result;
+                var storedToken = GedcomGeniSync.ApiClient.Services.GeniAuthClient
+                    .LoadTokenFromFileAsync(tokenFile)
+                    .GetAwaiter()
+                    .GetResult();
                 if (storedToken == null || storedToken.IsExpired)
                 {
                     throw new InvalidOperationException("No valid token found. Run 'auth' command first.");

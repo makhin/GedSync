@@ -7,6 +7,11 @@ namespace GedcomGeniSync.ApiClient.Utils;
 /// </summary>
 public static class GeniIdHelper
 {
+    private static readonly Regex IndiPattern = new(@"@I(\d+)@", RegexOptions.Compiled);
+    private static readonly Regex GeniPattern = new(@"geni:(\d+)", RegexOptions.Compiled);
+    private static readonly Regex ProfilePattern = new(@"profile-(\d+)", RegexOptions.Compiled);
+    private static readonly Regex NumericPattern = new(@"^\d+$", RegexOptions.Compiled);
+
     /// <summary>
     /// Extract numeric Geni ID from various formats
     /// Supports:
@@ -23,22 +28,22 @@ public static class GeniIdHelper
             return null;
 
         // Try GEDCOM INDI format: @I6000000206529622827@
-        var indiMatch = Regex.Match(id, @"@I(\d+)@");
+        var indiMatch = IndiPattern.Match(id);
         if (indiMatch.Success)
             return indiMatch.Groups[1].Value;
 
         // Try Geni RFN format: geni:6000000206529622827
-        var geniMatch = Regex.Match(id, @"geni:(\d+)");
+        var geniMatch = GeniPattern.Match(id);
         if (geniMatch.Success)
             return geniMatch.Groups[1].Value;
 
         // Try Geni Profile format: profile-6000000206529622827
-        var profileMatch = Regex.Match(id, @"profile-(\d+)");
+        var profileMatch = ProfilePattern.Match(id);
         if (profileMatch.Success)
             return profileMatch.Groups[1].Value;
 
         // Try raw numeric: 6000000206529622827
-        if (Regex.IsMatch(id, @"^\d+$"))
+        if (NumericPattern.IsMatch(id))
             return id;
 
         return null;
