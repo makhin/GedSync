@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Json;
 using GedcomGeniSync.ApiClient.Models;
@@ -386,129 +387,73 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
     public async Task<GeniProfile?> AddChildAsync(string parentProfileId, GeniProfileCreate child)
     {
-        if (DryRun)
-        {
-            Logger.LogInformation("[DRY-RUN] Would create child {FirstName} {LastName} for parent {ParentId}",
-                child.FirstName, child.LastName, parentProfileId);
-            return CreateDryRunProfile(child);
-        }
-
-        await ThrottleAsync();
-
-        var url = $"{BaseUrl}/profile-{parentProfileId}/add-child";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        var content = CreateFormContent(child);
-        var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        Logger.LogInformation("Created child profile {ProfileId}", result?.Profile?.Id);
-
-        return result?.Profile;
+        return await ExecuteAddProfileOperationAsync(
+            $"profile-{parentProfileId}/add-child",
+            child,
+            () => Logger.LogInformation(
+                "[DRY-RUN] Would create child {FirstName} {LastName} for parent {ParentId}",
+                child.FirstName,
+                child.LastName,
+                parentProfileId),
+            result => Logger.LogInformation("Created child profile {ProfileId}", result?.Profile?.Id));
     }
 
     public async Task<GeniProfile?> AddParentAsync(string childProfileId, GeniProfileCreate parent)
     {
-        if (DryRun)
-        {
-            Logger.LogInformation("[DRY-RUN] Would create parent {FirstName} {LastName} for child {ChildId}",
-                parent.FirstName, parent.LastName, childProfileId);
-            return CreateDryRunProfile(parent);
-        }
-
-        await ThrottleAsync();
-
-        var url = $"{BaseUrl}/profile-{childProfileId}/add-parent";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        var content = CreateFormContent(parent);
-        var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        Logger.LogInformation("Created parent profile {ProfileId}", result?.Profile?.Id);
-
-        return result?.Profile;
+        return await ExecuteAddProfileOperationAsync(
+            $"profile-{childProfileId}/add-parent",
+            parent,
+            () => Logger.LogInformation(
+                "[DRY-RUN] Would create parent {FirstName} {LastName} for child {ChildId}",
+                parent.FirstName,
+                parent.LastName,
+                childProfileId),
+            result => Logger.LogInformation("Created parent profile {ProfileId}", result?.Profile?.Id));
     }
 
     public async Task<GeniProfile?> AddPartnerAsync(string profileId, GeniProfileCreate partner)
     {
-        if (DryRun)
-        {
-            Logger.LogInformation("[DRY-RUN] Would create partner {FirstName} {LastName} for {ProfileId}",
-                partner.FirstName, partner.LastName, profileId);
-            return CreateDryRunProfile(partner);
-        }
-
-        await ThrottleAsync();
-
-        var url = $"{BaseUrl}/profile-{profileId}/add-partner";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        var content = CreateFormContent(partner);
-        var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        Logger.LogInformation("Created partner profile {ProfileId}", result?.Profile?.Id);
-
-        return result?.Profile;
+        return await ExecuteAddProfileOperationAsync(
+            $"profile-{profileId}/add-partner",
+            partner,
+            () => Logger.LogInformation(
+                "[DRY-RUN] Would create partner {FirstName} {LastName} for {ProfileId}",
+                partner.FirstName,
+                partner.LastName,
+                profileId),
+            result => Logger.LogInformation("Created partner profile {ProfileId}", result?.Profile?.Id));
     }
 
     public async Task<GeniProfile?> AddChildToUnionAsync(string unionId, GeniProfileCreate child)
     {
-        if (DryRun)
-        {
-            Logger.LogInformation("[DRY-RUN] Would create child {FirstName} {LastName} in union {UnionId}",
-                child.FirstName, child.LastName, unionId);
-            return CreateDryRunProfile(child);
-        }
-
-        await ThrottleAsync();
-
-        var url = $"{BaseUrl}/union-{unionId}/add-child";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        var content = CreateFormContent(child);
-        var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        Logger.LogInformation("Created child profile {ProfileId} in union {UnionId}",
-            result?.Profile?.Id, unionId);
-
-        return result?.Profile;
+        return await ExecuteAddProfileOperationAsync(
+            $"union-{unionId}/add-child",
+            child,
+            () => Logger.LogInformation(
+                "[DRY-RUN] Would create child {FirstName} {LastName} in union {UnionId}",
+                child.FirstName,
+                child.LastName,
+                unionId),
+            result => Logger.LogInformation(
+                "Created child profile {ProfileId} in union {UnionId}",
+                result?.Profile?.Id,
+                unionId));
     }
 
     public async Task<GeniProfile?> AddPartnerToUnionAsync(string unionId, GeniProfileCreate partner)
     {
-        if (DryRun)
-        {
-            Logger.LogInformation("[DRY-RUN] Would add partner {FirstName} {LastName} to union {UnionId}",
-                partner.FirstName, partner.LastName, unionId);
-            return CreateDryRunProfile(partner);
-        }
-
-        await ThrottleAsync();
-
-        var url = $"{BaseUrl}/union-{unionId}/add-partner";
-        Logger.LogDebug("POST {Url}", url);
-
-        using var client = CreateClient();
-        var content = CreateFormContent(partner);
-        var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
-        Logger.LogInformation("Added partner profile {ProfileId} to union {UnionId}",
-            result?.Profile?.Id, unionId);
-
-        return result?.Profile;
+        return await ExecuteAddProfileOperationAsync(
+            $"union-{unionId}/add-partner",
+            partner,
+            () => Logger.LogInformation(
+                "[DRY-RUN] Would add partner {FirstName} {LastName} to union {UnionId}",
+                partner.FirstName,
+                partner.LastName,
+                unionId),
+            result => Logger.LogInformation(
+                "Added partner profile {ProfileId} to union {UnionId}",
+                result?.Profile?.Id,
+                unionId));
     }
 
     public async Task<GeniProfile?> UpdateProfileAsync(string profileId, GeniProfileUpdate update)
@@ -701,6 +646,34 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         {
             values[$"{eventName}[location][place_name]"] = eventData.Location.PlaceName;
         }
+    }
+
+    private async Task<GeniProfile?> ExecuteAddProfileOperationAsync(
+        string urlPath,
+        GeniProfileCreate profile,
+        Action logDryRun,
+        Action<GeniAddResult?> logSuccess)
+    {
+        if (DryRun)
+        {
+            logDryRun();
+            return CreateDryRunProfile(profile);
+        }
+
+        await ThrottleAsync();
+
+        var url = $"{BaseUrl}/{urlPath}";
+        Logger.LogDebug("POST {Url}", url);
+
+        using var client = CreateClient();
+        var content = CreateFormContent(profile);
+        var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
+        logSuccess(result);
+
+        return result?.Profile;
     }
 
     private static GeniProfile CreateDryRunProfile(GeniProfileCreate create)

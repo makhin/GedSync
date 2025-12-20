@@ -35,6 +35,16 @@ public record PersonRecord
     /// </summary>
     public ImmutableList<string> NameVariants { get; init; } = ImmutableList<string>.Empty;
 
+    /// <summary>
+    /// Cached transliterated first name to avoid repeated conversions
+    /// </summary>
+    public string? TransliteratedFirstName { get; init; }
+
+    /// <summary>
+    /// Cached transliterated last name to avoid repeated conversions
+    /// </summary>
+    public string? TransliteratedLastName { get; init; }
+
     public string FullName => string.Join(" ",
         new[] { FirstName, MiddleName, LastName }
         .Where(s => !string.IsNullOrWhiteSpace(s)));

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using GedcomGeniSync.ApiClient.Utils;
@@ -147,6 +148,7 @@ public class GedcomLoader : IGedcomLoader
         string? nickname = null;
         string? suffix = null;
         var nameVariantsBuilder = ImmutableList.CreateBuilder<string>();
+        var addedVariants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Names - use the Name collection from IndividualRecord
         var names = individual.Name;
@@ -169,7 +171,7 @@ public class GedcomLoader : IGedcomLoader
                     var givenVariants = ExtractNameVariants(pieces.GivenName);
                     foreach (var variant in givenVariants)
                     {
-                        if (!nameVariantsBuilder.Contains(variant))
+                        if (addedVariants.Add(variant))
                             nameVariantsBuilder.Add(variant);
                     }
                 }
@@ -178,7 +180,7 @@ public class GedcomLoader : IGedcomLoader
                     var surnameVariants = ExtractNameVariants(pieces.Surname);
                     foreach (var variant in surnameVariants)
                     {
-                        if (!nameVariantsBuilder.Contains(variant))
+                        if (addedVariants.Add(variant))
                             nameVariantsBuilder.Add(variant);
                     }
                 }
@@ -187,7 +189,7 @@ public class GedcomLoader : IGedcomLoader
                     var nicknameVariants = ExtractNameVariants(pieces.Nickname);
                     foreach (var variant in nicknameVariants)
                     {
-                        if (!nameVariantsBuilder.Contains(variant))
+                        if (addedVariants.Add(variant))
                             nameVariantsBuilder.Add(variant);
                     }
                 }
@@ -677,6 +679,8 @@ public class GedcomLoader : IGedcomLoader
             Nickname = nickname,
             Suffix = suffix,
             NameVariants = nameVariantsBuilder.ToImmutable(),
+            TransliteratedFirstName = string.IsNullOrWhiteSpace(firstName) ? null : NameNormalizer.Transliterate(firstName),
+            TransliteratedLastName = string.IsNullOrWhiteSpace(lastName) ? null : NameNormalizer.Transliterate(lastName),
             NormalizedFirstName = NameNormalizer.Normalize(firstName),
             NormalizedLastName = NameNormalizer.Normalize(lastName),
             Gender = gender,
