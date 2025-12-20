@@ -384,32 +384,32 @@ public record DateInfo
         if (upper.StartsWith("ABT ") || upper.StartsWith("ABOUT "))
         {
             modifier = DateModifier.About;
-            upper = upper.Replace("ABT ", "").Replace("ABOUT ", "").Trim();
+            upper = TrimPrefix(upper, "ABT ", "ABOUT ");
         }
         else if (upper.StartsWith("BEF ") || upper.StartsWith("BEFORE "))
         {
             modifier = DateModifier.Before;
-            upper = upper.Replace("BEF ", "").Replace("BEFORE ", "").Trim();
+            upper = TrimPrefix(upper, "BEF ", "BEFORE ");
         }
         else if (upper.StartsWith("AFT ") || upper.StartsWith("AFTER "))
         {
             modifier = DateModifier.After;
-            upper = upper.Replace("AFT ", "").Replace("AFTER ", "").Trim();
+            upper = TrimPrefix(upper, "AFT ", "AFTER ");
         }
         else if (upper.StartsWith("EST "))
         {
             modifier = DateModifier.Estimated;
-            upper = upper.Replace("EST ", "").Trim();
+            upper = TrimPrefix(upper, "EST ");
         }
         else if (upper.StartsWith("CAL "))
         {
             modifier = DateModifier.Calculated;
-            upper = upper.Replace("CAL ", "").Trim();
+            upper = TrimPrefix(upper, "CAL ");
         }
         else if (upper.StartsWith("BET "))
         {
             modifier = DateModifier.Between;
-            var parts = upper.Replace("BET ", "").Split(" AND ");
+            var parts = TrimPrefix(upper, "BET ").Split(" AND ");
             if (parts.Length == 2)
             {
                 upper = parts[0].Trim();
@@ -460,6 +460,19 @@ public record DateInfo
             Modifier = modifier,
             RangeEnd = rangeEnd
         };
+    }
+
+    private static string TrimPrefix(string value, params string[] prefixes)
+    {
+        foreach (var prefix in prefixes)
+        {
+            if (value.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return value[prefix.Length..].Trim();
+            }
+        }
+
+        return value;
     }
 
     private static (int? year, int? month, int? day) ParseDatePart(string dateStr)

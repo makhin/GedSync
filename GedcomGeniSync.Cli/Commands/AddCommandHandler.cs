@@ -1,6 +1,6 @@
+using System;
 using System.CommandLine;
 using System.CommandLine.Invocation;
-using System.Text.Json;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Cli.Services;
@@ -62,40 +62,26 @@ public class AddCommandHandler : IHostedCommand
         var syncPhotos = parseResult.GetValueForOption(_syncPhotosOption);
         var maxDepth = parseResult.GetValueForOption(_maxDepthOption);
 
+        var accessToken = new Lazy<string>(() => AccessTokenResolver.ResolveFromFile(tokenFile));
+
         await using var scope = _startup.CreateScope(verbose, services =>
         {
+            services.AddSingleton<WaveReportLoader>();
+
             services.AddSingleton<IGeniProfileClient>(sp =>
             {
-                var storedToken = GedcomGeniSync.ApiClient.Services.GeniAuthClient
-                    .LoadTokenFromFileAsync(tokenFile)
-                    .GetAwaiter()
-                    .GetResult();
-                if (storedToken == null || storedToken.IsExpired)
-                {
-                    throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
-                }
-
                 return new GedcomGeniSync.ApiClient.Services.GeniProfileClient(
                     sp.GetRequiredService<IHttpClientFactory>(),
-                    storedToken.AccessToken,
+                    accessToken.Value,
                     dryRun,
                     sp.GetRequiredService<ILogger<GedcomGeniSync.ApiClient.Services.GeniProfileClient>>());
             });
 
             services.AddSingleton<IGeniPhotoClient>(sp =>
             {
-                var storedToken = GedcomGeniSync.ApiClient.Services.GeniAuthClient
-                    .LoadTokenFromFileAsync(tokenFile)
-                    .GetAwaiter()
-                    .GetResult();
-                if (storedToken == null || storedToken.IsExpired)
-                {
-                    throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
-                }
-
                 return new GedcomGeniSync.ApiClient.Services.GeniPhotoClient(
                     sp.GetRequiredService<IHttpClientFactory>(),
-                    storedToken.AccessToken,
+                    accessToken.Value,
                     dryRun,
                     sp.GetRequiredService<ILogger<GedcomGeniSync.ApiClient.Services.GeniPhotoClient>>());
             });
@@ -120,36 +106,10 @@ public class AddCommandHandler : IHostedCommand
             logger.LogInformation("Max Depth: {MaxDepth}", maxDepth == int.MaxValue ? "unlimited" : maxDepth.ToString());
 
             // 1. Load and parse JSON report
-            logger.LogInformation("Loading wave-compare report from {Path}...", inputPath);
-            if (!File.Exists(inputPath))
-            {
-                logger.LogError("Input file not found: {Path}", inputPath);
-                context.ExitCode = 1;
-                return;
-            }
-
-            var jsonContent = await File.ReadAllTextAsync(inputPath);
-
-            // Try to deserialize as wrapped format first (from wave-compare command)
-            var wrapper = JsonSerializer.Deserialize<WaveCompareJsonWrapper>(jsonContent, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            WaveHighConfidenceReport? report = wrapper?.Report;
-
-            // If that didn't work, try direct deserialization (for standalone report files)
+            var reportLoader = provider.GetRequiredService<WaveReportLoader>();
+            var report = await reportLoader.LoadAsync(inputPath);
             if (report == null)
             {
-                report = JsonSerializer.Deserialize<WaveHighConfidenceReport>(jsonContent, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-            }
-
-            if (report == null)
-            {
-                logger.LogError("Failed to parse wave-compare report. Expected JSON from wave-compare command or standalone report.");
                 context.ExitCode = 1;
                 return;
             }

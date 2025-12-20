@@ -55,9 +55,9 @@ public class GedcomLoader : IGedcomLoader
         {
             Activate.ForPersonalUse("gedcom@gedsync.local");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Already activated or activation not required
+            _logger.LogDebug(ex, "Gedcom.Net.SDK activation was skipped (already activated or not required).");
         }
 
         // Always pre-process the GEDCOM file to ensure correct encoding and fix formatting issues

@@ -20,13 +20,11 @@ public static class NameNormalizer
         var transliterated = Transliterate(name);
 
         // Normalize: lowercase and remove punctuation
-        return transliterated
-            .ToLowerInvariant()
-            .Replace("-", "")
-            .Replace("'", "")
-            .Replace(".", "")
-            .Replace(" ", "")
-            .Trim();
+        var normalized = RemovePunctuation(transliterated.ToLowerInvariant());
+
+        return string.IsNullOrWhiteSpace(normalized)
+            ? null
+            : normalized;
     }
 
     /// <summary>
@@ -52,5 +50,27 @@ public static class NameNormalizer
         }
 
         return result.ToString();
+    }
+
+    private static string RemovePunctuation(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '-':
+                case '\'':
+                case '.':
+                case ' ':
+                    continue;
+                default:
+                    builder.Append(c);
+                    break;
+            }
+        }
+
+        return builder.ToString();
     }
 }

@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using GedcomGeniSync.ApiClient.Services;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Cli.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -39,58 +40,24 @@ public class ProfileCommandHandler : IHostedCommand
         var tokenFile = context.ParseResult.GetValueForOption(_tokenFileOption)!;
         var verbose = context.ParseResult.GetValueForOption(_verboseOption) ?? false;
 
+        var accessToken = AccessTokenResolver.Resolve(token, tokenFile);
+
         await using var scope = _startup.CreateScope(verbose, services =>
         {
             services.AddSingleton<IGeniProfileClient>(sp =>
             {
-                var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile)
-                        .GetAwaiter()
-                        .GetResult();
-                    if (storedToken != null && !storedToken.IsExpired)
-                    {
-                        resolvedToken = storedToken.AccessToken;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
-                }
-
                 return new GeniProfileClient(
                     sp.GetRequiredService<IHttpClientFactory>(),
-                    resolvedToken,
+                    accessToken,
                     dryRun: false,
                     sp.GetRequiredService<ILogger<GeniProfileClient>>());
             });
 
             services.AddSingleton<IGeniPhotoClient>(sp =>
             {
-                var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile)
-                        .GetAwaiter()
-                        .GetResult();
-                    if (storedToken != null && !storedToken.IsExpired)
-                    {
-                        resolvedToken = storedToken.AccessToken;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
-                }
-
                 return new GeniPhotoClient(
                     sp.GetRequiredService<IHttpClientFactory>(),
-                    resolvedToken,
+                    accessToken,
                     dryRun: false,
                     sp.GetRequiredService<ILogger<GeniPhotoClient>>());
             });
