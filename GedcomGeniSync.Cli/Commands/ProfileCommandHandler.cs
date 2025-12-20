@@ -40,38 +40,38 @@ public class ProfileCommandHandler : IHostedCommand
         var tokenFile = context.ParseResult.GetValueForOption(_tokenFileOption)!;
         var verbose = context.ParseResult.GetValueForOption(_verboseOption) ?? false;
 
-        var accessToken = AccessTokenResolver.Resolve(token, tokenFile);
-
-        await using var scope = _startup.CreateScope(verbose, services =>
-        {
-            services.AddSingleton<IGeniProfileClient>(sp =>
-            {
-                return new GeniProfileClient(
-                    sp.GetRequiredService<IHttpClientFactory>(),
-                    accessToken,
-                    dryRun: false,
-                    sp.GetRequiredService<ILogger<GeniProfileClient>>());
-            });
-
-            services.AddSingleton<IGeniPhotoClient>(sp =>
-            {
-                return new GeniPhotoClient(
-                    sp.GetRequiredService<IHttpClientFactory>(),
-                    accessToken,
-                    dryRun: false,
-                    sp.GetRequiredService<ILogger<GeniPhotoClient>>());
-            });
-
-            services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
-                sp.GetRequiredService<IGeniProfileClient>(),
-                sp.GetRequiredService<IGeniPhotoClient>()));
-        });
-
-        var provider = scope.ServiceProvider;
-        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Profile");
-
         try
         {
+            var accessToken = AccessTokenResolver.Resolve(token, tokenFile);
+
+            await using var scope = _startup.CreateScope(verbose, services =>
+            {
+                services.AddSingleton<IGeniProfileClient>(sp =>
+                {
+                    return new GeniProfileClient(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        accessToken,
+                        dryRun: false,
+                        sp.GetRequiredService<ILogger<GeniProfileClient>>());
+                });
+
+                services.AddSingleton<IGeniPhotoClient>(sp =>
+                {
+                    return new GeniPhotoClient(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        accessToken,
+                        dryRun: false,
+                        sp.GetRequiredService<ILogger<GeniPhotoClient>>());
+                });
+
+                services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
+                    sp.GetRequiredService<IGeniProfileClient>(),
+                    sp.GetRequiredService<IGeniPhotoClient>()));
+            });
+
+            var provider = scope.ServiceProvider;
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Profile");
+
             var geniClient = provider.GetRequiredService<IGeniApiClient>();
             var profile = await geniClient.GetCurrentUserProfileAsync();
 
@@ -95,6 +95,9 @@ public class ProfileCommandHandler : IHostedCommand
         }
         catch (Exception ex)
         {
+            var logger = LoggerFactory
+                .Create(builder => builder.AddSimpleConsole())
+                .CreateLogger("Profile");
             logger.LogError(ex, "Failed to get profile");
             context.ExitCode = 1;
         }
