@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using GedcomGeniSync.ApiClient.Services;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Cli.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -39,72 +40,38 @@ public class ProfileCommandHandler : IHostedCommand
         var tokenFile = context.ParseResult.GetValueForOption(_tokenFileOption)!;
         var verbose = context.ParseResult.GetValueForOption(_verboseOption) ?? false;
 
-        await using var scope = _startup.CreateScope(verbose, services =>
-        {
-            services.AddSingleton<IGeniProfileClient>(sp =>
-            {
-                var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile)
-                        .GetAwaiter()
-                        .GetResult();
-                    if (storedToken != null && !storedToken.IsExpired)
-                    {
-                        resolvedToken = storedToken.AccessToken;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
-                }
-
-                return new GeniProfileClient(
-                    sp.GetRequiredService<IHttpClientFactory>(),
-                    resolvedToken,
-                    dryRun: false,
-                    sp.GetRequiredService<ILogger<GeniProfileClient>>());
-            });
-
-            services.AddSingleton<IGeniPhotoClient>(sp =>
-            {
-                var resolvedToken = token ?? Environment.GetEnvironmentVariable("GENI_ACCESS_TOKEN");
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    var storedToken = GeniAuthClient.LoadTokenFromFileAsync(tokenFile)
-                        .GetAwaiter()
-                        .GetResult();
-                    if (storedToken != null && !storedToken.IsExpired)
-                    {
-                        resolvedToken = storedToken.AccessToken;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(resolvedToken))
-                {
-                    throw new InvalidOperationException("No valid token found. Run 'auth' command first.");
-                }
-
-                return new GeniPhotoClient(
-                    sp.GetRequiredService<IHttpClientFactory>(),
-                    resolvedToken,
-                    dryRun: false,
-                    sp.GetRequiredService<ILogger<GeniPhotoClient>>());
-            });
-
-            services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
-                sp.GetRequiredService<IGeniProfileClient>(),
-                sp.GetRequiredService<IGeniPhotoClient>()));
-        });
-
-        var provider = scope.ServiceProvider;
-        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Profile");
-
         try
         {
+            var accessToken = AccessTokenResolver.Resolve(token, tokenFile);
+
+            await using var scope = _startup.CreateScope(verbose, services =>
+            {
+                services.AddSingleton<IGeniProfileClient>(sp =>
+                {
+                    return new GeniProfileClient(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        accessToken,
+                        dryRun: false,
+                        sp.GetRequiredService<ILogger<GeniProfileClient>>());
+                });
+
+                services.AddSingleton<IGeniPhotoClient>(sp =>
+                {
+                    return new GeniPhotoClient(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        accessToken,
+                        dryRun: false,
+                        sp.GetRequiredService<ILogger<GeniPhotoClient>>());
+                });
+
+                services.AddSingleton<IGeniApiClient>(sp => new GeniApiClient(
+                    sp.GetRequiredService<IGeniProfileClient>(),
+                    sp.GetRequiredService<IGeniPhotoClient>()));
+            });
+
+            var provider = scope.ServiceProvider;
+            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Profile");
+
             var geniClient = provider.GetRequiredService<IGeniApiClient>();
             var profile = await geniClient.GetCurrentUserProfileAsync();
 
@@ -128,6 +95,9 @@ public class ProfileCommandHandler : IHostedCommand
         }
         catch (Exception ex)
         {
+            var logger = LoggerFactory
+                .Create(builder => builder.AddSimpleConsole())
+                .CreateLogger("Profile");
             logger.LogError(ex, "Failed to get profile");
             context.ExitCode = 1;
         }

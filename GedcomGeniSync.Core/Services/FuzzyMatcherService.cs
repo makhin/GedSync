@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using F23.StringSimilarity;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services.Interfaces;
@@ -556,11 +557,25 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     private static string NormalizePlaceName(string place)
     {
-        return place
-            .ToLowerInvariant()
-            .Replace(".", "")
-            .Replace("-", " ")
-            .Trim();
+        var lower = place.ToLowerInvariant();
+        var builder = new StringBuilder(lower.Length);
+
+        foreach (var c in lower)
+        {
+            switch (c)
+            {
+                case '.':
+                    continue;
+                case '-':
+                    builder.Append(' ');
+                    break;
+                default:
+                    builder.Append(c);
+                    break;
+            }
+        }
+
+        return builder.ToString().Trim();
     }
 
     #endregion
@@ -798,12 +813,28 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         // Transliterate to common alphabet
         var transliterated = _nameVariants.Transliterate(text);
 
-        return transliterated
-            .ToLowerInvariant()
-            .Replace("-", "")
-            .Replace("'", "")
-            .Replace(".", "")
-            .Trim();
+        return RemoveComparisonNoise(transliterated.ToLowerInvariant());
+    }
+
+    private static string RemoveComparisonNoise(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '-':
+                case '\'':
+                case '.':
+                    continue;
+                default:
+                    builder.Append(c);
+                    break;
+            }
+        }
+
+        return builder.ToString().Trim();
     }
 
     #endregion
