@@ -352,34 +352,12 @@ public class AddExecutor
         if (string.IsNullOrWhiteSpace(profileId))
             return profileId;
 
-        // If contains colon (e.g., "geni:6000000206529622827"), take numeric part after colon
-        var colonIndex = profileId.LastIndexOf(':');
-        if (colonIndex >= 0)
-        {
-            var numericId = profileId.Substring(colonIndex + 1);
-            return $"g{numericId}";
-        }
+        // Extract numeric part
+        var id = profileId.Contains(':')
+            ? profileId[(profileId.LastIndexOf(':') + 1)..]
+            : profileId.Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase);
 
-        // If starts with "profile-g" already, remove "profile-" to get "g{id}"
-        if (profileId.StartsWith("profile-g", StringComparison.OrdinalIgnoreCase))
-        {
-            return profileId.Substring("profile-".Length);
-        }
-
-        // If starts with "profile-" but not "profile-g", add 'g' prefix
-        if (profileId.StartsWith("profile-", StringComparison.OrdinalIgnoreCase))
-        {
-            var numericId = profileId.Substring("profile-".Length);
-            return $"g{numericId}";
-        }
-
-        // If it's just a number, add 'g' prefix
-        if (long.TryParse(profileId, out _))
-        {
-            return $"g{profileId}";
-        }
-
-        // Return as-is if no known prefix
-        return profileId;
+        // Ensure g prefix
+        return id.StartsWith('g') ? id : $"g{id}";
     }
 }

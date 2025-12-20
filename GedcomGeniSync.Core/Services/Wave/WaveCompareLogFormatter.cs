@@ -228,7 +228,9 @@ public class WaveCompareLogFormatter
 
         foreach (var group in bySeverity)
         {
-            sb.AppendLine($"[{group.Key}] ({group.Count()} issues)");
+            var count = group.Count();
+
+            sb.AppendLine($"[{group.Key}] ({count} issues)");
             sb.AppendLine("───────────────────────────────────────────────────────");
 
             foreach (var issue in group.Take(20))
@@ -237,9 +239,9 @@ public class WaveCompareLogFormatter
                 sb.AppendLine($"    {issue.SourceId} → {issue.DestId}");
             }
 
-            if (group.Count() > 20)
+            if (count > 20)
             {
-                sb.AppendLine($"  ... and {group.Count() - 20} more");
+                sb.AppendLine($"  ... and {count - 20} more");
             }
 
             sb.AppendLine();

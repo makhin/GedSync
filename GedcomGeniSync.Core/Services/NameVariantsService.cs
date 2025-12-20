@@ -102,77 +102,37 @@ public class NameVariantsService : INameVariantsService
     /// Check if two given names are equivalent
     /// </summary>
     public bool AreEquivalent(string name1, string name2)
-    {
-        if (string.IsNullOrEmpty(name1) || string.IsNullOrEmpty(name2))
-            return false;
-
-        var norm1 = name1.ToLowerInvariant().Trim();
-        var norm2 = name2.ToLowerInvariant().Trim();
-
-        if (norm1 == norm2)
-            return true;
-
-        // Check if in same group
-        if (_givenNameGroups.TryGetValue(norm1, out var group1))
-        {
-            if (group1.Contains(norm2))
-                return true;
-        }
-
-        if (_givenNameGroups.TryGetValue(norm2, out var group2))
-        {
-            if (group2.Contains(norm1))
-                return true;
-        }
-
-        // Check transliterated versions
-        var translit1 = Transliterate(norm1);
-        var translit2 = Transliterate(norm2);
-
-        if (translit1 == translit2)
-            return true;
-
-        if (_givenNameGroups.TryGetValue(translit1, out var group3))
-        {
-            if (group3.Contains(translit2))
-                return true;
-        }
-
-        return false;
-    }
+        => IsNormalizedMatch(name1, name2, _givenNameGroups);
 
     /// <summary>
     /// Check if two surnames are equivalent
     /// </summary>
     public bool AreEquivalentSurnames(string name1, string name2)
+        => IsNormalizedMatch(name1, name2, _surnameGroups);
+
+    private bool IsNormalizedMatch(
+        string? name1,
+        string? name2,
+        Dictionary<string, HashSet<string>> groups)
     {
         if (string.IsNullOrEmpty(name1) || string.IsNullOrEmpty(name2))
             return false;
 
+        return CheckInGroup(name1, name2, groups) ||
+               CheckInGroup(Transliterate(name1), Transliterate(name2), groups);
+    }
+
+    private static bool CheckInGroup(
+        string name1,
+        string name2,
+        Dictionary<string, HashSet<string>> groups)
+    {
         var norm1 = name1.ToLowerInvariant().Trim();
         var norm2 = name2.ToLowerInvariant().Trim();
 
-        if (norm1 == norm2)
-            return true;
-
-        // Check if in same group
-        if (_surnameGroups.TryGetValue(norm1, out var group1))
-        {
-            if (group1.Contains(norm2))
-                return true;
-        }
-
-        if (_surnameGroups.TryGetValue(norm2, out var group2))
-        {
-            if (group2.Contains(norm1))
-                return true;
-        }
-
-        // Check transliterated versions
-        var translit1 = Transliterate(norm1);
-        var translit2 = Transliterate(norm2);
-
-        return translit1 == translit2;
+        return norm1 == norm2 ||
+               (groups.TryGetValue(norm1, out var g1) && g1.Contains(norm2)) ||
+               (groups.TryGetValue(norm2, out var g2) && g2.Contains(norm1));
     }
 
     /// <summary>

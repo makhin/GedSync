@@ -164,17 +164,17 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
     /// </summary>
     public async Task<List<PhotoDownloadResult>> DownloadPhotosAsync(IEnumerable<string> urls)
     {
-        var results = new List<PhotoDownloadResult>();
+        var downloadTasks = urls
+            .Where(IsMyHeritageUrl)
+            .Select(DownloadPhotoAsync)
+            .ToList();
 
-        foreach (var url in urls.Where(IsMyHeritageUrl))
+        if (downloadTasks.Count == 0)
         {
-            var result = await DownloadPhotoAsync(url);
-            if (result != null)
-            {
-                results.Add(result);
-            }
+            return new List<PhotoDownloadResult>();
         }
 
-        return results;
+        var results = await Task.WhenAll(downloadTasks);
+        return results.Where(r => r != null).ToList()!;
     }
 }

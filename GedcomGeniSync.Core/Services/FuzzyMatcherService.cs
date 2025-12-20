@@ -548,11 +548,19 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         if (sourceTokens.Count == 0 || targetTokens.Count == 0)
             return 0;
 
-        var intersection = sourceTokens.Intersect(targetTokens).Count();
-        var union = sourceTokens.Union(targetTokens).Count();
+        var intersectionCount = 0;
+        foreach (var token in sourceTokens)
+        {
+            if (targetTokens.Contains(token))
+            {
+                intersectionCount++;
+            }
+        }
+
+        var unionCount = sourceTokens.Count + targetTokens.Count - intersectionCount;
 
         // Jaccard similarity
-        return (double)intersection / union;
+        return unionCount > 0 ? (double)intersectionCount / unionCount : 0.0;
     }
 
     private static string NormalizePlaceName(string place)
