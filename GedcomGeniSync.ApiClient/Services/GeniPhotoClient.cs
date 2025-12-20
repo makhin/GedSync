@@ -369,47 +369,47 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
 
         Logger.LogDebug("POST {Url}", url);
 
-        using var client = CreateClient();
-        using var content = new MultipartFormDataContent();
-
-        using var fileContent = new ByteArrayContent(imageData);
-        fileContent.Headers.ContentType = GetContentType(fileName);
-        content.Add(fileContent, "file", fileName);
-
-        if (!string.IsNullOrEmpty(caption))
-        {
-            content.Add(new StringContent(caption), "title");
-        }
-
         try
         {
-            var response = await client.PostAsync(url, content);
-            response.EnsureSuccessStatusCode();
-            var result = await response.Content.ReadFromJsonAsync<GeniPhoto>();
+            using var client = CreateClient();
 
-            Logger.LogInformation("{Action} {PhotoId} for profile {ProfileId}", successAction, result?.Id, profileId);
-            return result;
+            // Convert image data to base64 as required by Geni API
+            var base64Image = Convert.ToBase64String(imageData);
+
+            // Use ExecuteWithRetryAsync to handle 429 errors properly
+            var response = await ExecuteWithRetryAsync(async () =>
+            {
+                // Create form content with base64-encoded file
+                var formData = new Dictionary<string, string>
+                {
+                    ["file"] = base64Image
+                };
+
+                if (!string.IsNullOrEmpty(caption))
+                {
+                    formData["title"] = caption;
+                }
+
+                var content = new FormUrlEncodedContent(formData);
+                var result = await client.PostAsync(url, content);
+
+                // Dispose content after use
+                content.Dispose();
+
+                return result;
+            });
+
+            response.EnsureSuccessStatusCode();
+            var photo = await response.Content.ReadFromJsonAsync<GeniPhoto>();
+
+            Logger.LogInformation("{Action} {PhotoId} for profile {ProfileId}", successAction, photo?.Id, profileId);
+            return photo;
         }
         catch (HttpRequestException ex)
         {
             Logger.LogError(ex, failureMessage, profileId);
             return null;
         }
-    }
-
-    private static MediaTypeHeaderValue GetContentType(string filePath)
-    {
-        var ext = Path.GetExtension(filePath).ToLowerInvariant();
-        var mimeType = ext switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".gif" => "image/gif",
-            ".webp" => "image/webp",
-            ".bmp" => "image/bmp",
-            _ => "application/octet-stream"
-        };
-        return new MediaTypeHeaderValue(mimeType);
     }
 
     private static GeniPhoto CreateDryRunPhoto(string filePath)

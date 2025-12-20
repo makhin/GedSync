@@ -29,6 +29,7 @@ public class WaveCompareCommandHandler : IHostedCommand
     private readonly Option<string?> _outputOption = new("--output", description: "Output JSON file path (default: stdout)");
     private readonly Option<string?> _detailedLogOption = new("--detailed-log", description: "Output detailed text log file path (optional)");
     private readonly Option<bool> _verboseOption = new("--verbose", () => false, description: "Enable verbose logging");
+    private readonly Option<bool> _ignorePhotosOption = new("--ignore-photos", () => false, description: "Ignore photo differences when comparing");
 
     public WaveCompareCommandHandler(Startup startup)
     {
@@ -49,6 +50,7 @@ public class WaveCompareCommandHandler : IHostedCommand
         waveCompareCommand.AddOption(_outputOption);
         waveCompareCommand.AddOption(_detailedLogOption);
         waveCompareCommand.AddOption(_verboseOption);
+        waveCompareCommand.AddOption(_ignorePhotosOption);
 
         waveCompareCommand.SetHandler(HandleAsync);
         return waveCompareCommand;
@@ -67,6 +69,14 @@ public class WaveCompareCommandHandler : IHostedCommand
         var outputPath = parseResult.GetValueForOption(_outputOption);
         var detailedLogPath = parseResult.GetValueForOption(_detailedLogOption);
         var verbose = parseResult.GetValueForOption(_verboseOption);
+        var ignorePhotos = parseResult.GetValueForOption(_ignorePhotosOption);
+
+        // Build set of fields to ignore
+        var fieldsToIgnore = new HashSet<string>();
+        if (ignorePhotos)
+        {
+            fieldsToIgnore.Add("PhotoUrl");
+        }
 
         await using var scope = _startup.CreateScope(verbose, services =>
         {
@@ -75,7 +85,8 @@ public class WaveCompareCommandHandler : IHostedCommand
                 sp.GetRequiredService<ILogger<FuzzyMatcherService>>(),
                 new MatchingOptions()));
             services.AddSingleton<IPersonFieldComparer>(sp => new PersonFieldComparer(
-                sp.GetRequiredService<ILogger<PersonFieldComparer>>()));
+                sp.GetRequiredService<ILogger<PersonFieldComparer>>(),
+                fieldsToIgnore));
             services.AddSingleton<GedcomGeniSync.Core.Services.Wave.WaveCompareService>(sp =>
                 new GedcomGeniSync.Core.Services.Wave.WaveCompareService(
                     sp.GetRequiredService<IFuzzyMatcherService>(),

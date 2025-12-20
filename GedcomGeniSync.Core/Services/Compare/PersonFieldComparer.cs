@@ -11,6 +11,7 @@ namespace GedcomGeniSync.Services.Compare;
 public class PersonFieldComparer : IPersonFieldComparer
 {
     private readonly ILogger<PersonFieldComparer> _logger;
+    private readonly HashSet<string> _fieldsToIgnore;
 
     // Fields to compare according to COMPARE_COMMAND.md specification
     private static readonly string[] FieldsToCompare =
@@ -21,9 +22,10 @@ public class PersonFieldComparer : IPersonFieldComparer
         "Gender", "PhotoUrl"
     ];
 
-    public PersonFieldComparer(ILogger<PersonFieldComparer> logger)
+    public PersonFieldComparer(ILogger<PersonFieldComparer> logger, HashSet<string>? fieldsToIgnore = null)
     {
         _logger = logger;
+        _fieldsToIgnore = fieldsToIgnore ?? new HashSet<string>();
     }
 
     public ImmutableList<FieldDiff> CompareFields(PersonRecord source, PersonRecord destination)
@@ -51,8 +53,11 @@ public class PersonFieldComparer : IPersonFieldComparer
         // Compare gender
         CompareGenderField(differences, source.Gender, destination.Gender);
 
-        // Compare photos
-        ComparePhotoUrls(differences, source.PhotoUrls, destination.PhotoUrls);
+        // Compare photos (unless ignored)
+        if (!_fieldsToIgnore.Contains("PhotoUrl"))
+        {
+            ComparePhotoUrls(differences, source.PhotoUrls, destination.PhotoUrls);
+        }
 
         return differences.ToImmutable();
     }

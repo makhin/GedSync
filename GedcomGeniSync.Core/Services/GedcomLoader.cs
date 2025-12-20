@@ -53,54 +53,35 @@ public class GedcomLoader : IGedcomLoader
             // Already activated or activation not required
         }
 
-        // Configure parser to skip unknown tags gracefully
+        // Always pre-process the GEDCOM file to ensure correct encoding and fix formatting issues
+        // This handles: UTF-8 encoding detection, malformed NOTE lines, etc.
+        var cleanedFilePath = PreprocessGedcomFile(filePath);
         GedcomTransmission transmission;
+
         try
         {
-            using var parser = new Parser(filePath);
+            using var parser = new Parser(cleanedFilePath);
             // Skip unknown/custom tags (ADDR in INDI, _UPD, _UID, etc.) to avoid parsing errors
             parser.Settings.SkipUnknownTag = SkipUnknownTag.All;
             transmission = new GedcomTransmission();
             transmission.Deserialize(parser);
+            _logger.LogInformation("Successfully loaded GEDCOM file");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("GEDCOM file has formatting issues. Attempting to load with pre-processing...");
-            _logger.LogDebug("Error details: {Message}", ex.Message);
-
-            // Pre-process the GEDCOM file to fix severe formatting issues
-            // (malformed NOTE lines, encoding issues, etc.) that SDK can't handle
-            var cleanedFilePath = PreprocessGedcomFile(filePath);
-            try
+            throw new InvalidOperationException(
+                $"The GEDCOM file contains formatting issues that cannot be parsed. " +
+                $"Error: {ex.Message}. " +
+                $"Please check the GEDCOM file for compliance with GEDCOM 5.5.1 standard, " +
+                $"or use a GEDCOM editor to clean up the file before importing.",
+                ex);
+        }
+        finally
+        {
+            // Clean up temporary file
+            if (File.Exists(cleanedFilePath))
             {
-                using var parser = new Parser(cleanedFilePath);
-                parser.Settings.SkipUnknownTag = SkipUnknownTag.All;
-                transmission = new GedcomTransmission();
-                transmission.Deserialize(parser);
-                _logger.LogInformation("Successfully loaded GEDCOM file after pre-processing");
-            }
-            catch (Exception innerEx)
-            {
-                // Clean up temporary file
-                if (File.Exists(cleanedFilePath))
-                {
-                    try { File.Delete(cleanedFilePath); } catch { }
-                }
-
-                throw new InvalidOperationException(
-                    $"The GEDCOM file contains formatting issues that cannot be parsed. " +
-                    $"Error: {ex.Message}. " +
-                    $"Please check the GEDCOM file for compliance with GEDCOM 5.5.1 standard, " +
-                    $"or use a GEDCOM editor to clean up the file before importing.",
-                    innerEx);
-            }
-            finally
-            {
-                // Clean up temporary file
-                if (File.Exists(cleanedFilePath))
-                {
-                    try { File.Delete(cleanedFilePath); } catch { }
-                }
+                try { File.Delete(cleanedFilePath); } catch { }
             }
         }
 
@@ -1101,8 +1082,9 @@ public class GedcomLoader : IGedcomLoader
             return string.Empty;
 
         // Remove GEDCOM-specific markers and special characters
-        // Keep only letters (Latin and Cyrillic), digits, spaces, and hyphens
-        name = Regex.Replace(name, @"[^A-Za-zА-Яа-яЁё0-9 -]", "");
+        // Keep only Unicode letters, digits, spaces, hyphens, and apostrophes
+        // This includes Latin (A-Z), Cyrillic (А-Я), Lithuanian (Š,ž,č,ė,ū), and other European characters
+        name = Regex.Replace(name, @"[^\p{L}\p{M}0-9 '-]", "");
         name = Regex.Replace(name, @"\s+", " ");
 
         return name.Trim();
@@ -1165,13 +1147,17 @@ public class GedcomLoader : IGedcomLoader
 
         var tempFilePath = Path.GetTempFileName();
 
-        // Detect encoding by reading first few bytes to detect BOM
-        using var encodingReader = new StreamReader(filePath, true);
-        encodingReader.Peek(); // Force detection
-        var encoding = encodingReader.CurrentEncoding;
+        // Detect encoding from GEDCOM CHAR tag in header
+        var encoding = DetectGedcomEncoding(filePath);
+        _logger.LogDebug("Using encoding: {Encoding}", encoding.EncodingName);
+
+        // For UTF-8, use an encoding with BOM so the parser can detect it immediately
+        var writeEncoding = encoding.CodePage == System.Text.Encoding.UTF8.CodePage
+            ? new System.Text.UTF8Encoding(true)  // true = emit BOM
+            : encoding;
 
         using (var reader = new StreamReader(filePath, encoding))
-        using (var writer = new StreamWriter(tempFilePath, false, encoding))
+        using (var writer = new StreamWriter(tempFilePath, false, writeEncoding))
         {
             string? line;
             var lineNumber = 0;
@@ -1244,5 +1230,54 @@ public class GedcomLoader : IGedcomLoader
 
         _logger.LogInformation("Pre-processing complete. Temporary file: {Path}", tempFilePath);
         return tempFilePath;
+    }
+
+    /// <summary>
+    /// Detects encoding from GEDCOM header CHAR tag
+    /// GEDCOM files should specify encoding with "1 CHAR {encoding}" in header
+    /// </summary>
+    private static System.Text.Encoding DetectGedcomEncoding(string filePath)
+    {
+        // Try reading first 1000 bytes as UTF-8 to find CHAR tag
+        // Most GEDCOM files are UTF-8 without BOM, so we try that first
+        try
+        {
+            using var reader = new StreamReader(filePath, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+
+            for (int i = 0; i < 50; i++) // CHAR should be in first 50 lines
+            {
+                var line = reader.ReadLine();
+                if (line == null)
+                    break;
+
+                // Look for "1 CHAR {encoding}" line in header
+                if (line.StartsWith("1 CHAR ", StringComparison.OrdinalIgnoreCase))
+                {
+                    var charsetName = line.Substring(7).Trim();
+
+                    // Map GEDCOM charset names to .NET encodings
+                    return charsetName.ToUpperInvariant() switch
+                    {
+                        "UTF-8" or "UTF8" => System.Text.Encoding.UTF8,
+                        "UNICODE" => System.Text.Encoding.Unicode,
+                        "ASCII" => System.Text.Encoding.ASCII,
+                        "ANSEL" => System.Text.Encoding.UTF8, // ANSEL is rare, fall back to UTF-8
+                        _ => System.Text.Encoding.UTF8 // Default to UTF-8 for unknown
+                    };
+                }
+
+                // Stop at end of header
+                if (line.StartsWith("0 @"))
+                    break;
+            }
+        }
+        catch
+        {
+            // If UTF-8 reading fails, file might have different encoding
+            // Fall through to default
+        }
+
+        // Default to UTF-8 if CHAR tag not found (modern standard)
+        return System.Text.Encoding.UTF8;
     }
 }

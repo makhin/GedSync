@@ -127,7 +127,7 @@ public class UpdateExecutor
                             string.Join(", ", fieldsForProfile.Select(f => f.FieldName)));
 
                         var updated = await _profileClient.UpdateProfileAsync(
-                            node.GeniProfileId.Replace("profile-", ""),
+                            CleanProfileId(node.GeniProfileId),
                             profileUpdate);
 
                         if (updated != null)
@@ -138,6 +138,8 @@ public class UpdateExecutor
                         else
                         {
                             _logger.LogError("  ✗ Failed to update profile");
+                            result.Failed++;
+                            failedCount++;
                             result.Errors.Add(new Commands.UpdateError
                             {
                                 SourceId = node.SourceId,
@@ -192,7 +194,7 @@ public class UpdateExecutor
 
                             // Upload to Geni as mugshot
                             var uploadedPhoto = await _photoClient.SetMugshotFromBytesAsync(
-                                node.GeniProfileId.Replace("profile-", ""),
+                                CleanProfileId(node.GeniProfileId),
                                 downloadResult.Data,
                                 downloadResult.FileName);
 
@@ -438,5 +440,46 @@ public class UpdateExecutor
 
         // Only return if we got at least year
         return result.Year.HasValue ? result : null;
+    }
+
+    /// <summary>
+    /// Cleans profile ID by converting to Geni API format (g{numeric_id})
+    /// </summary>
+    /// <param name="profileId">Profile ID that may contain prefixes like "geni:", "profile-", or "profile-g"</param>
+    /// <returns>Profile ID in format g{numeric_id} for use in API URLs</returns>
+    private static string CleanProfileId(string profileId)
+    {
+        if (string.IsNullOrWhiteSpace(profileId))
+            return profileId;
+
+        // If contains colon (e.g., "geni:6000000206529622827"), take numeric part after colon
+        var colonIndex = profileId.LastIndexOf(':');
+        if (colonIndex >= 0)
+        {
+            var numericId = profileId.Substring(colonIndex + 1);
+            return $"g{numericId}";
+        }
+
+        // If starts with "profile-g" already, remove "profile-" to get "g{id}"
+        if (profileId.StartsWith("profile-g", StringComparison.OrdinalIgnoreCase))
+        {
+            return profileId.Substring("profile-".Length);
+        }
+
+        // If starts with "profile-" but not "profile-g", add 'g' prefix
+        if (profileId.StartsWith("profile-", StringComparison.OrdinalIgnoreCase))
+        {
+            var numericId = profileId.Substring("profile-".Length);
+            return $"g{numericId}";
+        }
+
+        // If it's just a number, add 'g' prefix
+        if (long.TryParse(profileId, out _))
+        {
+            return $"g{profileId}";
+        }
+
+        // Return as-is if no known prefix
+        return profileId;
     }
 }
