@@ -163,22 +163,22 @@ public class PersonFieldComparer : IPersonFieldComparer
             sourcePhotos.Count, destPhotos.Count);
 
         // Find photos in source that are not in destination
-        var newPhotos = sourcePhotos.Except(destPhotos).ToList();
+        var newPhoto = sourcePhotos.Except(destPhotos).FirstOrDefault();
 
-        if (newPhotos.Count > 0)
+        if (newPhoto != null)
         {
             // For now, we'll report the first new photo URL
             // In the future, this could be enhanced to handle multiple photos
             differences.Add(new FieldDiff
             {
                 FieldName = "PhotoUrl",
-                SourceValue = newPhotos[0],
+                SourceValue = newPhoto,
                 DestinationValue = destPhotos.FirstOrDefault(),
                 Action = FieldAction.AddPhoto
             });
 
-            _logger.LogInformation("Photo difference found: {Count} new photo(s) in source. First URL: {Url}",
-                newPhotos.Count, newPhotos[0]);
+            _logger.LogInformation("Photo difference found: new photo in source. URL: {Url}",
+                newPhoto);
         }
         else if (sourcePhotos.Count > 0 && destPhotos.Count > 0)
         {

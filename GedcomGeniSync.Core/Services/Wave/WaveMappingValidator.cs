@@ -75,62 +75,24 @@ public class WaveMappingValidator
         // ═══════════════════════════════════════════════════════════
         // 2. Проверка года рождения
         // ═══════════════════════════════════════════════════════════
-        if (sourcePerson.BirthYear.HasValue && destPerson.BirthYear.HasValue)
-        {
-            var diff = Math.Abs(sourcePerson.BirthYear.Value - destPerson.BirthYear.Value);
-            if (diff > 15)
-            {
-                issues.Add(new ValidationIssue
-                {
-                    Severity = Severity.High,
-                    Type = IssueType.BirthYearMismatch,
-                    SourceId = newMapping.SourceId,
-                    DestId = newMapping.DestinationId,
-                    Message = $"Birth year differs by {diff} years ({sourcePerson.BirthYear} vs {destPerson.BirthYear})"
-                });
-            }
-            else if (diff > 5)
-            {
-                issues.Add(new ValidationIssue
-                {
-                    Severity = Severity.Medium,
-                    Type = IssueType.BirthYearMismatch,
-                    SourceId = newMapping.SourceId,
-                    DestId = newMapping.DestinationId,
-                    Message = $"Birth year differs by {diff} years ({sourcePerson.BirthYear} vs {destPerson.BirthYear})"
-                });
-            }
-        }
+        ValidateYearDifference(
+            sourcePerson.BirthYear,
+            destPerson.BirthYear,
+            "Birth year",
+            IssueType.BirthYearMismatch,
+            newMapping,
+            issues);
 
         // ═══════════════════════════════════════════════════════════
         // 3. Проверка года смерти
         // ═══════════════════════════════════════════════════════════
-        if (sourcePerson.DeathYear.HasValue && destPerson.DeathYear.HasValue)
-        {
-            var diff = Math.Abs(sourcePerson.DeathYear.Value - destPerson.DeathYear.Value);
-            if (diff > 15)
-            {
-                issues.Add(new ValidationIssue
-                {
-                    Severity = Severity.High,
-                    Type = IssueType.DeathYearMismatch,
-                    SourceId = newMapping.SourceId,
-                    DestId = newMapping.DestinationId,
-                    Message = $"Death year differs by {diff} years ({sourcePerson.DeathYear} vs {destPerson.DeathYear})"
-                });
-            }
-            else if (diff > 5)
-            {
-                issues.Add(new ValidationIssue
-                {
-                    Severity = Severity.Medium,
-                    Type = IssueType.DeathYearMismatch,
-                    SourceId = newMapping.SourceId,
-                    DestId = newMapping.DestinationId,
-                    Message = $"Death year differs by {diff} years ({sourcePerson.DeathYear} vs {destPerson.DeathYear})"
-                });
-            }
-        }
+        ValidateYearDifference(
+            sourcePerson.DeathYear,
+            destPerson.DeathYear,
+            "Death year",
+            IssueType.DeathYearMismatch,
+            newMapping,
+            issues);
 
         // ═══════════════════════════════════════════════════════════
         // 4. Проверка на дубликаты destination
@@ -202,6 +164,38 @@ public class WaveMappingValidator
             IsValid = isValid,
             Issues = issues
         };
+    }
+
+    private void ValidateYearDifference(
+        int? sourceYear,
+        int? destYear,
+        string fieldName,
+        IssueType issueType,
+        PersonMapping mapping,
+        List<ValidationIssue> issues)
+    {
+        if (!sourceYear.HasValue || !destYear.HasValue)
+            return;
+
+        var diff = Math.Abs(sourceYear.Value - destYear.Value);
+        var (severity, message) = diff switch
+        {
+            > 15 => (Severity.High, $"{fieldName} differs by {diff} years"),
+            > 5 => (Severity.Medium, $"{fieldName} differs by {diff} years"),
+            _ => ((Severity?)null, (string?)null)
+        };
+
+        if (severity.HasValue)
+        {
+            issues.Add(new ValidationIssue
+            {
+                Severity = severity.Value,
+                Type = issueType,
+                SourceId = mapping.SourceId,
+                DestId = mapping.DestinationId,
+                Message = $"{message} ({sourceYear} vs {destYear})"
+            });
+        }
     }
 
     /// <summary>
