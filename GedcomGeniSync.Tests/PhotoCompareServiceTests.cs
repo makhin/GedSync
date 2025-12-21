@@ -42,6 +42,8 @@ public class PhotoCompareServiceTests
         report.MatchedPhotos.Should().ContainSingle();
         report.MatchedPhotos[0].IsMatch.Should().BeTrue();
         report.MatchedPhotos[0].Similarity.Should().Be(1.0);
+        report.MatchedPhotos[0].SourceLocalPath.Should().Be(sourceEntry.LocalPath);
+        report.MatchedPhotos[0].DestinationLocalPath.Should().Be(destinationEntry.LocalPath);
     }
 
     [Fact]
@@ -72,6 +74,8 @@ public class PhotoCompareServiceTests
         report.SimilarPhotos.Should().ContainSingle();
         report.SimilarPhotos[0].IsMatch.Should().BeFalse();
         report.SimilarPhotos[0].Similarity.Should().BeGreaterThan(0.95);
+        report.SimilarPhotos[0].SourceLocalPath.Should().Be(sourceEntry.LocalPath);
+        report.SimilarPhotos[0].DestinationLocalPath.Should().Be(destinationEntry.LocalPath);
     }
 
     [Fact]

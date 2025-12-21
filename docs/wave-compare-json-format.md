@@ -112,7 +112,9 @@ High-confidence отчет с отфильтрованными результа�
 - `fieldName` - название поля (BirthPlace, DeathDate, FirstName и т.д.)
 - `sourceValue` - значение в исходном файле
 - `destinationValue` - значение в целевом файле (может быть null)
-- `action` - действие: "Add", "Update", "AddPhoto"
+- `action` - действие: "Add", "Update", "AddPhoto", "UpdatePhoto", "PhotoMatch"
+- `photoSimilarity` - похожесть фото (0.0 - 1.0, только для фото)
+- `localPhotoPath` - путь к фото в кэше (для upload)
 
 ## NodesToAdd Array
 

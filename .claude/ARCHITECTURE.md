@@ -219,6 +219,20 @@ Default Weights (sum to 100):
 - Immutable collections for thread safety
 - Eager loading of all persons for quick lookups
 
+#### Photo Services (`Services/Photo/*`)
+**Purpose**: Download, cache, hash, and compare photos
+
+**Components**:
+- `PhotoCacheService`: persistent cache on disk with `cache.json` index
+- `PhotoHashService`: SHA256 + perceptual hash
+- `PhotoCompareService`: compares source/destination photos and reports matches/similarity
+- `PhotoSourceDetector`: source detection for folder organization
+
+**Design Decisions**:
+- Local cache avoids repeated downloads
+- SHA256 used for exact matches before perceptual comparison
+- Comparison results carry local paths for upload
+
 #### GeniApiClient (`GeniApiClient.cs`)
 **Purpose**: Interface with Geni.com REST API
 

@@ -16,6 +16,8 @@
 
 - **Resume support** — сохранение состояния для продолжения после сбоев
 
+- **Фото-кэш и сравнение** — локальный кэш, сравнение по содержимому и upload из кэша
+
 ## Установка
 
 ```bash
@@ -90,7 +92,16 @@ paths:
 
 logging:
   verbose: false
+
+photo:
+  enabled: true
+  cacheDirectory: "./photos"
+  downloadOnLoad: true
+  similarityThreshold: 0.95
+  maxConcurrentDownloads: 4
 ```
+
+Подробнее о кэше: `docs/PHOTO_CACHE.md`
 
 ### 3. Анализ GEDCOM файла
 

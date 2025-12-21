@@ -107,7 +107,7 @@ gedsync update --input <json> --gedcom <gedcom> [options]
 - `--token-file` - Geni API token file (default: `geni_token.json`)
 - `--dry-run` - Simulate updates without making changes
 - `--verbose` - Enable detailed logging
-- `--sync-photos` - Upload photos from MyHeritage (default: `true`)
+- `--sync-photos` - Upload photos from GEDCOM sources (default: `true`)
 - `--skip-fields` - Comma-separated list of fields to skip
   - Example: `--skip-fields "BirthPlace,DeathPlace"`
 
@@ -116,7 +116,7 @@ gedsync update --input <json> --gedcom <gedcom> [options]
 - Dates: `BirthDate`, `DeathDate`, `BurialDate`
 - Places: `BirthPlace`, `DeathPlace`, `BurialPlace`
 - Other: `Gender`, `Occupation`
-- Photos: `PhotoUrl` (MyHeritage photos)
+- Photos: `PhotoUrl` (or cached local photo)
 
 **Examples:**
 
@@ -330,7 +330,10 @@ The tool parses various GEDCOM date formats:
 
 ### Photos
 
-- Only MyHeritage URLs are supported
+- HTTP/HTTPS URLs are supported for download
+- If a cached file is available, it is used for upload first
+- If cache is missing, the tool downloads from the URL
+- `localPhotoPath` from wave-compare is used when present
 - Photos are uploaded as "mugshots" (primary profile photo)
 - Maximum size: determined by Geni API limits
 
