@@ -53,7 +53,12 @@ public class Startup
         services.AddSingleton<IConfigurationService, ConfigurationService>();
         services.AddSingleton<INameVariantsService, NameVariantsService>();
         services.AddSingleton<IGedcomLoader, GedcomLoader>();
-        services.AddSingleton<PhotoConfig>();
+        services.AddSingleton<PhotoConfig>(sp =>
+        {
+            var configService = sp.GetRequiredService<IConfigurationService>();
+            var config = configService.LoadConfiguration(null);
+            return config.Photo;
+        });
         services.AddSingleton<IPhotoDownloadService>(sp =>
             new PhotoDownloadService(
                 sp.GetRequiredService<IHttpClientFactory>(),
