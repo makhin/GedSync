@@ -13,7 +13,7 @@ public class PhotoDownloadService : IPhotoDownloadService
     private readonly ILogger<PhotoDownloadService> _logger;
     private readonly bool _dryRun;
 
-    private static readonly string[] SupportedHosts = new[]
+    private static readonly string[] MyHeritageHosts = new[]
     {
         "myheritage.com",
         "www.myheritage.com",
@@ -40,17 +40,8 @@ public class PhotoDownloadService : IPhotoDownloadService
         if (string.IsNullOrWhiteSpace(url))
             return false;
 
-        try
-        {
-            var uri = new Uri(url, UriKind.Absolute);
-            return SupportedHosts.Any(host =>
-                uri.Host.Equals(host, StringComparison.OrdinalIgnoreCase) ||
-                uri.Host.EndsWith("." + host, StringComparison.OrdinalIgnoreCase));
-        }
-        catch (UriFormatException)
-        {
-            return false;
-        }
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+               && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 
     /// <summary>
@@ -83,10 +74,24 @@ public class PhotoDownloadService : IPhotoDownloadService
             using var client = _httpClientFactory.CreateClient("PhotoDownload");
 
             // Set headers to mimic a browser request
-            client.DefaultRequestHeaders.Add("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
-            client.DefaultRequestHeaders.Add("Accept", "image/webp,image/apng,image/*,*/*;q=0.8");
-            client.DefaultRequestHeaders.Add("Referer", "https://www.myheritage.com/");
+            if (client.DefaultRequestHeaders.UserAgent.Count == 0)
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+            }
+
+            if (!client.DefaultRequestHeaders.Contains("Accept"))
+            {
+                client.DefaultRequestHeaders.Add("Accept", "image/webp,image/apng,image/*,*/*;q=0.8");
+            }
+
+            if (Uri.TryCreate(url, UriKind.Absolute, out var requestUri) && IsMyHeritageHost(requestUri))
+            {
+                if (!client.DefaultRequestHeaders.Contains("Referer"))
+                {
+                    client.DefaultRequestHeaders.Add("Referer", "https://www.myheritage.com/");
+                }
+            }
 
             var response = await client.GetAsync(url);
 
@@ -151,12 +156,19 @@ public class PhotoDownloadService : IPhotoDownloadService
                 _ => ".jpg"
             };
 
-            return $"myheritage-photo-{Guid.NewGuid():N}{extension}";
+            return $"photo-{Guid.NewGuid():N}{extension}";
         }
         catch
         {
-            return $"myheritage-photo-{Guid.NewGuid():N}.jpg";
+            return $"photo-{Guid.NewGuid():N}.jpg";
         }
+    }
+
+    private static bool IsMyHeritageHost(Uri uri)
+    {
+        return MyHeritageHosts.Any(host =>
+            uri.Host.Equals(host, StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith("." + host, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

@@ -30,9 +30,9 @@ public class PhotoDownloadServiceTests
     [Theory]
     [InlineData("https://www.myheritage.com/image.jpg")]
     [InlineData("https://familysearch.myheritage.com/photo.png")]
-    [InlineData("https://media.myheritage.com/resources/pic.gif")]
-    [InlineData("https://subdomain.myheritage.com/album/image.webp")]
-    public void IsSupportedPhotoUrl_ShouldRecognizeKnownHosts(string url)
+    [InlineData("https://media.geni.com/p14/6f/3c/92/7a/photo.jpg")]
+    [InlineData("http://example.com/image.webp")]
+    public void IsSupportedPhotoUrl_ShouldAcceptHttpUrls(string url)
     {
         var service = CreateService();
 
@@ -44,8 +44,9 @@ public class PhotoDownloadServiceTests
     [Theory]
     [InlineData("")]
     [InlineData("not a url")]
-    [InlineData("https://example.com/image.jpg")]
-    public void IsSupportedPhotoUrl_ShouldRejectInvalidOrUnknownHosts(string url)
+    [InlineData("ftp://example.com/image.jpg")]
+    [InlineData("file:///c:/image.jpg")]
+    public void IsSupportedPhotoUrl_ShouldRejectInvalidOrUnsupportedSchemes(string url)
     {
         var service = CreateService();
 
@@ -124,7 +125,7 @@ public class PhotoDownloadServiceTests
         var urls = new[]
         {
             "https://media.myheritage.com/valid.png",
-            "https://example.com/not-allowed.jpg"
+            "ftp://example.com/not-allowed.jpg"
         };
 
         var results = await service.DownloadPhotosAsync(urls);
