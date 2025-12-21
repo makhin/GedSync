@@ -153,8 +153,24 @@ public class GedcomLoader : IGedcomLoader
         // Names - use the Name collection from IndividualRecord
         var names = individual.Name;
         var primaryName = names?.FirstOrDefault();
+        string? marnm = null; // Married name from _MARNM tag
+
         if (primaryName is PersonalName pn)
         {
+            // Extract _MARNM (married name) from NAME CustomTags
+            if (pn.CustomTags != null)
+            {
+                foreach (var tag in pn.CustomTags)
+                {
+                    if (tag.Tag?.Equals("_MARNM", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        marnm = tag.Value?.Trim();
+                        _logger.LogDebug("Found _MARNM '{Marnm}' in NAME for {Id}", marnm, individual.IndividualId);
+                        break;
+                    }
+                }
+            }
+
             // Try to extract name pieces from base class NamePieces property
             if (pn.NamePieces is PersonalNamePieces pieces)
             {
@@ -571,9 +587,43 @@ public class GedcomLoader : IGedcomLoader
             {
                 if (noteStructure != null)
                 {
-                    // NoteStructure may have different properties depending on SDK version
-                    // Try to get note content via ToString() or available properties
-                    var noteText = noteStructure.ToString();
+                    // Try to extract note text from the structure
+                    // The SDK may use different property names depending on version
+                    string? noteText = null;
+
+                    // Get the type of the note structure
+                    var noteType = noteStructure.GetType();
+
+                    // Try to get Note property (Patagames SDK uses this)
+                    var noteProp = noteType.GetProperty("Note");
+                    if (noteProp != null)
+                    {
+                        noteText = noteProp.GetValue(noteStructure) as string;
+                        _logger.LogDebug("Extracted NOTE via Note property for {Id}: {Note}", individual.IndividualId, noteText);
+                    }
+
+                    // Fallback: try Text property
+                    if (string.IsNullOrWhiteSpace(noteText))
+                    {
+                        var textProp = noteType.GetProperty("Text");
+                        if (textProp != null)
+                        {
+                            noteText = textProp.GetValue(noteStructure) as string;
+                            _logger.LogDebug("Extracted NOTE via Text property for {Id}: {Note}", individual.IndividualId, noteText);
+                        }
+                    }
+
+                    // Fallback: try Content property
+                    if (string.IsNullOrWhiteSpace(noteText))
+                    {
+                        var contentProp = noteType.GetProperty("Content");
+                        if (contentProp != null)
+                        {
+                            noteText = contentProp.GetValue(noteStructure) as string;
+                            _logger.LogDebug("Extracted NOTE via Content property for {Id}: {Note}", individual.IndividualId, noteText);
+                        }
+                    }
+
                     if (!string.IsNullOrWhiteSpace(noteText))
                     {
                         notesBuilder.Add(noteText.Trim());
@@ -664,6 +714,34 @@ public class GedcomLoader : IGedcomLoader
                         // If tag appears multiple times, concatenate with newline
                         customTagsBuilder[tagName] = customTagsBuilder[tagName] + "\n" + tagValue;
                     }
+                }
+            }
+        }
+        // Use _MARNM (married name) if available
+        // MyHeritage uses _MARNM for married surname
+        if (!string.IsNullOrWhiteSpace(marnm))
+        {
+            _logger.LogDebug("Processing _MARNM '{Marnm}' for {Id}: firstName={FirstName}, lastName={LastName}, maidenName={MaidenName}",
+                marnm, individual.IndividualId, firstName ?? "null", lastName ?? "null", maidenName ?? "null");
+
+            // If lastName is empty, use _MARNM as lastName
+            if (string.IsNullOrEmpty(lastName))
+            {
+                lastName = marnm;
+                _logger.LogDebug("Using _MARNM '{MarnmValue}' as LastName for {Id} (lastName was empty)",
+                    lastName, individual.IndividualId);
+            }
+            // If we have lastName and it's different from _MARNM, then:
+            // - lastName is the maiden name (birth name)
+            // - _MARNM is the married name (current name)
+            else if (!string.IsNullOrEmpty(lastName) && string.IsNullOrEmpty(maidenName))
+            {
+                if (!marnm.Equals(lastName, StringComparison.OrdinalIgnoreCase))
+                {
+                    maidenName = lastName;
+                    lastName = marnm;
+                    _logger.LogDebug("Using _MARNM '{MarnmValue}' as LastName and '{MaidenName}' as MaidenName for {Id}",
+                        lastName, maidenName, individual.IndividualId);
                 }
             }
         }
@@ -793,14 +871,61 @@ public class GedcomLoader : IGedcomLoader
             // Try to extract maiden name from family if not set
             if (string.IsNullOrEmpty(updatedWife.MaidenName) && !string.IsNullOrEmpty(updatedWife.LastName))
             {
-                if (husband != null && updatedWife.LastName != husband.LastName)
+                // Only infer maiden name if wife has a proper name (firstName exists)
+                // If firstName is empty, lastName likely comes from _MARNM (married name), not maiden name
+                if (!string.IsNullOrEmpty(updatedWife.FirstName))
                 {
-                    updatedWife = updatedWife with { MaidenName = updatedWife.LastName };
+                    if (husband != null && !string.IsNullOrEmpty(husband.LastName) && updatedWife.LastName != husband.LastName)
+                    {
+                        // Check if wife's lastName is just feminine form of husband's lastName
+                        // (e.g., Махина vs Махин, Иванова vs Иванов, Петрова vs Петров)
+                        if (!IsFeminineSurnameOf(updatedWife.LastName, husband.LastName))
+                        {
+                            updatedWife = updatedWife with { MaidenName = updatedWife.LastName };
+                        }
+                    }
                 }
             }
 
             persons[wifeId] = updatedWife;
         }
+    }
+
+    /// <summary>
+    /// Check if wifeSurname is the feminine form of husbandSurname
+    /// Examples: Махина/Махин, Иванова/Иванов, Петрова/Петров, Синицына/Синицын
+    /// </summary>
+    private static bool IsFeminineSurnameOf(string wifeSurname, string husbandSurname)
+    {
+        if (string.IsNullOrEmpty(wifeSurname) || string.IsNullOrEmpty(husbandSurname))
+            return false;
+
+        // Common Russian surname patterns: ова/ов, ева/ев, ина/ин, ына/ын
+        var patterns = new[]
+        {
+            ("ова", "ов"),
+            ("ева", "ев"),
+            ("ина", "ин"),
+            ("ына", "ын"),
+            ("ская", "ский"),
+            ("цкая", "цкий")
+        };
+
+        foreach (var (feminine, masculine) in patterns)
+        {
+            if (wifeSurname.EndsWith(feminine, StringComparison.OrdinalIgnoreCase) &&
+                husbandSurname.EndsWith(masculine, StringComparison.OrdinalIgnoreCase))
+            {
+                var wifeRoot = wifeSurname.Substring(0, wifeSurname.Length - feminine.Length);
+                var husbandRoot = husbandSurname.Substring(0, husbandSurname.Length - masculine.Length);
+                if (wifeRoot.Equals(husbandRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void CalculateSiblings(Dictionary<string, PersonRecord> persons)

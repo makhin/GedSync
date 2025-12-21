@@ -341,12 +341,21 @@ public class WaveCompareCommandHandler : IHostedCommand
         {
             FirstName = person.FirstName,
             LastName = person.LastName,
+            MaidenName = person.MaidenName,
+            MiddleName = person.MiddleName,
+            Suffix = person.Suffix,
+            Nickname = person.Nickname,
             Gender = person.Gender.ToString(),
             BirthDate = person.BirthDate?.ToString(),
             BirthPlace = person.BirthPlace,
             DeathDate = person.DeathDate?.ToString(),
             DeathPlace = person.DeathPlace,
-            PhotoUrl = person.PhotoUrls.FirstOrDefault()
+            BurialDate = person.BurialDate?.ToString(),
+            BurialPlace = person.BurialPlace,
+            PhotoUrl = person.PhotoUrls.FirstOrDefault(),
+            Occupation = person.Occupation,
+            ResidenceAddress = person.ResidenceAddress ?? person.FormattedResidence,
+            Notes = person.Notes
         };
     }
 }

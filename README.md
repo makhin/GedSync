@@ -98,13 +98,44 @@ logging:
 dotnet run --project GedcomGeniSync.Cli -- analyze --gedcom family.ged --anchor @I123@
 ```
 
-### 4. Тест matching логики
+### 4. Wave Compare (сравнение двух GEDCOM файлов)
+
+Wave Compare использует алгоритм BFS для сопоставления персон между двумя GEDCOM файлами.
+
+**Стандартные параметры для тестирования:**
+
+```bash
+# Быстрый запуск через скрипт
+.\test-wave-compare.bat
+
+# Или полная команда
+.\GedcomGeniSync.Cli\bin\Debug\net8.0\GedcomGeniSync.Cli.exe wave-compare \
+  --source myheritage.ged \
+  --destination geni.ged \
+  --anchor-source I500002 \
+  --anchor-destination I6000000206529622827 \
+  --output results.json \
+  --max-level 1000 \
+  --ignore-photos
+```
+
+**Стандартные якоря для тестирования:**
+- `--anchor-source I500002` (Александр Владимирович Махин, *1974)
+- `--anchor-destination I6000000206529622827` (тот же человек в Geni)
+
+**Дополнительные параметры:**
+- `--detailed-log detailed.log` — детальный лог сопоставлений
+- `--verbose` — подробный вывод
+- `--threshold-strategy` — стратегия порога: fixed, adaptive, aggressive, conservative
+- `--base-threshold` — базовый порог сопоставления (0-100, по умолчанию 60)
+
+### 5. Тест matching логики
 
 ```bash
 dotnet run --project GedcomGeniSync.Cli -- test-match
 ```
 
-### 5. Синхронизация (dry-run)
+### 6. Синхронизация (dry-run)
 
 ```bash
 # С использованием конфигурационного файла
@@ -124,7 +155,7 @@ dotnet run --project GedcomGeniSync.Cli -- sync \
   --verbose
 ```
 
-### 6. Реальная синхронизация
+### 7. Реальная синхронизация
 
 ```bash
 dotnet run --project GedcomGeniSync.Cli -- sync \

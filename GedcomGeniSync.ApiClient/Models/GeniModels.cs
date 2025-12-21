@@ -163,10 +163,14 @@ public class GeniProfileCreate
     public string? MaidenName { get; set; }
     public string? Suffix { get; set; }
     public string? Gender { get; set; } // "male" or "female"
-    public string? BirthDate { get; set; } // Format: "YYYY-MM-DD" or "YYYY"
-    public string? BirthPlace { get; set; }
-    public string? DeathDate { get; set; }
-    public string? DeathPlace { get; set; }
+
+    // Event objects (proper API format for add-child/add-parent)
+    public GeniEventInput? Birth { get; set; }
+    public GeniEventInput? Death { get; set; }
+    public GeniEventInput? Burial { get; set; }
+
+    public string? Occupation { get; set; }
+    public string? Nicknames { get; set; }
 }
 
 [ExcludeFromCodeCoverage]

@@ -26,6 +26,11 @@ public record UpdateProgress
     public HashSet<string> ProcessedSourceIds { get; init; } = new();
 
     /// <summary>
+    /// List of source IDs that failed and should be retried on resume
+    /// </summary>
+    public HashSet<string> FailedSourceIds { get; init; } = new();
+
+    /// <summary>
     /// Total number of profiles to update
     /// </summary>
     public int TotalProfiles { get; init; }

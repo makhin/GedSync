@@ -64,23 +64,26 @@ public class UpdateExecutor
 
         // Track progress
         var processedIds = resumeProgress?.ProcessedSourceIds ?? new HashSet<string>();
+        var failedIds = resumeProgress?.FailedSourceIds ?? new HashSet<string>();
         var updatedCount = resumeProgress?.UpdatedProfiles ?? 0;
         var failedCount = resumeProgress?.FailedProfiles ?? 0;
 
-        // Skip already processed nodes if resuming
+        // Skip already processed nodes if resuming, but retry failed ones
         var nodesToProcess = resumeProgress != null
-            ? nodesToUpdate.Where(n => !processedIds.Contains(n.SourceId)).ToList()
+            ? nodesToUpdate.Where(n => !processedIds.Contains(n.SourceId) || failedIds.Contains(n.SourceId)).ToList()
             : nodesToUpdate.ToList();
 
         if (resumeProgress != null)
         {
-            _logger.LogInformation("Resuming from previous progress: {Processed}/{Total} already processed",
-                processedIds.Count, nodesToUpdate.Count);
+            var retryCount = failedIds.Count;
+            _logger.LogInformation("Resuming from previous progress: {Processed}/{Total} already processed, {Retry} failed profiles will be retried",
+                processedIds.Count, nodesToUpdate.Count, retryCount);
         }
 
         foreach (var node in nodesToProcess)
         {
             result.TotalProcessed++;
+            var profileFailed = false;
 
             try
             {
@@ -91,6 +94,8 @@ public class UpdateExecutor
                 {
                     _logger.LogWarning("  Skipping - no Geni Profile ID");
                     result.Failed++;
+                    failedCount++;
+                    profileFailed = true;
                     result.Errors.Add(new Commands.UpdateError
                     {
                         SourceId = node.SourceId,
@@ -107,6 +112,8 @@ public class UpdateExecutor
                 {
                     _logger.LogWarning("  Skipping - source person {SourceId} not found in GEDCOM", node.SourceId);
                     result.Failed++;
+                    failedCount++;
+                    profileFailed = true;
                     result.Errors.Add(new Commands.UpdateError
                     {
                         SourceId = node.SourceId,
@@ -156,6 +163,7 @@ public class UpdateExecutor
                             _logger.LogError("  ✗ Failed to update profile");
                             result.Failed++;
                             failedCount++;
+                            profileFailed = true;
                             result.Errors.Add(new Commands.UpdateError
                             {
                                 SourceId = node.SourceId,
@@ -264,6 +272,7 @@ public class UpdateExecutor
                 _logger.LogError(ex, "  Error processing node");
                 result.Failed++;
                 failedCount++;
+                profileFailed = true;
                 result.Errors.Add(new Commands.UpdateError
                 {
                     SourceId = node.SourceId,
@@ -274,8 +283,18 @@ public class UpdateExecutor
             }
             finally
             {
-                // Mark this node as processed
-                processedIds.Add(node.SourceId);
+                // Update tracking based on success/failure
+                if (profileFailed)
+                {
+                    // Add to failed list for retry on next resume
+                    failedIds.Add(node.SourceId);
+                }
+                else
+                {
+                    // Mark as successfully processed and remove from failed list
+                    processedIds.Add(node.SourceId);
+                    failedIds.Remove(node.SourceId);
+                }
 
                 // Save progress after each profile (or every N profiles for performance)
                 if (_progressTracker != null && !string.IsNullOrEmpty(_inputFile))
@@ -285,6 +304,7 @@ public class UpdateExecutor
                         InputFile = _inputFile,
                         GedcomFile = resumeProgress?.GedcomFile ?? "",
                         ProcessedSourceIds = processedIds,
+                        FailedSourceIds = failedIds,
                         TotalProfiles = nodesToUpdate.Count,
                         UpdatedProfiles = updatedCount,
                         FailedProfiles = failedCount
@@ -295,11 +315,15 @@ public class UpdateExecutor
             }
         }
 
-        // Clean up progress file on successful completion
+        // Clean up progress file on successful completion (no failures)
         if (_progressTracker != null && !string.IsNullOrEmpty(_inputFile) && result.Failed == 0)
         {
             _progressTracker.DeleteUpdateProgress(_inputFile);
             _logger.LogInformation("All profiles processed successfully. Progress file deleted.");
+        }
+        else if (result.Failed > 0)
+        {
+            _logger.LogWarning("{Failed} profile(s) failed. Use --resume to retry them.", result.Failed);
         }
 
         return result;

@@ -317,11 +317,83 @@ public class AddExecutor
             MaidenName = personData.MaidenName,
             Suffix = personData.Suffix,
             Gender = MapGender(personData.Gender),
-            BirthDate = personData.BirthDate,
-            BirthPlace = personData.BirthPlace,
-            DeathDate = personData.DeathDate,
-            DeathPlace = personData.DeathPlace
+            Birth = CreateEventInput(personData.BirthDate, personData.BirthPlace),
+            Death = CreateEventInput(personData.DeathDate, personData.DeathPlace),
+            Burial = CreateEventInput(personData.BurialDate, personData.BurialPlace),
+            Occupation = personData.Occupation,
+            Nicknames = personData.Nickname
         };
+    }
+
+    /// <summary>
+    /// Create GeniEventInput from date and place strings
+    /// </summary>
+    private static GeniEventInput? CreateEventInput(string? dateStr, string? placeStr)
+    {
+        if (string.IsNullOrWhiteSpace(dateStr) && string.IsNullOrWhiteSpace(placeStr))
+            return null;
+
+        var eventInput = new GeniEventInput();
+
+        if (!string.IsNullOrWhiteSpace(dateStr))
+        {
+            eventInput.Date = ParseDateString(dateStr);
+        }
+
+        if (!string.IsNullOrWhiteSpace(placeStr))
+        {
+            eventInput.Location = new GeniLocationInput { PlaceName = placeStr };
+        }
+
+        return eventInput;
+    }
+
+    /// <summary>
+    /// Parse date string to GeniDateInput
+    /// Supports formats: "14 JUL 1934", "1934", "14 JUL 1934", etc.
+    /// </summary>
+    private static GeniDateInput? ParseDateString(string dateStr)
+    {
+        if (string.IsNullOrWhiteSpace(dateStr))
+            return null;
+
+        // Remove qualifiers like "ABT", "AFT", "BEF", "EST"
+        dateStr = System.Text.RegularExpressions.Regex.Replace(dateStr, @"^(ABT|AFT|BEF|EST|CAL)\s+", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+
+        var result = new GeniDateInput();
+        var parts = dateStr.Split(new[] { ' ', '-', '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var part in parts)
+        {
+            // Try to parse as year (4 digits)
+            if (part.Length == 4 && int.TryParse(part, out var year))
+            {
+                result.Year = year;
+            }
+            // Try to parse as day (1-2 digits)
+            else if (part.Length <= 2 && int.TryParse(part, out var day) && day >= 1 && day <= 31)
+            {
+                result.Day = day;
+            }
+            // Try to parse as month name
+            else
+            {
+                var monthNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["JAN"] = 1, ["FEB"] = 2, ["MAR"] = 3, ["APR"] = 4, ["MAY"] = 5, ["JUN"] = 6,
+                    ["JUL"] = 7, ["AUG"] = 8, ["SEP"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DEC"] = 12,
+                    ["JANUARY"] = 1, ["FEBRUARY"] = 2, ["MARCH"] = 3, ["APRIL"] = 4, ["JUNE"] = 6,
+                    ["JULY"] = 7, ["AUGUST"] = 8, ["SEPTEMBER"] = 9, ["OCTOBER"] = 10, ["NOVEMBER"] = 11, ["DECEMBER"] = 12
+                };
+
+                if (monthNames.TryGetValue(part, out var month))
+                {
+                    result.Month = month;
+                }
+            }
+        }
+
+        return result.Year.HasValue || result.Month.HasValue || result.Day.HasValue ? result : null;
     }
 
     /// <summary>

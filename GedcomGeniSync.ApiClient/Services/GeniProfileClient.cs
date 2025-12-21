@@ -516,26 +516,42 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         if (!string.IsNullOrEmpty(profile.FirstName))
             values["first_name"] = profile.FirstName;
 
+        if (!string.IsNullOrEmpty(profile.MiddleName))
+            values["middle_name"] = profile.MiddleName;
+
         if (!string.IsNullOrEmpty(profile.LastName))
             values["last_name"] = profile.LastName;
 
         if (!string.IsNullOrEmpty(profile.MaidenName))
             values["maiden_name"] = profile.MaidenName;
 
+        if (!string.IsNullOrEmpty(profile.Suffix))
+            values["suffix"] = profile.Suffix;
+
         if (!string.IsNullOrEmpty(profile.Gender))
             values["gender"] = profile.Gender;
 
-        if (!string.IsNullOrEmpty(profile.BirthDate))
-            values["birth_date"] = profile.BirthDate;
+        // Event objects (proper API format)
+        if (profile.Birth != null)
+        {
+            AddEventToFormData(values, "birth", profile.Birth);
+        }
 
-        if (!string.IsNullOrEmpty(profile.BirthPlace))
-            values["birth_location"] = profile.BirthPlace;
+        if (profile.Death != null)
+        {
+            AddEventToFormData(values, "death", profile.Death);
+        }
 
-        if (!string.IsNullOrEmpty(profile.DeathDate))
-            values["death_date"] = profile.DeathDate;
+        if (profile.Burial != null)
+        {
+            AddEventToFormData(values, "burial", profile.Burial);
+        }
 
-        if (!string.IsNullOrEmpty(profile.DeathPlace))
-            values["death_location"] = profile.DeathPlace;
+        if (!string.IsNullOrEmpty(profile.Occupation))
+            values["occupation"] = profile.Occupation;
+
+        if (!string.IsNullOrEmpty(profile.Nicknames))
+            values["nicknames"] = profile.Nicknames;
 
         return new FormUrlEncodedContent(values);
     }
@@ -678,16 +694,27 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
     private static GeniProfile CreateDryRunProfile(GeniProfileCreate create)
     {
+        // Helper to format date from event
+        string? FormatDate(GeniEventInput? evt)
+        {
+            if (evt?.Date == null) return null;
+            var parts = new List<string>();
+            if (evt.Date.Year.HasValue) parts.Add(evt.Date.Year.Value.ToString());
+            if (evt.Date.Month.HasValue) parts.Add(evt.Date.Month.Value.ToString("D2"));
+            if (evt.Date.Day.HasValue) parts.Add(evt.Date.Day.Value.ToString("D2"));
+            return parts.Count > 0 ? string.Join("-", parts) : null;
+        }
+
         return new GeniProfile
         {
             Id = $"dry-run-{Guid.NewGuid():N}",
             FirstName = create.FirstName,
             LastName = create.LastName,
             Gender = create.Gender,
-            BirthDateString = create.BirthDate,
-            BirthLocationString = create.BirthPlace,
-            DeathDateString = create.DeathDate,
-            DeathLocationString = create.DeathPlace
+            BirthDateString = FormatDate(create.Birth),
+            BirthLocationString = create.Birth?.Location?.PlaceName,
+            DeathDateString = FormatDate(create.Death),
+            DeathLocationString = create.Death?.Location?.PlaceName
         };
     }
 

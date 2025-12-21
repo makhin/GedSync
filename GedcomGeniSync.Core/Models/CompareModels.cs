@@ -298,6 +298,9 @@ public record PersonData
     public string? BurialDate { get; init; }
     public string? BurialPlace { get; init; }
     public string? PhotoUrl { get; init; }
+    public string? Occupation { get; init; }
+    public string? ResidenceAddress { get; init; }
+    public ImmutableList<string> Notes { get; init; } = ImmutableList<string>.Empty;
 }
 
 public enum CompareRelationType
