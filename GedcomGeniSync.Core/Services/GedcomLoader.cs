@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using GedcomGeniSync.ApiClient.Utils;
 using GedcomGeniSync.Models;
+using GedcomGeniSync.Services.Photo;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 using Patagames.GedcomNetSdk;
@@ -24,6 +26,8 @@ namespace GedcomGeniSync.Services;
 public class GedcomLoader : IGedcomLoader
 {
     private readonly ILogger<GedcomLoader> _logger;
+    private readonly IPhotoCacheService? _photoCacheService;
+    private readonly PhotoConfig _photoConfig;
 
     private static readonly Regex NameWithParenthesesPattern = new(@"^(.+?)\s*\(([^)]+)\)\s*$", RegexOptions.Compiled);
     private static readonly Regex NameWithBackslashPattern = new(@"^(.+?)\\(.+)$", RegexOptions.Compiled);
@@ -32,15 +36,45 @@ public class GedcomLoader : IGedcomLoader
     private static readonly Regex GedcomNamePattern = new(@"^([^/]*?)/?([^/]*)?/?$", RegexOptions.Compiled);
     private static readonly Regex GedcomLinePattern = new(@"^(\d+)\s+([A-Z_@][A-Z0-9_@]*)(\s|$)", RegexOptions.Compiled);
 
-    public GedcomLoader(ILogger<GedcomLoader> logger)
+    public GedcomLoader(
+        ILogger<GedcomLoader> logger,
+        IPhotoCacheService? photoCacheService = null,
+        PhotoConfig? photoConfig = null)
     {
-        _logger = logger;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _photoCacheService = photoCacheService;
+        _photoConfig = photoConfig ?? new PhotoConfig();
     }
 
     /// <summary>
     /// Load GEDCOM file and return dictionary of PersonRecords keyed by GEDCOM ID
     /// </summary>
     public GedcomLoadResult Load(string filePath)
+    {
+        return LoadAsync(filePath, downloadPhotos: true, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+    }
+
+    /// <summary>
+    /// Load GEDCOM file asynchronously and optionally download photos.
+    /// </summary>
+    public async Task<GedcomLoadResult> LoadAsync(
+        string filePath,
+        bool downloadPhotos = true,
+        CancellationToken cancellationToken = default)
+    {
+        var result = LoadCore(filePath);
+
+        if (ShouldDownloadPhotos(downloadPhotos))
+        {
+            result.PhotoStats = await DownloadPhotosAsync(result, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private GedcomLoadResult LoadCore(string filePath)
     {
         if (!File.Exists(filePath))
         {
@@ -137,6 +171,102 @@ public class GedcomLoader : IGedcomLoader
         _logger.LogInformation("Loaded {Count} persons", result.Persons.Count);
 
         return result;
+    }
+
+    private bool ShouldDownloadPhotos(bool downloadPhotos)
+    {
+        if (!downloadPhotos)
+            return false;
+
+        if (!_photoConfig.Enabled || !_photoConfig.DownloadOnLoad)
+            return false;
+
+        if (_photoCacheService == null)
+        {
+            _logger.LogDebug("Photo download skipped: photo cache service not configured.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<PhotoDownloadStats> DownloadPhotosAsync(
+        GedcomLoadResult result,
+        CancellationToken cancellationToken)
+    {
+        if (_photoCacheService == null)
+            return new PhotoDownloadStats();
+
+        var targets = result.Persons.Values
+            .Select(person => new
+            {
+                person.Id,
+                Urls = person.PhotoUrls
+                    .Where(url => !string.IsNullOrWhiteSpace(url))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            })
+            .Where(entry => entry.Urls.Count > 0)
+            .ToList();
+
+        if (targets.Count == 0)
+        {
+            _logger.LogInformation("No photos found to download.");
+            return new PhotoDownloadStats { TotalUrls = 0, Duration = TimeSpan.Zero };
+        }
+
+        var totalUrls = targets.Sum(entry => entry.Urls.Count);
+        _logger.LogInformation("Downloading {TotalUrls} photo(s) for {PersonCount} persons",
+            totalUrls, targets.Count);
+
+        var stopwatch = Stopwatch.StartNew();
+        var fromCache = 0;
+        var downloaded = 0;
+        var failed = 0;
+        var processed = 0;
+
+        foreach (var target in targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var cachedCount = target.Urls.Count(url => _photoCacheService.IsCached(url));
+            var entries = await _photoCacheService
+                .EnsureDownloadedAsync(target.Id, target.Urls)
+                .ConfigureAwait(false);
+
+            var entriesCount = entries.Count;
+            fromCache += cachedCount;
+            downloaded += Math.Max(0, entriesCount - cachedCount);
+            failed += Math.Max(0, target.Urls.Count - entriesCount);
+
+            processed++;
+            if (processed % 25 == 0 || processed == targets.Count)
+            {
+                _logger.LogInformation("Photo download progress: {Processed}/{Total} persons",
+                    processed, targets.Count);
+            }
+        }
+
+        stopwatch.Stop();
+
+        var stats = new PhotoDownloadStats
+        {
+            TotalUrls = totalUrls,
+            Downloaded = downloaded,
+            FromCache = fromCache,
+            Failed = failed,
+            Duration = stopwatch.Elapsed
+        };
+
+        _logger.LogInformation(
+            "Photo download finished: {Downloaded} downloaded, {FromCache} from cache, {Failed} failed ({Total} total) in {Duration}",
+            stats.Downloaded,
+            stats.FromCache,
+            stats.Failed,
+            stats.TotalUrls,
+            stats.Duration);
+
+        return stats;
     }
 
     private PersonRecord ConvertIndividual(Individual individual, Dictionary<string, Multimedia> multimedia)

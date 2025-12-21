@@ -133,7 +133,7 @@ public class UpdateCommandHandler : IHostedCommand
             // 2. Load GEDCOM file
             logger.LogInformation("Loading GEDCOM file...");
             var gedcomLoader = provider.GetRequiredService<IGedcomLoader>();
-            var gedcomResult = gedcomLoader.Load(gedcomPath);
+            var gedcomResult = await gedcomLoader.LoadAsync(gedcomPath, downloadPhotos: syncPhotos);
 
             logger.LogInformation("GEDCOM loaded: {Count} individuals", gedcomResult.Persons.Count);
 

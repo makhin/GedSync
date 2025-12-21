@@ -32,6 +32,11 @@ public class GedcomLoadResult
     public int PersonsWithBirthDate => Persons.Values.Count(p => p.BirthDate != null);
     public int PersonsWithBirthPlace => Persons.Values.Count(p => !string.IsNullOrEmpty(p.BirthPlace));
 
+    /// <summary>
+    /// Photo download statistics (if photo download was enabled).
+    /// </summary>
+    public PhotoDownloadStats? PhotoStats { get; set; }
+
     public void PrintStats(ILogger logger)
     {
         logger.LogInformation("=== GEDCOM Statistics ===");
@@ -47,7 +52,26 @@ public class GedcomLoadResult
         var females = Persons.Values.Count(p => p.Gender == Gender.Female);
         logger.LogInformation("Males: {Males}, Females: {Females}, Unknown: {Unknown}",
             males, females, TotalPersons - males - females);
+
+        if (PhotoStats != null)
+        {
+            logger.LogInformation("Photos: {Downloaded} downloaded, {FromCache} from cache, {Failed} failed ({Total} total) in {Duration}",
+                PhotoStats.Downloaded,
+                PhotoStats.FromCache,
+                PhotoStats.Failed,
+                PhotoStats.TotalUrls,
+                PhotoStats.Duration);
+        }
     }
+}
+
+public record PhotoDownloadStats
+{
+    public int TotalUrls { get; init; }
+    public int Downloaded { get; init; }
+    public int FromCache { get; init; }
+    public int Failed { get; init; }
+    public TimeSpan Duration { get; init; }
 }
 
 /// <summary>

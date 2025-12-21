@@ -108,9 +108,9 @@ public class WaveCompareCommandHandler : IHostedCommand
 
             var loader = provider.GetRequiredService<IGedcomLoader>();
             logger.LogInformation("Loading source GEDCOM...");
-            var sourceLoadResult = loader.Load(sourcePath);
+            var sourceLoadResult = await loader.LoadAsync(sourcePath, downloadPhotos: !ignorePhotos);
             logger.LogInformation("Loading destination GEDCOM...");
-            var destLoadResult = loader.Load(destPath);
+            var destLoadResult = await loader.LoadAsync(destPath, downloadPhotos: !ignorePhotos);
 
             var normalizedAnchorSource = GedcomIdNormalizer.Normalize(anchorSource);
             var normalizedAnchorDest = GedcomIdNormalizer.Normalize(anchorDest);

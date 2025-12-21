@@ -14,6 +14,14 @@ public interface IGedcomLoader
     GedcomLoadResult Load(string filePath);
 
     /// <summary>
+    /// Load GEDCOM file asynchronously, optionally downloading photos.
+    /// </summary>
+    Task<GedcomLoadResult> LoadAsync(
+        string filePath,
+        bool downloadPhotos = true,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Find person by GEDCOM ID
     /// </summary>
     PersonRecord? FindById(GedcomLoadResult result, string gedcomId);

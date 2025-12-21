@@ -43,8 +43,8 @@ public class AnalyzeCommandHandler : IHostedCommand
         {
             logger.LogInformation("=== GEDCOM Analysis ===");
 
-            var gedcomLoader = scope.ServiceProvider.GetRequiredService<GedcomLoader>();
-            var result = gedcomLoader.Load(gedcomPath);
+            var gedcomLoader = scope.ServiceProvider.GetRequiredService<IGedcomLoader>();
+            var result = await gedcomLoader.LoadAsync(gedcomPath);
 
             result.PrintStats(logger);
 
