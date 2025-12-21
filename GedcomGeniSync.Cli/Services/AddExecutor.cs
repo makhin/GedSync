@@ -14,7 +14,7 @@ public class AddExecutor
 {
     private readonly IGeniProfileClient _profileClient;
     private readonly IGeniPhotoClient _photoClient;
-    private readonly IMyHeritagePhotoService _photoService;
+    private readonly IPhotoDownloadService _photoService;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
     private readonly ProgressTracker? _progressTracker;
@@ -23,7 +23,7 @@ public class AddExecutor
     public AddExecutor(
         IGeniProfileClient profileClient,
         IGeniPhotoClient photoClient,
-        IMyHeritagePhotoService photoService,
+        IPhotoDownloadService photoService,
         GedcomLoadResult gedcom,
         ILogger logger,
         ProgressTracker? progressTracker = null,
@@ -263,9 +263,9 @@ public class AddExecutor
     {
         try
         {
-            if (!_photoService.IsMyHeritageUrl(photoUrl))
+            if (!_photoService.IsSupportedPhotoUrl(photoUrl))
             {
-                _logger.LogWarning("  Photo: Not a MyHeritage URL, skipping");
+                _logger.LogWarning("  Photo: Not a supported photo URL, skipping");
                 result.PhotosFailed++;
                 return;
             }

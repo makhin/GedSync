@@ -7,9 +7,9 @@ using Moq;
 
 namespace GedcomGeniSync.Tests;
 
-public class MyHeritagePhotoServiceTests
+public class PhotoDownloadServiceTests
 {
-    private MyHeritagePhotoService CreateService(
+    private PhotoDownloadService CreateService(
         Func<HttpRequestMessage, HttpResponseMessage>? handlerFactory = null,
         bool dryRun = false)
     {
@@ -18,12 +18,12 @@ public class MyHeritagePhotoServiceTests
 
         var factoryMock = new Mock<IHttpClientFactory>();
         factoryMock
-            .Setup(f => f.CreateClient("MyHeritagePhoto"))
+            .Setup(f => f.CreateClient("PhotoDownload"))
             .Returns(httpClient);
 
-        return new MyHeritagePhotoService(
+        return new PhotoDownloadService(
             factoryMock.Object,
-            NullLogger<MyHeritagePhotoService>.Instance,
+            NullLogger<PhotoDownloadService>.Instance,
             dryRun);
     }
 
@@ -32,11 +32,11 @@ public class MyHeritagePhotoServiceTests
     [InlineData("https://familysearch.myheritage.com/photo.png")]
     [InlineData("https://media.myheritage.com/resources/pic.gif")]
     [InlineData("https://subdomain.myheritage.com/album/image.webp")]
-    public void IsMyHeritageUrl_ShouldRecognizeKnownHosts(string url)
+    public void IsSupportedPhotoUrl_ShouldRecognizeKnownHosts(string url)
     {
         var service = CreateService();
 
-        var result = service.IsMyHeritageUrl(url);
+        var result = service.IsSupportedPhotoUrl(url);
 
         result.Should().BeTrue();
     }
@@ -45,11 +45,11 @@ public class MyHeritagePhotoServiceTests
     [InlineData("")]
     [InlineData("not a url")]
     [InlineData("https://example.com/image.jpg")]
-    public void IsMyHeritageUrl_ShouldRejectInvalidOrUnknownHosts(string url)
+    public void IsSupportedPhotoUrl_ShouldRejectInvalidOrUnknownHosts(string url)
     {
         var service = CreateService();
 
-        var result = service.IsMyHeritageUrl(url);
+        var result = service.IsSupportedPhotoUrl(url);
 
         result.Should().BeFalse();
     }
@@ -107,7 +107,7 @@ public class MyHeritagePhotoServiceTests
     }
 
     [Fact]
-    public async Task DownloadPhotosAsync_ShouldSkipNonMyHeritageUrls()
+    public async Task DownloadPhotosAsync_ShouldSkipUnsupportedUrls()
     {
         var expectedData = new byte[] { 9, 9, 9 };
         HttpResponseMessage Handler(HttpRequestMessage _)

@@ -15,7 +15,7 @@ public class UpdateExecutor
 {
     private readonly IGeniProfileClient _profileClient;
     private readonly IGeniPhotoClient _photoClient;
-    private readonly IMyHeritagePhotoService _photoService;
+    private readonly IPhotoDownloadService _photoService;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
     private readonly ProgressTracker? _progressTracker;
@@ -39,7 +39,7 @@ public class UpdateExecutor
     public UpdateExecutor(
         IGeniProfileClient profileClient,
         IGeniPhotoClient photoClient,
-        IMyHeritagePhotoService photoService,
+        IPhotoDownloadService photoService,
         GedcomLoadResult gedcom,
         ILogger logger,
         ProgressTracker? progressTracker = null,
@@ -191,9 +191,9 @@ public class UpdateExecutor
 
                         _logger.LogInformation("  Uploading photo from {Url}", photoUrl);
 
-                        if (!_photoService.IsMyHeritageUrl(photoUrl))
+                        if (!_photoService.IsSupportedPhotoUrl(photoUrl))
                         {
-                            _logger.LogWarning("  Skipping - not a MyHeritage URL");
+                            _logger.LogWarning("  Skipping - not a supported photo URL");
                             result.PhotosFailed++;
                             continue;
                         }
@@ -211,7 +211,7 @@ public class UpdateExecutor
                                     SourceId = node.SourceId,
                                     GeniProfileId = node.GeniProfileId,
                                     FieldName = "PhotoUrl",
-                                    ErrorMessage = "Failed to download photo from MyHeritage"
+                                    ErrorMessage = "Failed to download photo from source URL"
                                 });
                                 continue;
                             }

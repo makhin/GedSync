@@ -86,10 +86,10 @@ public class AddCommandHandler : IHostedCommand
                     sp.GetRequiredService<ILogger<GedcomGeniSync.ApiClient.Services.GeniPhotoClient>>());
             });
 
-            services.AddSingleton<IMyHeritagePhotoService>(sp =>
-                new GedcomGeniSync.Services.MyHeritagePhotoService(
+            services.AddSingleton<IPhotoDownloadService>(sp =>
+                new GedcomGeniSync.Services.PhotoDownloadService(
                     sp.GetRequiredService<IHttpClientFactory>(),
-                    sp.GetRequiredService<ILogger<GedcomGeniSync.Services.MyHeritagePhotoService>>(),
+                    sp.GetRequiredService<ILogger<GedcomGeniSync.Services.PhotoDownloadService>>(),
                     dryRun));
         });
 
@@ -167,7 +167,7 @@ public class AddCommandHandler : IHostedCommand
             // 4. Execute additions
             var profileClient = provider.GetRequiredService<IGeniProfileClient>();
             var photoClient = provider.GetRequiredService<IGeniPhotoClient>();
-            var photoService = provider.GetRequiredService<IMyHeritagePhotoService>();
+            var photoService = provider.GetRequiredService<IPhotoDownloadService>();
 
             var addService = new AddExecutor(
                 profileClient,

@@ -45,6 +45,12 @@ public class GedSyncConfiguration
     /// </summary>
     [JsonPropertyName("compare")]
     public CompareConfig Compare { get; set; } = new();
+
+    /// <summary>
+    /// Photo configuration
+    /// </summary>
+    [JsonPropertyName("photo")]
+    public PhotoConfig Photo { get; set; } = new();
 }
 
 /// <summary>
@@ -270,4 +276,43 @@ public class CompareConfig
             RequireUniqueMatch = RequireUniqueMatch
         };
     }
+}
+
+/// <summary>
+/// Photo configuration
+/// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
+public class PhotoConfig
+{
+    /// <summary>
+    /// Enable photo processing features
+    /// </summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Directory for cached photos
+    /// </summary>
+    [JsonPropertyName("cacheDirectory")]
+    public string CacheDirectory { get; set; } = "./photos";
+
+    /// <summary>
+    /// Download photos during GEDCOM load
+    /// </summary>
+    [JsonPropertyName("downloadOnLoad")]
+    public bool DownloadOnLoad { get; set; } = true;
+
+    /// <summary>
+    /// Similarity threshold for perceptual hash comparison
+    /// </summary>
+    [JsonPropertyName("similarityThreshold")]
+    public double SimilarityThreshold { get; set; } = 0.95;
+
+    /// <summary>
+    /// Maximum concurrent photo downloads
+    /// </summary>
+    [JsonPropertyName("maxConcurrentDownloads")]
+    public int MaxConcurrentDownloads { get; set; } = 4;
 }

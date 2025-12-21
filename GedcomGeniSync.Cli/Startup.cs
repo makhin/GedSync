@@ -57,7 +57,7 @@ public class Startup
             client.BaseAddress = new Uri("https://www.geni.com/api");
         });
 
-        services.AddHttpClient("MyHeritagePhoto", client =>
+        services.AddHttpClient("PhotoDownload", client =>
         {
             client.Timeout = TimeSpan.FromMinutes(5);
         });

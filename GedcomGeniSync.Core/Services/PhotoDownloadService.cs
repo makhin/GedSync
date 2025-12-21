@@ -4,16 +4,16 @@ using Microsoft.Extensions.Logging;
 namespace GedcomGeniSync.Services;
 
 /// <summary>
-/// Service for downloading photos from MyHeritage
+/// Service for downloading photos from supported hosts (currently MyHeritage)
 /// </summary>
 [ExcludeFromCodeCoverage]
-public class MyHeritagePhotoService : IMyHeritagePhotoService
+public class PhotoDownloadService : IPhotoDownloadService
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ILogger<MyHeritagePhotoService> _logger;
+    private readonly ILogger<PhotoDownloadService> _logger;
     private readonly bool _dryRun;
 
-    private static readonly string[] MyHeritageHosts = new[]
+    private static readonly string[] SupportedHosts = new[]
     {
         "myheritage.com",
         "www.myheritage.com",
@@ -22,9 +22,9 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
         "mhcache.com"  // MyHeritage CDN for photo storage
     };
 
-    public MyHeritagePhotoService(
+    public PhotoDownloadService(
         IHttpClientFactory httpClientFactory,
-        ILogger<MyHeritagePhotoService> logger,
+        ILogger<PhotoDownloadService> logger,
         bool dryRun = false)
     {
         _httpClientFactory = httpClientFactory;
@@ -33,9 +33,9 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
     }
 
     /// <summary>
-    /// Check if URL is a MyHeritage photo URL
+    /// Check if URL is a supported photo URL
     /// </summary>
-    public bool IsMyHeritageUrl(string url)
+    public bool IsSupportedPhotoUrl(string url)
     {
         if (string.IsNullOrWhiteSpace(url))
             return false;
@@ -43,7 +43,7 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
         try
         {
             var uri = new Uri(url, UriKind.Absolute);
-            return MyHeritageHosts.Any(host =>
+            return SupportedHosts.Any(host =>
                 uri.Host.Equals(host, StringComparison.OrdinalIgnoreCase) ||
                 uri.Host.EndsWith("." + host, StringComparison.OrdinalIgnoreCase));
         }
@@ -54,13 +54,13 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
     }
 
     /// <summary>
-    /// Download photo from MyHeritage URL
+    /// Download photo from a supported URL
     /// </summary>
     public async Task<PhotoDownloadResult?> DownloadPhotoAsync(string url)
     {
-        if (!IsMyHeritageUrl(url))
+        if (!IsSupportedPhotoUrl(url))
         {
-            _logger.LogWarning("URL is not a MyHeritage URL: {Url}", url);
+            _logger.LogWarning("URL is not a supported photo URL: {Url}", url);
             return null;
         }
 
@@ -78,9 +78,9 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
 
         try
         {
-            _logger.LogInformation("Downloading photo from MyHeritage: {Url}", url);
+            _logger.LogInformation("Downloading photo: {Url}", url);
 
-            using var client = _httpClientFactory.CreateClient("MyHeritagePhoto");
+            using var client = _httpClientFactory.CreateClient("PhotoDownload");
 
             // Set headers to mimic a browser request
             client.DefaultRequestHeaders.Add("User-Agent",
@@ -160,12 +160,12 @@ public class MyHeritagePhotoService : IMyHeritagePhotoService
     }
 
     /// <summary>
-    /// Download multiple photos from MyHeritage URLs
+    /// Download multiple photos from supported URLs
     /// </summary>
     public async Task<List<PhotoDownloadResult>> DownloadPhotosAsync(IEnumerable<string> urls)
     {
         var downloadTasks = urls
-            .Where(IsMyHeritageUrl)
+            .Where(IsSupportedPhotoUrl)
             .Select(DownloadPhotoAsync)
             .ToList();
 
