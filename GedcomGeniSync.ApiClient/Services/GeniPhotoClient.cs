@@ -101,6 +101,11 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             "Failed to upload photo to profile {ProfileId}");
     }
 
+    public Task<GeniPhoto?> AddPhotoFromCacheAsync(string profileId, string localPath, string? caption = null)
+    {
+        return AddPhotoAsync(profileId, localPath, caption);
+    }
+
     public async Task<GeniPhoto?> SetMugshotAsync(string profileId, string filePath)
     {
         if (!File.Exists(filePath))

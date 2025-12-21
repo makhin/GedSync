@@ -3,6 +3,7 @@ using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Services.Photo;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Cli.Services;
@@ -15,6 +16,7 @@ public class AddExecutor
     private readonly IGeniProfileClient _profileClient;
     private readonly IGeniPhotoClient _photoClient;
     private readonly IPhotoDownloadService _photoService;
+    private readonly IPhotoCacheService? _photoCacheService;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
     private readonly ProgressTracker? _progressTracker;
@@ -24,6 +26,7 @@ public class AddExecutor
         IGeniProfileClient profileClient,
         IGeniPhotoClient photoClient,
         IPhotoDownloadService photoService,
+        IPhotoCacheService? photoCacheService,
         GedcomLoadResult gedcom,
         ILogger logger,
         ProgressTracker? progressTracker = null,
@@ -32,6 +35,7 @@ public class AddExecutor
         _profileClient = profileClient;
         _photoClient = photoClient;
         _photoService = photoService;
+        _photoCacheService = photoCacheService;
         _gedcom = gedcom;
         _logger = logger;
         _progressTracker = progressTracker;
@@ -263,28 +267,35 @@ public class AddExecutor
     {
         try
         {
-            if (!_photoService.IsSupportedPhotoUrl(photoUrl))
-            {
-                _logger.LogWarning("  Photo: Not a supported photo URL, skipping");
-                result.PhotosFailed++;
-                return;
-            }
-
             _logger.LogInformation("  Uploading photo from {Url}", photoUrl);
 
-            var downloadResult = await _photoService.DownloadPhotoAsync(photoUrl);
-            if (downloadResult == null || downloadResult.Data == null)
+            var (photoData, fileName) = await TryGetCachedPhotoAsync(photoUrl).ConfigureAwait(false);
+            if (photoData == null || photoData.Length == 0)
             {
-                _logger.LogWarning("  Photo: Failed to download");
-                result.PhotosFailed++;
-                return;
+                if (!_photoService.IsSupportedPhotoUrl(photoUrl))
+                {
+                    _logger.LogWarning("  Photo: Not a supported photo URL, skipping");
+                    result.PhotosFailed++;
+                    return;
+                }
+
+                var downloadResult = await _photoService.DownloadPhotoAsync(photoUrl);
+                if (downloadResult == null || downloadResult.Data == null)
+                {
+                    _logger.LogWarning("  Photo: Failed to download");
+                    result.PhotosFailed++;
+                    return;
+                }
+
+                photoData = downloadResult.Data;
+                fileName = downloadResult.FileName;
             }
 
             var cleanGeniId = CleanProfileId(geniProfileId);
             var uploadedPhoto = await _photoClient.SetMugshotFromBytesAsync(
                 cleanGeniId,
-                downloadResult.Data,
-                downloadResult.FileName);
+                photoData,
+                fileName ?? "photo.jpg");
 
             if (uploadedPhoto != null)
             {
@@ -302,6 +313,27 @@ public class AddExecutor
             _logger.LogError(ex, "  Photo: Error during upload");
             result.PhotosFailed++;
         }
+    }
+
+    private async Task<(byte[]? Data, string? FileName)> TryGetCachedPhotoAsync(string photoUrl)
+    {
+        if (_photoCacheService == null || string.IsNullOrWhiteSpace(photoUrl))
+            return (null, null);
+
+        var data = await _photoCacheService.GetPhotoDataAsync(photoUrl).ConfigureAwait(false);
+        if (data == null || data.Length == 0)
+            return (null, null);
+
+        return (data, GetFileNameFromUrl(photoUrl));
+    }
+
+    private static string? GetFileNameFromUrl(string photoUrl)
+    {
+        if (!Uri.TryCreate(photoUrl, UriKind.Absolute, out var uri))
+            return null;
+
+        var fileName = Path.GetFileName(uri.LocalPath);
+        return string.IsNullOrWhiteSpace(fileName) ? null : fileName;
     }
 
     /// <summary>

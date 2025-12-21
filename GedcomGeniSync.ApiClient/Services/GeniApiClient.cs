@@ -76,6 +76,9 @@ public class GeniApiClient : IGeniApiClient
     public Task<GeniPhoto?> AddPhotoFromBytesAsync(string profileId, byte[] imageData, string fileName, string? caption = null)
         => _photoClient.AddPhotoFromBytesAsync(profileId, imageData, fileName, caption);
 
+    public Task<GeniPhoto?> AddPhotoFromCacheAsync(string profileId, string localPath, string? caption = null)
+        => _photoClient.AddPhotoFromCacheAsync(profileId, localPath, caption);
+
     public Task<GeniPhoto?> SetMugshotAsync(string profileId, string filePath)
         => _photoClient.SetMugshotAsync(profileId, filePath);
 

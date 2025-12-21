@@ -174,6 +174,7 @@ public class UpdateCommandHandler : IHostedCommand
                 profileClient,
                 photoClient,
                 photoService,
+                provider.GetService<GedcomGeniSync.Services.Photo.IPhotoCacheService>(),
                 gedcomResult,
                 logger,
                 progressTracker,

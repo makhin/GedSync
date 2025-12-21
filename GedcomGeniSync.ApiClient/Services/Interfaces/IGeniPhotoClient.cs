@@ -15,6 +15,7 @@ public interface IGeniPhotoClient
     // Photo Upload Operations
     Task<GeniPhoto?> AddPhotoAsync(string profileId, string filePath, string? caption = null);
     Task<GeniPhoto?> AddPhotoFromBytesAsync(string profileId, byte[] imageData, string fileName, string? caption = null);
+    Task<GeniPhoto?> AddPhotoFromCacheAsync(string profileId, string localPath, string? caption = null);
 
     // Mugshot Operations
     Task<GeniPhoto?> SetMugshotAsync(string profileId, string filePath);
