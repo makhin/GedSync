@@ -117,7 +117,10 @@ public class PhotoCacheService : IPhotoCacheService
         });
 
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-        var entries = results.Where(r => r != null).ToList()!;
+        var entries = results
+            .Where(static r => r is not null)
+            .Select(r => r!)
+            .ToList();
 
         await SaveIndexAsync().ConfigureAwait(false);
         return entries;
