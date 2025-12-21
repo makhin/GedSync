@@ -9,6 +9,7 @@ using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using GedcomGeniSync.Services.Compare;
 using GedcomGeniSync.Services.Interfaces;
+using GedcomGeniSync.Services.Photo;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -86,7 +87,8 @@ public class WaveCompareCommandHandler : IHostedCommand
                 new MatchingOptions()));
             services.AddSingleton<IPersonFieldComparer>(sp => new PersonFieldComparer(
                 sp.GetRequiredService<ILogger<PersonFieldComparer>>(),
-                fieldsToIgnore));
+                fieldsToIgnore,
+                sp.GetService<IPhotoCompareService>()));
             services.AddSingleton<GedcomGeniSync.Core.Services.Wave.WaveCompareService>(sp =>
                 new GedcomGeniSync.Core.Services.Wave.WaveCompareService(
                     sp.GetRequiredService<IFuzzyMatcherService>(),

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services.Compare;
+using GedcomGeniSync.Services.Photo;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GedcomGeniSync.Tests.Services.Compare;
@@ -170,6 +171,51 @@ public class PersonFieldComparerTests
         Assert.Equal(FieldAction.AddPhoto, diff.Action);
         // Should be one of the new photos (photo2 or photo3)
         Assert.Contains(diff.SourceValue, new[] { "https://example.com/photo2.jpg", "https://example.com/photo3.jpg" });
+    }
+
+    [Fact]
+    public void CompareFields_PhotoCompareServiceReturnsSimilar_AddsUpdatePhotoDiff()
+    {
+        var report = new PhotoCompareReport
+        {
+            NewPhotos = new[]
+            {
+                new PhotoCacheEntry
+                {
+                    Url = "https://example.com/source.jpg",
+                    LocalPath = "cache/source.jpg",
+                    PersonId = "@I1@",
+                    Source = "myheritage",
+                    FileSize = 1,
+                    DownloadedAt = DateTime.UtcNow
+                }
+            },
+            SimilarPhotos = new[]
+            {
+                new PhotoCompareResult
+                {
+                    SourceUrl = "https://example.com/source.jpg",
+                    DestinationUrl = "https://example.com/dest.jpg",
+                    Similarity = 0.97,
+                    IsMatch = false,
+                    SourceLocalPath = "cache/source.jpg"
+                }
+            }
+        };
+
+        var comparer = new PersonFieldComparer(
+            NullLogger<PersonFieldComparer>.Instance,
+            photoCompareService: new StubPhotoCompareService(report));
+
+        var source = CreatePerson(photoUrls: new[] { "https://example.com/source.jpg" });
+        var destination = CreatePerson(photoUrls: new[] { "https://example.com/dest.jpg" });
+
+        var diffs = comparer.CompareFields(source, destination);
+
+        Assert.Contains(diffs, diff =>
+            diff.Action == FieldAction.UpdatePhoto &&
+            diff.PhotoSimilarity == 0.97 &&
+            diff.LocalPhotoPath == "cache/source.jpg");
     }
 
     [Fact]
@@ -351,5 +397,24 @@ public class PersonFieldComparerTests
             BurialPlace = burialPlace,
             PhotoUrls = photoUrls?.ToImmutableList() ?? ImmutableList<string>.Empty
         };
+    }
+
+    private sealed class StubPhotoCompareService : IPhotoCompareService
+    {
+        private readonly PhotoCompareReport _report;
+
+        public StubPhotoCompareService(PhotoCompareReport report)
+        {
+            _report = report;
+        }
+
+        public Task<PhotoCompareReport> ComparePersonPhotosAsync(
+            string sourcePersonId,
+            IReadOnlyList<string> sourcePhotoUrls,
+            string destinationPersonId,
+            IReadOnlyList<string> destinationPhotoUrls)
+        {
+            return Task.FromResult(_report);
+        }
     }
 }

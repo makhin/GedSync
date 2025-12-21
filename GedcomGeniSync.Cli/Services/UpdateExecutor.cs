@@ -130,11 +130,14 @@ public class UpdateExecutor
 
                 // Separate photo updates from profile updates
                 var fieldsForProfile = node.FieldsToUpdate
-                    .Where(f => f.Action != FieldAction.AddPhoto && !skipFields.Contains(f.FieldName))
+                    .Where(f => f.Action != FieldAction.AddPhoto
+                                && f.Action != FieldAction.UpdatePhoto
+                                && f.Action != FieldAction.PhotoMatch
+                                && !skipFields.Contains(f.FieldName))
                     .ToList();
 
                 var photoFields = node.FieldsToUpdate
-                    .Where(f => f.Action == FieldAction.AddPhoto)
+                    .Where(f => f.Action == FieldAction.AddPhoto || f.Action == FieldAction.UpdatePhoto)
                     .ToList();
 
                 // 1. Update profile fields

@@ -236,6 +236,8 @@ public class PhotoCompareService : IPhotoCompareService
         {
             SourceUrl = source.Entry.Url,
             DestinationUrl = destination.Entry.Url,
+            SourceLocalPath = source.Entry.LocalPath,
+            DestinationLocalPath = destination.Entry.LocalPath,
             Similarity = similarity,
             IsMatch = isMatch,
             Reason = reason

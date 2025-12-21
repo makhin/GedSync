@@ -243,16 +243,28 @@ public record FieldDiff
     public string? DestinationValue { get; init; }
 
     /// <summary>
-    /// Action to take: Add | Update | AddPhoto
+    /// Action to take: Add | Update | AddPhoto | UpdatePhoto | PhotoMatch
     /// </summary>
     public FieldAction Action { get; init; }
+
+    /// <summary>
+    /// Similarity score for photo comparisons (0.0 - 1.0).
+    /// </summary>
+    public double? PhotoSimilarity { get; init; }
+
+    /// <summary>
+    /// Local path to cached photo for upload.
+    /// </summary>
+    public string? LocalPhotoPath { get; init; }
 }
 
 public enum FieldAction
 {
     Add,
     Update,
-    AddPhoto
+    AddPhoto,
+    UpdatePhoto,
+    PhotoMatch
 }
 
 /// <summary>

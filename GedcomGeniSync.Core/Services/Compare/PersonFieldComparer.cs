@@ -1,4 +1,5 @@
 using GedcomGeniSync.Models;
+using GedcomGeniSync.Services.Photo;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
 
@@ -12,6 +13,7 @@ public class PersonFieldComparer : IPersonFieldComparer
 {
     private readonly ILogger<PersonFieldComparer> _logger;
     private readonly HashSet<string> _fieldsToIgnore;
+    private readonly IPhotoCompareService? _photoCompareService;
 
     // Fields to compare according to COMPARE_COMMAND.md specification
     private static readonly string[] FieldsToCompare =
@@ -22,10 +24,14 @@ public class PersonFieldComparer : IPersonFieldComparer
         "Gender", "PhotoUrl"
     ];
 
-    public PersonFieldComparer(ILogger<PersonFieldComparer> logger, HashSet<string>? fieldsToIgnore = null)
+    public PersonFieldComparer(
+        ILogger<PersonFieldComparer> logger,
+        HashSet<string>? fieldsToIgnore = null,
+        IPhotoCompareService? photoCompareService = null)
     {
         _logger = logger;
         _fieldsToIgnore = fieldsToIgnore ?? new HashSet<string>();
+        _photoCompareService = photoCompareService;
     }
 
     public ImmutableList<FieldDiff> CompareFields(PersonRecord source, PersonRecord destination)
@@ -56,7 +62,7 @@ public class PersonFieldComparer : IPersonFieldComparer
         // Compare photos (unless ignored)
         if (!_fieldsToIgnore.Contains("PhotoUrl"))
         {
-            ComparePhotoUrls(differences, source.PhotoUrls, destination.PhotoUrls);
+            ComparePhotoUrls(differences, source, destination);
         }
 
         return differences.ToImmutable();
@@ -155,6 +161,70 @@ public class PersonFieldComparer : IPersonFieldComparer
     }
 
     private void ComparePhotoUrls(
+        ImmutableList<FieldDiff>.Builder differences,
+        PersonRecord source,
+        PersonRecord destination)
+    {
+        if (_photoCompareService == null)
+        {
+            ComparePhotoUrlsByUrl(differences, source.PhotoUrls, destination.PhotoUrls);
+            return;
+        }
+
+        try
+        {
+            var report = _photoCompareService.ComparePersonPhotosAsync(
+                    source.Id,
+                    source.PhotoUrls,
+                    destination.Id,
+                    destination.PhotoUrls)
+                .GetAwaiter()
+                .GetResult();
+
+            foreach (var newPhoto in report.NewPhotos)
+            {
+                differences.Add(new FieldDiff
+                {
+                    FieldName = "PhotoUrl",
+                    SourceValue = newPhoto.Url,
+                    DestinationValue = destination.PhotoUrls.FirstOrDefault(),
+                    Action = FieldAction.AddPhoto,
+                    LocalPhotoPath = newPhoto.LocalPath
+                });
+            }
+
+            foreach (var similar in report.SimilarPhotos)
+            {
+                differences.Add(new FieldDiff
+                {
+                    FieldName = "PhotoUrl",
+                    SourceValue = similar.SourceUrl,
+                    DestinationValue = similar.DestinationUrl,
+                    Action = FieldAction.UpdatePhoto,
+                    PhotoSimilarity = similar.Similarity,
+                    LocalPhotoPath = similar.SourceLocalPath
+                });
+            }
+
+            if (report.NewPhotos.Count > 0 || report.SimilarPhotos.Count > 0)
+            {
+                _logger.LogInformation(
+                    "Photo comparison results: {NewCount} new, {SimilarCount} similar",
+                    report.NewPhotos.Count,
+                    report.SimilarPhotos.Count);
+            }
+
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Photo comparison failed; falling back to URL comparison.");
+        }
+
+        ComparePhotoUrlsByUrl(differences, source.PhotoUrls, destination.PhotoUrls);
+    }
+
+    private void ComparePhotoUrlsByUrl(
         ImmutableList<FieldDiff>.Builder differences,
         ImmutableList<string> sourcePhotos,
         ImmutableList<string> destPhotos)
