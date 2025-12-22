@@ -1,0 +1,104 @@
+{
+  "results": [
+    {
+      "id": "union-118937407",
+      "url": "https://www.geni.com/api/union-118937407",
+      "guid": "6000000207133980751",
+      "divorce": {
+        "name": "Divorce of Alexandr Махин and Магдалина Зайцева",
+        "date": {
+          "day": 22,
+          "month": 4,
+          "year": 2013,
+          "formatted_date": "April 22, 2013"
+        },
+        "location": {
+          "place_name": "Днепропетровск",
+          "formatted_location": "Днепропетровск"
+        }
+      },
+      "status": "ex_spouse",
+      "partners": [
+        "https://www.geni.com/api/profile-34828568625",
+        "https://www.geni.com/api/profile-34829663288"
+      ],
+      "children": [
+        "https://www.geni.com/api/profile-34829663289",
+        "https://www.geni.com/api/profile-34829663292"
+      ]
+    },
+    {
+      "id": "union-118937408",
+      "url": "https://www.geni.com/api/union-118937408",
+      "guid": "6000000207133980755",
+      "marriage_date": {
+        "day": 2,
+        "month": 3,
+        "year": 1973,
+        "formatted_date": "March 2, 1973"
+      },
+      "marriage_location": {
+        "place_name": "Днепропетровск",
+        "formatted_location": "Днепропетровск"
+      },
+      "marriage": {
+        "name": "Marriage of Владимир Махин and Татьяна Рызванович",
+        "date": {
+          "day": 2,
+          "month": 3,
+          "year": 1973,
+          "formatted_date": "March 2, 1973"
+        },
+        "location": {
+          "place_name": "Днепропетровск",
+          "formatted_location": "Днепропетровск"
+        }
+      },
+      "status": "spouse",
+      "partners": [
+        "https://www.geni.com/api/profile-34829663293",
+        "https://www.geni.com/api/profile-34829663294"
+      ],
+      "children": [
+        "https://www.geni.com/api/profile-34828568625"
+      ]
+    },
+    {
+      "id": "union-118937425",
+      "url": "https://www.geni.com/api/union-118937425",
+      "guid": "6000000207133980774",
+      "marriage_date": {
+        "day": 21,
+        "month": 1,
+        "year": 2017,
+        "formatted_date": "January 21, 2017"
+      },
+      "marriage_location": {
+        "place_name": "Вроцлав",
+        "formatted_location": "Вроцлав"
+      },
+      "marriage": {
+        "name": "Marriage of Alexandr Махин and Дарья Клименко",
+        "date": {
+          "day": 21,
+          "month": 1,
+          "year": 2017,
+          "formatted_date": "January 21, 2017"
+        },
+        "location": {
+          "place_name": "Вроцлав",
+          "formatted_location": "Вроцлав"
+        }
+      },
+      "status": "spouse",
+      "partners": [
+        "https://www.geni.com/api/profile-34828568625",
+        "https://www.geni.com/api/profile-34829663382"
+      ],
+      "children": [
+        "https://www.geni.com/api/profile-34829663383",
+        "https://www.geni.com/api/profile-34829663386"
+      ]
+    }
+  ]
+}
