@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace GedcomGeniSync.ApiClient.Models;
@@ -529,11 +530,19 @@ public class GeniPhoto
     [JsonPropertyName("thumbnail_url")]
     public string? ThumbnailUrl { get; set; }
 
+    /// <summary>
+    /// Date can be either a string or an object (e.g., {"year": 2000, "month": 1})
+    /// Use JsonElement to handle both cases
+    /// </summary>
     [JsonPropertyName("date")]
-    public string? Date { get; set; }
+    public JsonElement? Date { get; set; }
 
+    /// <summary>
+    /// Location can be either a string or an object
+    /// Use JsonElement to handle both cases
+    /// </summary>
     [JsonPropertyName("location")]
-    public string? Location { get; set; }
+    public JsonElement? Location { get; set; }
 
     [JsonPropertyName("created_at")]
     public string? CreatedAt { get; set; }

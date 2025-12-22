@@ -69,25 +69,32 @@ public class UpdateExecutor
         // Track progress
         var processedIds = resumeProgress?.ProcessedSourceIds ?? new HashSet<string>();
         var failedIds = resumeProgress?.FailedSourceIds ?? new HashSet<string>();
+        var skippedIds = resumeProgress?.SkippedSourceIds ?? new HashSet<string>();
         var updatedCount = resumeProgress?.UpdatedProfiles ?? 0;
         var failedCount = resumeProgress?.FailedProfiles ?? 0;
 
-        // Skip already processed nodes if resuming, but retry failed ones
+        // Skip already processed nodes and permanently skipped ones (e.g., 403 Forbidden)
         var nodesToProcess = resumeProgress != null
-            ? nodesToUpdate.Where(n => !processedIds.Contains(n.SourceId) || failedIds.Contains(n.SourceId)).ToList()
+            ? nodesToUpdate.Where(n =>
+                !processedIds.Contains(n.SourceId) &&
+                !skippedIds.Contains(n.SourceId) ||
+                failedIds.Contains(n.SourceId)).ToList()
             : nodesToUpdate.ToList();
 
         if (resumeProgress != null)
         {
             var retryCount = failedIds.Count;
-            _logger.LogInformation("Resuming from previous progress: {Processed}/{Total} already processed, {Retry} failed profiles will be retried",
-                processedIds.Count, nodesToUpdate.Count, retryCount);
+            var skippedCount = skippedIds.Count;
+            _logger.LogInformation(
+                "Resuming from previous progress: {Processed}/{Total} already processed, {Retry} failed will be retried, {Skipped} permanently skipped",
+                processedIds.Count, nodesToUpdate.Count, retryCount, skippedCount);
         }
 
         foreach (var node in nodesToProcess)
         {
             result.TotalProcessed++;
             var profileFailed = false;
+            var permanentlySkip = false;
 
             try
             {
@@ -230,6 +237,29 @@ public class UpdateExecutor
                                 fileName = downloadResult.FileName;
                             }
 
+                            // For UpdatePhoto action, delete old photo first to avoid duplicates
+                            if (photoField.Action == FieldAction.UpdatePhoto &&
+                                !string.IsNullOrWhiteSpace(photoField.DestinationValue))
+                            {
+                                try
+                                {
+                                    var existingPhotos = await _photoClient.GetPhotosAsync(CleanProfileId(node.GeniProfileId));
+                                    var oldPhoto = existingPhotos?.FirstOrDefault(p =>
+                                        p.ContentUrl?.Contains(ExtractPhotoIdFromUrl(photoField.DestinationValue)) == true ||
+                                        p.Url?.Contains(ExtractPhotoIdFromUrl(photoField.DestinationValue)) == true);
+
+                                    if (oldPhoto != null)
+                                    {
+                                        _logger.LogDebug("  Deleting old photo {PhotoId} before uploading new one", oldPhoto.NumericId);
+                                        await _photoClient.DeletePhotoAsync(oldPhoto.NumericId);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "  Failed to delete old photo, continuing with upload");
+                                }
+                            }
+
                             // Upload to Geni as mugshot
                             var uploadedPhoto = await _photoClient.SetMugshotFromBytesAsync(
                                 CleanProfileId(node.GeniProfileId),
@@ -283,22 +313,48 @@ public class UpdateExecutor
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "  Error processing node");
-                result.Failed++;
-                failedCount++;
-                profileFailed = true;
-                result.Errors.Add(new Commands.UpdateError
+                // Check if it's a 403 Forbidden error (no permission to update this profile)
+                if (ex is HttpRequestException httpEx &&
+                    httpEx.Message.Contains("403") &&
+                    httpEx.Message.Contains("Forbidden"))
                 {
-                    SourceId = node.SourceId,
-                    GeniProfileId = node.GeniProfileId ?? "unknown",
-                    FieldName = "General",
-                    ErrorMessage = ex.Message
-                });
+                    _logger.LogWarning("  ⚠ No permission to update this profile (403 Forbidden) - skipping permanently");
+                    permanentlySkip = true;
+                    result.Failed++;
+                    result.Errors.Add(new Commands.UpdateError
+                    {
+                        SourceId = node.SourceId,
+                        GeniProfileId = node.GeniProfileId ?? "unknown",
+                        FieldName = "Permission",
+                        ErrorMessage = "403 Forbidden - No permission to update this profile"
+                    });
+                }
+                else
+                {
+                    _logger.LogError(ex, "  Error processing node");
+                    result.Failed++;
+                    failedCount++;
+                    profileFailed = true;
+                    result.Errors.Add(new Commands.UpdateError
+                    {
+                        SourceId = node.SourceId,
+                        GeniProfileId = node.GeniProfileId ?? "unknown",
+                        FieldName = "General",
+                        ErrorMessage = ex.Message
+                    });
+                }
             }
             finally
             {
                 // Update tracking based on success/failure
-                if (profileFailed)
+                if (permanentlySkip)
+                {
+                    // Add to skipped list (will not be retried)
+                    skippedIds.Add(node.SourceId);
+                    failedIds.Remove(node.SourceId);
+                    processedIds.Remove(node.SourceId);
+                }
+                else if (profileFailed)
                 {
                     // Add to failed list for retry on next resume
                     failedIds.Add(node.SourceId);
@@ -319,6 +375,7 @@ public class UpdateExecutor
                         GedcomFile = resumeProgress?.GedcomFile ?? "",
                         ProcessedSourceIds = processedIds,
                         FailedSourceIds = failedIds,
+                        SkippedSourceIds = skippedIds,
                         TotalProfiles = nodesToUpdate.Count,
                         UpdatedProfiles = updatedCount,
                         FailedProfiles = failedCount
@@ -545,5 +602,38 @@ public class UpdateExecutor
 
         // Ensure g prefix
         return id.StartsWith('g') ? id : $"g{id}";
+    }
+
+    /// <summary>
+    /// Extracts photo identifier from Geni photo URL for matching purposes
+    /// </summary>
+    /// <param name="photoUrl">Full Geni photo URL</param>
+    /// <returns>Photo identifier (filename or hash) for matching</returns>
+    private static string ExtractPhotoIdFromUrl(string photoUrl)
+    {
+        if (string.IsNullOrWhiteSpace(photoUrl))
+            return string.Empty;
+
+        try
+        {
+            var uri = new Uri(photoUrl);
+            var segments = uri.Segments;
+
+            // Get the last segment (filename)
+            var fileName = segments.LastOrDefault()?.TrimEnd('/') ?? string.Empty;
+
+            // Remove query parameters
+            var queryIndex = fileName.IndexOf('?');
+            if (queryIndex > 0)
+                fileName = fileName[..queryIndex];
+
+            // Return the base filename without extension for matching
+            return Path.GetFileNameWithoutExtension(fileName);
+        }
+        catch
+        {
+            // Fallback: return last part of URL
+            return photoUrl.Split('/').LastOrDefault() ?? photoUrl;
+        }
     }
 }

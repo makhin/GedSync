@@ -80,6 +80,50 @@ public class PhotoCacheServiceTests
         }
     }
 
+    [Fact]
+    public async Task UpdateEntry_ShouldUpdateHashesInCache()
+    {
+        var cacheDir = Path.Combine(Path.GetTempPath(), $"photo-cache-{Guid.NewGuid():N}");
+        var url = "https://media.myheritage.com/photo.jpg";
+        var data = new byte[] { 1, 2, 3, 4 };
+
+        var downloadService = new TestPhotoDownloadService(new Dictionary<string, PhotoDownloadResult>
+        {
+            [url] = CreateResult(url, "photo.jpg", data)
+        });
+
+        var config = new PhotoConfig { CacheDirectory = cacheDir };
+        var service = new PhotoCacheService(config, downloadService, NullLogger<PhotoCacheService>.Instance);
+
+        try
+        {
+            // Download photo
+            var entry = await service.EnsureDownloadedAsync(url, "@I1@");
+            entry.Should().NotBeNull();
+            entry!.ContentHash.Should().BeNull();
+            entry!.PerceptualHash.Should().BeNull();
+
+            // Update with hashes
+            service.UpdateEntry(url, "sha256:abc123", "phash:0x1234567890abcdef");
+            await service.SaveIndexAsync();
+
+            // Reload service to verify persistence
+            var service2 = new PhotoCacheService(config, downloadService, NullLogger<PhotoCacheService>.Instance);
+            var reloadedEntry = service2.GetEntry(url);
+
+            reloadedEntry.Should().NotBeNull();
+            reloadedEntry!.ContentHash.Should().Be("sha256:abc123");
+            reloadedEntry!.PerceptualHash.Should().Be("phash:0x1234567890abcdef");
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+            {
+                Directory.Delete(cacheDir, true);
+            }
+        }
+    }
+
     private static PhotoDownloadResult CreateResult(string url, string fileName, byte[] data)
     {
         return new PhotoDownloadResult

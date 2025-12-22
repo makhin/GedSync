@@ -31,6 +31,11 @@ public record UpdateProgress
     public HashSet<string> FailedSourceIds { get; init; } = new();
 
     /// <summary>
+    /// List of source IDs that should be permanently skipped (e.g., 403 Forbidden - no permission)
+    /// </summary>
+    public HashSet<string> SkippedSourceIds { get; init; } = new();
+
+    /// <summary>
     /// Total number of profiles to update
     /// </summary>
     public int TotalProfiles { get; init; }

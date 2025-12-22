@@ -31,3 +31,4 @@ appsettings.Development.json
 Thumbs.db
 
 .fake
+/photos

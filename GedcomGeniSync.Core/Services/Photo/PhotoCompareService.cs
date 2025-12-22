@@ -81,6 +81,9 @@ public class PhotoCompareService : IPhotoCompareService
             newPhotos.Add(source.Entry);
         }
 
+        // Save cache index if any hashes were computed
+        await _photoCacheService.SaveIndexAsync().ConfigureAwait(false);
+
         return new PhotoCompareReport
         {
             NewPhotos = newPhotos,
@@ -140,6 +143,9 @@ public class PhotoCompareService : IPhotoCompareService
                 : null;
         }
 
+        var originalContentHash = contentHash;
+        var originalPerceptualHash = perceptualHash;
+
         contentHash ??= _photoHashService.ComputeContentHash(data);
 
         if (!perceptualHash.HasValue)
@@ -152,6 +158,16 @@ public class PhotoCompareService : IPhotoCompareService
             {
                 _logger.LogWarning(ex, "Failed to compute perceptual hash for URL {Url}", entry.Url);
             }
+        }
+
+        // Save computed hashes to cache if they were computed
+        if (originalContentHash == null || originalPerceptualHash == null)
+        {
+            var perceptualHashStr = perceptualHash.HasValue
+                ? $"phash:0x{perceptualHash.Value:x16}"
+                : null;
+
+            _photoCacheService.UpdateEntry(entry.Url, contentHash, perceptualHashStr);
         }
 
         return contentHash != null || perceptualHash.HasValue

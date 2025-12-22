@@ -165,6 +165,26 @@ public class PhotoCacheService : IPhotoCacheService
         return await File.ReadAllBytesAsync(fullPath).ConfigureAwait(false);
     }
 
+    public void UpdateEntry(string url, string? contentHash, string? perceptualHash)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+
+        lock (_indexSync)
+        {
+            if (!_index.Entries.TryGetValue(url, out var entry))
+                return;
+
+            var updated = entry with
+            {
+                ContentHash = contentHash ?? entry.ContentHash,
+                PerceptualHash = perceptualHash ?? entry.PerceptualHash
+            };
+
+            _index.Entries[url] = updated;
+        }
+    }
+
     public async Task SaveIndexAsync()
     {
         PhotoCacheIndex snapshot;
@@ -222,9 +242,42 @@ public class PhotoCacheService : IPhotoCacheService
         if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(personId))
             return null;
 
-        var cached = GetCachedEntryIfPresent(url);
+        var cached = GetCachedEntryIfPresent(url, personId);
         if (cached != null)
+        {
+            // If same URL is used by multiple persons, create a person-specific entry pointing to same file
+            if (cached.PersonId != personId)
+            {
+                var photoSource = PhotoSourceDetector.DetectSource(url);
+                var newRelativePath = BuildRelativePath(photoSource, personId, Path.GetFileName(cached.LocalPath), "");
+                var newFullPath = ResolveLocalPath(newRelativePath);
+                var oldFullPath = ResolveLocalPath(cached.LocalPath);
+
+                // Create directory and copy/link file if needed
+                Directory.CreateDirectory(Path.GetDirectoryName(newFullPath)!);
+                if (!File.Exists(newFullPath) && File.Exists(oldFullPath))
+                {
+                    File.Copy(oldFullPath, newFullPath, overwrite: false);
+                }
+
+                // Create new entry for this person
+                var personEntry = cached with
+                {
+                    LocalPath = newRelativePath,
+                    PersonId = personId
+                };
+
+                lock (_indexSync)
+                {
+                    // Store under composite key: url|personId
+                    _index.Entries[$"{url}|{personId}"] = personEntry;
+                }
+
+                return personEntry;
+            }
+
             return cached;
+        }
 
         var downloadResult = await DownloadWithRetriesAsync(url).ConfigureAwait(false);
         if (downloadResult == null || downloadResult.Data == null || downloadResult.Data.Length == 0)
@@ -267,10 +320,24 @@ public class PhotoCacheService : IPhotoCacheService
         return entry;
     }
 
-    private PhotoCacheEntry? GetCachedEntryIfPresent(string url)
+    private PhotoCacheEntry? GetCachedEntryIfPresent(string url, string? personId = null)
     {
         lock (_indexSync)
         {
+            // First try composite key url|personId if personId provided
+            if (!string.IsNullOrWhiteSpace(personId) &&
+                _index.Entries.TryGetValue($"{url}|{personId}", out var personEntry))
+            {
+                var personFullPath = ResolveLocalPath(personEntry.LocalPath);
+                if (File.Exists(personFullPath))
+                {
+                    var updatedPerson = personEntry with { LastAccessedAt = DateTime.UtcNow };
+                    _index.Entries[$"{url}|{personId}"] = updatedPerson;
+                    return updatedPerson;
+                }
+            }
+
+            // Fall back to URL-only key
             if (!_index.Entries.TryGetValue(url, out var entry))
                 return null;
 

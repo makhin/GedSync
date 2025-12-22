@@ -37,6 +37,11 @@ public interface IPhotoCacheService
     Task<byte[]?> GetPhotoDataByPathAsync(string localPath);
 
     /// <summary>
+    /// Update cache entry with computed hashes.
+    /// </summary>
+    void UpdateEntry(string url, string? contentHash, string? perceptualHash);
+
+    /// <summary>
     /// Persist cache index to disk.
     /// </summary>
     Task SaveIndexAsync();

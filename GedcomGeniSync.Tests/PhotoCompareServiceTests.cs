@@ -160,6 +160,11 @@ public class PhotoCompareServiceTests
                     ? bytes
                     : null);
 
+        mock.Setup(s => s.UpdateEntry(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()));
+
+        mock.Setup(s => s.SaveIndexAsync())
+            .Returns(Task.CompletedTask);
+
         return mock;
     }
 

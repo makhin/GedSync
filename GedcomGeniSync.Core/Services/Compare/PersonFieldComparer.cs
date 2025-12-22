@@ -195,6 +195,16 @@ public class PersonFieldComparer : IPersonFieldComparer
 
             foreach (var similar in report.SimilarPhotos)
             {
+                // Skip photos that are visually identical (>= 98% similarity)
+                // Different content hash likely due to compression/metadata differences
+                if (similar.Similarity >= 0.98)
+                {
+                    _logger.LogDebug(
+                        "Skipping photo update for visually identical images (similarity: {Similarity:P1}): {SourceUrl} vs {DestUrl}",
+                        similar.Similarity, similar.SourceUrl, similar.DestinationUrl);
+                    continue;
+                }
+
                 differences.Add(new FieldDiff
                 {
                     FieldName = "PhotoUrl",
@@ -206,12 +216,13 @@ public class PersonFieldComparer : IPersonFieldComparer
                 });
             }
 
-            if (report.NewPhotos.Count > 0 || report.SimilarPhotos.Count > 0)
+            if (report.NewPhotos.Count > 0 || report.SimilarPhotos.Count > 0 || report.MatchedPhotos.Count > 0)
             {
                 _logger.LogInformation(
-                    "Photo comparison results: {NewCount} new, {SimilarCount} similar",
+                    "Photo comparison results: {NewCount} new, {MatchedCount} matched, {SimilarCount} similar (updates)",
                     report.NewPhotos.Count,
-                    report.SimilarPhotos.Count);
+                    report.MatchedPhotos.Count,
+                    report.SimilarPhotos.Count(s => s.Similarity < 0.98));
             }
 
             return;
