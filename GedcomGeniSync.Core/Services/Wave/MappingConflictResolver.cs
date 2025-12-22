@@ -1,4 +1,6 @@
+using GedcomGeniSync.Core.Models;
 using GedcomGeniSync.Core.Models.Wave;
+using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using Microsoft.Extensions.Logging;
 
@@ -53,6 +55,7 @@ public class MappingConflictResolver
 
     /// <summary>
     /// Build matrix of all possible candidates for each source person.
+    /// NEW: Only searches among close relatives of current mapping to avoid global search.
     /// </summary>
     private Dictionary<string, List<CandidateOption>> BuildCandidateMatrix(
         Dictionary<string, PersonMapping> currentMappings,
@@ -75,9 +78,20 @@ public class MappingConflictResolver
                 continue;
             }
 
+            // Get close relatives of current mapping destination instead of searching globally
+            var relativeCandidates = GetRelativeCandidates(
+                currentMapping.DestinationId,
+                destLoadResult);
+
+            _logger?.LogDebug(
+                "Conflict resolution for {SourceId}: searching among {Count} relatives of {DestId}",
+                sourceId,
+                relativeCandidates.Count,
+                currentMapping.DestinationId);
+
             var candidates = _fuzzyMatcher.FindMatches(
                 sourcePerson,
-                destLoadResult.Persons.Values,
+                relativeCandidates,
                 minScore: MinimumCandidateScore);
 
             var options = candidates
@@ -226,6 +240,120 @@ public class MappingConflictResolver
                 oldMapping.DestinationId,
                 resolved.DestinationId);
         }
+    }
+
+    /// <summary>
+    /// Get close relatives of a person as candidates for conflict resolution.
+    /// Returns family members within 2 degrees of relationship.
+    /// </summary>
+    private List<PersonRecord> GetRelativeCandidates(
+        string destId,
+        GedcomLoadResult destLoadResult)
+    {
+        if (!destLoadResult.Persons.TryGetValue(destId, out var destPerson))
+        {
+            _logger?.LogWarning(
+                "Cannot find dest person {DestId} for conflict resolution, using empty candidate list",
+                destId);
+            return new List<PersonRecord>();
+        }
+
+        var candidates = new HashSet<PersonRecord>();
+        var candidateIds = new HashSet<string>();
+
+        // Add the person themselves
+        candidateIds.Add(destId);
+
+        // Add parents
+        if (!string.IsNullOrEmpty(destPerson.FatherId))
+            candidateIds.Add(destPerson.FatherId);
+        if (!string.IsNullOrEmpty(destPerson.MotherId))
+            candidateIds.Add(destPerson.MotherId);
+
+        // Add spouses
+        foreach (var spouseId in destPerson.SpouseIds)
+            candidateIds.Add(spouseId);
+
+        // Add children
+        foreach (var childId in destPerson.ChildrenIds)
+            candidateIds.Add(childId);
+
+        // Add siblings
+        foreach (var siblingId in destPerson.SiblingIds)
+            candidateIds.Add(siblingId);
+
+        // Add grandparents (parents of parents)
+        foreach (var parentId in new[] { destPerson.FatherId, destPerson.MotherId })
+        {
+            if (string.IsNullOrEmpty(parentId))
+                continue;
+
+            if (destLoadResult.Persons.TryGetValue(parentId, out var parent))
+            {
+                if (!string.IsNullOrEmpty(parent.FatherId))
+                    candidateIds.Add(parent.FatherId);
+                if (!string.IsNullOrEmpty(parent.MotherId))
+                    candidateIds.Add(parent.MotherId);
+
+                // Add parent's spouses (step-parents)
+                foreach (var spouseId in parent.SpouseIds)
+                    candidateIds.Add(spouseId);
+            }
+        }
+
+        // Add grandchildren (children of children)
+        foreach (var childId in destPerson.ChildrenIds)
+        {
+            if (destLoadResult.Persons.TryGetValue(childId, out var child))
+            {
+                foreach (var grandchildId in child.ChildrenIds)
+                    candidateIds.Add(grandchildId);
+
+                // Add child's spouses
+                foreach (var spouseId in child.SpouseIds)
+                    candidateIds.Add(spouseId);
+            }
+        }
+
+        // Add nieces/nephews (children of siblings)
+        foreach (var siblingId in destPerson.SiblingIds)
+        {
+            if (destLoadResult.Persons.TryGetValue(siblingId, out var sibling))
+            {
+                foreach (var nieceNephewId in sibling.ChildrenIds)
+                    candidateIds.Add(nieceNephewId);
+            }
+        }
+
+        // Add aunts/uncles (siblings of parents)
+        foreach (var parentId in new[] { destPerson.FatherId, destPerson.MotherId })
+        {
+            if (string.IsNullOrEmpty(parentId))
+                continue;
+
+            if (destLoadResult.Persons.TryGetValue(parentId, out var parent))
+            {
+                foreach (var auntUncleId in parent.SiblingIds)
+                    candidateIds.Add(auntUncleId);
+            }
+        }
+
+        // Resolve IDs to PersonRecords
+        foreach (var id in candidateIds)
+        {
+            if (destLoadResult.Persons.TryGetValue(id, out var person))
+            {
+                candidates.Add(person);
+            }
+        }
+
+        _logger?.LogDebug(
+            "Found {Count} relative candidates for conflict resolution of {DestId} ({Name})",
+            candidates.Count,
+            destId,
+            destPerson.FullName);
+
+        return candidates.ToList();
     }
 }
 

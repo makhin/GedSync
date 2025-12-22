@@ -49,75 +49,76 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     /// <summary>
     /// Compare two persons and return match score (0-100)
+    /// NEW LOGIC: Score normalized by available fields only
+    /// - If only FirstName and LastName exist and match 100%, score = 100%
+    /// - Family relations are REQUIRED for high confidence matches
     /// </summary>
     public MatchCandidate Compare(PersonRecord source, PersonRecord target)
     {
         var reasonsBuilder = ImmutableList.CreateBuilder<MatchReason>();
 
-        // Last name comparison first to check if we have a good match via MaidenName
-        var lastNameScore = CompareLastNames(source, target);
+        // Track base points (from available fields) and max possible points
+        double basePoints = 0.0;
+        double maxPossiblePoints = 0.0;
 
-        // Debug log for problematic cases
-        if (lastNameScore >= 0.95 && (string.IsNullOrEmpty(source.LastName) || string.IsNullOrEmpty(target.LastName)))
-        {
-            _logger.LogDebug("Strong LastName match via MaidenName! Source: FirstName='{SrcFirst}', LastName='{SrcLast}', MaidenName='{SrcMaiden}'; Target: FirstName='{TgtFirst}', LastName='{TgtLast}', MaidenName='{TgtMaiden}'",
-                source.FirstName, source.LastName ?? "(null)", source.MaidenName ?? "(null)",
-                target.FirstName, target.LastName ?? "(null)", target.MaidenName ?? "(null)");
-        }
+        // ═══════════════════════════════════════════════════════════
+        // STEP 1: Score available fields only
+        // ═══════════════════════════════════════════════════════════
 
-        // Check if either has missing last name to adjust weights
-        // BUT: Don't reduce weight if we successfully matched via MaidenName (score >= 0.95)
-        var missingLastName = string.IsNullOrEmpty(source.LastName) || string.IsNullOrEmpty(target.LastName);
-        var hasStrongLastNameMatch = lastNameScore >= 0.95; // MaidenName match returns 1.0
-
-        // First name comparison - give it more weight if last name is missing AND not matched via maiden name
-        var firstNameWeight = (missingLastName && !hasStrongLastNameMatch)
-            ? _options.FirstNameWeight + (_options.LastNameWeight / 2)
-            : _options.FirstNameWeight;
+        // First name - REQUIRED field
         var firstNameScore = CompareFirstNames(source, target);
-        if (firstNameScore > 0)
+        if (!string.IsNullOrEmpty(source.FirstName) && !string.IsNullOrEmpty(target.FirstName))
         {
+            maxPossiblePoints += _options.FirstNameWeight;
+            basePoints += firstNameScore * _options.FirstNameWeight;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "FirstName",
-                Points = firstNameScore * firstNameWeight,
+                Points = firstNameScore * _options.FirstNameWeight,
                 Details = $"{source.FirstName} ↔ {target.FirstName} ({firstNameScore:P0})"
             });
         }
 
-        // Last name comparison - reduce weight ONLY if missing AND not matched via maiden name
-        var lastNameWeight = (missingLastName && !hasStrongLastNameMatch)
-            ? _options.LastNameWeight / 2
-            : _options.LastNameWeight;
-        if (lastNameScore > 0)
+        // Last name - if available
+        var lastNameScore = CompareLastNames(source, target);
+        var hasLastName = (!string.IsNullOrEmpty(source.LastName) && !string.IsNullOrEmpty(target.LastName)) ||
+                          (!string.IsNullOrEmpty(source.MaidenName) && !string.IsNullOrEmpty(target.LastName)) ||
+                          (!string.IsNullOrEmpty(source.LastName) && !string.IsNullOrEmpty(target.MaidenName));
+
+        if (hasLastName)
         {
+            maxPossiblePoints += _options.LastNameWeight;
+            basePoints += lastNameScore * _options.LastNameWeight;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "LastName",
-                Points = lastNameScore * lastNameWeight,
-                Details = $"{source.LastName} ↔ {target.LastName} ({lastNameScore:P0})"
+                Points = lastNameScore * _options.LastNameWeight,
+                Details = $"{source.LastName ?? source.MaidenName} ↔ {target.LastName ?? target.MaidenName} ({lastNameScore:P0})"
             });
         }
 
-        // Maiden name comparison - higher weight than last name as it's more stable
-        // Maiden name is birth surname and doesn't change with marriage
+        // Maiden name - if BOTH have it (separate from LastName)
         var maidenNameScore = CompareMaidenNames(source, target);
-        if (maidenNameScore > 0)
+        if (!string.IsNullOrEmpty(source.MaidenName) && !string.IsNullOrEmpty(target.MaidenName))
         {
-            // Give maiden name slightly higher weight than last name (30% more)
-            var maidenNameWeight = lastNameWeight * 1.3;
+            // Add 30% more weight for maiden name as it's more stable
+            var maidenWeight = _options.LastNameWeight * 0.3;
+            maxPossiblePoints += maidenWeight;
+            basePoints += maidenNameScore * maidenWeight;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "MaidenName",
-                Points = maidenNameScore * maidenNameWeight,
+                Points = maidenNameScore * maidenWeight,
                 Details = $"{source.MaidenName} ↔ {target.MaidenName} ({maidenNameScore:P0})"
             });
         }
 
-        // Birth date comparison
+        // Birth date - if available
         var birthDateScore = CompareDates(source.BirthDate, target.BirthDate);
-        if (birthDateScore > 0)
+        if (source.BirthDate?.Date != null && target.BirthDate?.Date != null)
         {
+            maxPossiblePoints += _options.BirthDateWeight;
+            basePoints += birthDateScore * _options.BirthDateWeight;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "BirthDate",
@@ -126,29 +127,12 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
-        // IMPORTANT: Special bonus for strong MaidenName match combined with good FirstName and BirthDate
-        // This handles cases where:
-        // - LastName is missing but matched via MaidenName (e.g., Geni males often have null LastName)
-        // - FirstName is strong match but not perfect (e.g., "Владимир" vs "Владимир Витальевич")
-        // - BirthDate matches
-        // This combination gives high confidence even if individual scores aren't 100%
-        if (lastNameScore >= 0.95 && firstNameScore >= 0.85 && birthDateScore >= 0.85)
-        {
-            var bonus = 15.0; // Add bonus to compensate for patronymic differences
-            reasonsBuilder.Add(new MatchReason
-            {
-                Field = "MaidenNameComboBonus",
-                Points = bonus,
-                Details = "Strong combination: MaidenName match + FirstName + BirthDate"
-            });
-            _logger.LogDebug("Applied MaidenName combo bonus of {Bonus} points (LastName:{LS:P0}, FirstName:{FS:P0}, BirthDate:{BS:P0})",
-                bonus, lastNameScore, firstNameScore, birthDateScore);
-        }
-
-        // Birth place comparison
+        // Birth place - if available
         var birthPlaceScore = ComparePlaces(source.BirthPlace, target.BirthPlace);
-        if (birthPlaceScore > 0)
+        if (!string.IsNullOrEmpty(source.BirthPlace) && !string.IsNullOrEmpty(target.BirthPlace))
         {
+            maxPossiblePoints += _options.BirthPlaceWeight;
+            basePoints += birthPlaceScore * _options.BirthPlaceWeight;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "BirthPlace",
@@ -157,22 +141,12 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
-        // Gender comparison (penalty for mismatch)
-        var genderScore = CompareGender(source.Gender, target.Gender);
-        if (genderScore < 1.0)
-        {
-            reasonsBuilder.Add(new MatchReason
-            {
-                Field = "Gender",
-                Points = (genderScore * _options.GenderWeight) - _options.GenderWeight,
-                Details = $"{source.Gender} ↔ {target.Gender} (penalty)"
-            });
-        }
-
-        // Death date comparison (bonus if both have it)
+        // Death date - if available
         var deathDateScore = CompareDates(source.DeathDate, target.DeathDate);
-        if (deathDateScore > 0)
+        if (source.DeathDate?.Date != null && target.DeathDate?.Date != null)
         {
+            maxPossiblePoints += _options.DeathDateWeight;
+            basePoints += deathDateScore * _options.DeathDateWeight;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "DeathDate",
@@ -181,8 +155,27 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
-        // Family relations comparison
+        // Gender - always available (penalty for mismatch)
+        var genderScore = CompareGender(source.Gender, target.Gender);
+        maxPossiblePoints += _options.GenderWeight;
+        if (genderScore >= 1.0)
+        {
+            basePoints += _options.GenderWeight;
+        }
+        else
+        {
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "Gender",
+                Points = -_options.GenderWeight,
+                Details = $"{source.Gender} ↔ {target.Gender} (mismatch penalty)"
+            });
+        }
+
+        // Family relations - CRITICAL for wave algorithm
         var familyScore = CompareFamilyRelations(source, target);
+        maxPossiblePoints += _options.FamilyRelationsWeight;
+        basePoints += familyScore * _options.FamilyRelationsWeight;
         if (familyScore > 0)
         {
             reasonsBuilder.Add(new MatchReason
@@ -193,42 +186,87 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
+        // ═══════════════════════════════════════════════════════════
+        // STEP 2: Normalize to 100 based on available fields
+        // ═══════════════════════════════════════════════════════════
+
+        double normalizedScore = 0;
+        if (maxPossiblePoints > 0)
+        {
+            normalizedScore = (basePoints / maxPossiblePoints) * 100.0;
+        }
+
+        _logger.LogDebug(
+            "Base score: {BasePoints:F1}/{MaxPoints:F1} = {NormScore:F1}% for {SourceName} vs {TargetName}",
+            basePoints, maxPossiblePoints, normalizedScore, source.FullName, target.FullName);
+
+        // ═══════════════════════════════════════════════════════════
+        // STEP 3: Apply bonuses AFTER normalization
+        // ═══════════════════════════════════════════════════════════
+
+        // Bonus for both parents matching
         if (CheckBothParentsMatch(source, target))
         {
-            var bonus = 15.0;
+            var bonus = 10.0;
+            normalizedScore += bonus;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "BothParentsMatch",
                 Points = bonus,
                 Details = "Both parents match (high confidence)"
             });
-            _logger.LogDebug("Applied both-parents-match bonus of {Bonus} points", bonus);
+            _logger.LogDebug("Applied both-parents-match bonus: +{Bonus}", bonus);
         }
 
+        // Bonus for full family match
         var fullFamilyBonus = CalculateFullFamilyBonus(source, target);
         if (fullFamilyBonus > 0)
         {
+            normalizedScore += fullFamilyBonus;
             reasonsBuilder.Add(new MatchReason
             {
                 Field = "FullFamilyMatch",
                 Points = fullFamilyBonus,
                 Details = "Full family structure matches"
             });
+            _logger.LogDebug("Applied full family bonus: +{Bonus}", fullFamilyBonus);
         }
 
-        var reasons = reasonsBuilder.ToImmutable();
-        var rawScore = reasons.Sum(r => r.Points);
+        // ═══════════════════════════════════════════════════════════
+        // STEP 4: Family relations requirement (for wave algorithm)
+        // ═══════════════════════════════════════════════════════════
 
-        // Apply normalization if weights don't sum to 100
-        var normalizedScore = rawScore * _options.NormalizationFactor;
-        var score = Math.Min(100, Math.Max(0, normalizedScore));
+        // If family relations are EXPECTED (weight > 0) but NOT found (score < 0.1),
+        // and the overall score is VERY high (>85%), cap it at 85%
+        // This prevents false matches of people with same name but no family connection
+        // Only applies when family relations are part of the matching strategy
+        if (_options.FamilyRelationsWeight > 0 && familyScore < 0.1 && normalizedScore > 85)
+        {
+            _logger.LogWarning(
+                "Capping score from {OldScore:F1}% to 85% due to no family relations for {SourceName} vs {TargetName}",
+                normalizedScore, source.FullName, target.FullName);
+            var penalty = normalizedScore - 85;
+            normalizedScore = 85;
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "NoFamilyRelationsPenalty",
+                Points = -penalty,
+                Details = "No family relations - capped at 85%"
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // STEP 5: Final score
+        // ═══════════════════════════════════════════════════════════
+
+        var finalScore = Math.Min(100, Math.Max(0, normalizedScore));
 
         return new MatchCandidate
         {
             Source = source,
             Target = target,
-            Score = score,
-            Reasons = reasons
+            Score = finalScore,
+            Reasons = reasonsBuilder.ToImmutable()
         };
     }
 
@@ -738,7 +776,7 @@ public class FuzzyMatcherService : IFuzzyMatcherService
 
     /// <summary>
     /// Calculate bonus for full family match (parents + all children).
-    /// Returns 20 points when everything matches.
+    /// Returns 10 points when everything matches.
     /// </summary>
     private double CalculateFullFamilyBonus(PersonRecord source, PersonRecord target)
     {
@@ -778,7 +816,7 @@ public class FuzzyMatcherService : IFuzzyMatcherService
                 return 0;
         }
 
-        return 20.0;
+        return 10.0;
     }
 
     /// <summary>

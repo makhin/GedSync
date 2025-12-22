@@ -560,6 +560,7 @@ public class WaveCompareService
                     bool shouldAdd = TryInteractiveConfirmation(
                         ref currentMapping,
                         foundViaDescription,
+                        context.FromPersonId,
                         mappings,
                         out bool shouldSave);
 
@@ -631,6 +632,7 @@ public class WaveCompareService
     private bool TryInteractiveConfirmation(
         ref PersonMapping mapping,
         string foundVia,
+        string fromPersonId,
         Dictionary<string, PersonMapping> existingMappings,
         out bool shouldSave)
     {
@@ -674,20 +676,38 @@ public class WaveCompareService
         {
             var sourcePerson = _currentSourceLoadResult.Persons[mapping.SourceId];
 
-            // Find all potential candidates from destination tree
-            var allDestPersons = _currentDestLoadResult.Persons.Values;
+            // Find candidates only among close relatives of the person we're expanding from
+            // This dramatically reduces the search space and improves accuracy
+            var relativeCandidates = GetRelativeCandidates(fromPersonId, existingMappings);
+
+            _logger.LogDebug(
+                "Searching for {SourceId} among {Count} relatives of {FromPersonId} instead of all {Total} persons",
+                mapping.SourceId,
+                relativeCandidates.Count,
+                fromPersonId,
+                _currentDestLoadResult.Persons.Count);
 
             // Use FindMatches to get all candidates above minThreshold
             var matchCandidates = _fuzzyMatcher.FindMatches(
                 sourcePerson,
-                allDestPersons,
+                relativeCandidates,
                 minScore: minThreshold);
+
+            _logger.LogDebug(
+                "FindMatches returned {Count} candidates for {SourceId}, converting to interactive format...",
+                matchCandidates.Count,
+                mapping.SourceId);
 
             // Convert to interactive candidates with detailed breakdown
             var candidates = matchCandidates
                 .Take(_currentOptions.MaxCandidates)
                 .Select(mc => ConvertToInteractiveCandidate(mc))
                 .ToList();
+
+            _logger.LogDebug(
+                "Converted {Count} candidates to interactive format for {SourceId}",
+                candidates.Count,
+                mapping.SourceId);
 
             // If no candidates found (shouldn't happen as we already have a mapping),
             // fall back to the original mapping
@@ -708,7 +728,17 @@ public class WaveCompareService
                 MaxCandidates = _currentOptions.MaxCandidates
             };
 
+            _logger.LogDebug(
+                "Calling AskUser for {SourceId} with {CandidatesCount} candidates...",
+                mapping.SourceId,
+                candidates.Count);
+
             var result = _interactiveConfirmation.AskUser(request);
+
+            _logger.LogDebug(
+                "AskUser returned decision: {Decision} for {SourceId}",
+                result.Decision,
+                mapping.SourceId);
 
             // If user confirmed, update mapping with selected candidate
             if (result.Decision == Models.Interactive.UserDecision.Confirmed &&
@@ -879,16 +909,20 @@ public class WaveCompareService
             }
         }
 
-        // Children
+        // Children (limit comparisons to avoid performance issues)
         childrenTotal = Math.Max(source.ChildrenIds.Count, target.ChildrenIds.Count);
         if (childrenTotal > 0 && _currentSourceLoadResult != null && _currentDestLoadResult != null)
         {
-            foreach (var sourceChildId in source.ChildrenIds)
+            // Limit to first 10 children to avoid performance issues
+            var sourceChildren = source.ChildrenIds.Take(10).ToList();
+            var targetChildren = target.ChildrenIds.Take(10).ToList();
+
+            foreach (var sourceChildId in sourceChildren)
             {
                 var sourceChild = _currentSourceLoadResult.Persons.GetValueOrDefault(sourceChildId);
                 if (sourceChild == null) continue;
 
-                foreach (var targetChildId in target.ChildrenIds)
+                foreach (var targetChildId in targetChildren)
                 {
                     var targetChild = _currentDestLoadResult.Persons.GetValueOrDefault(targetChildId);
                     if (targetChild == null) continue;
@@ -903,16 +937,20 @@ public class WaveCompareService
             }
         }
 
-        // Siblings
+        // Siblings (limit comparisons to avoid performance issues)
         siblingsTotal = Math.Max(source.SiblingIds.Count, target.SiblingIds.Count);
         if (siblingsTotal > 0 && _currentSourceLoadResult != null && _currentDestLoadResult != null)
         {
-            foreach (var sourceSiblingId in source.SiblingIds)
+            // Limit to first 10 siblings to avoid performance issues
+            var sourceSiblings = source.SiblingIds.Take(10).ToList();
+            var targetSiblings = target.SiblingIds.Take(10).ToList();
+
+            foreach (var sourceSiblingId in sourceSiblings)
             {
                 var sourceSibling = _currentSourceLoadResult.Persons.GetValueOrDefault(sourceSiblingId);
                 if (sourceSibling == null) continue;
 
-                foreach (var targetSiblingId in target.SiblingIds)
+                foreach (var targetSiblingId in targetSiblings)
                 {
                     var targetSibling = _currentDestLoadResult.Persons.GetValueOrDefault(targetSiblingId);
                     if (targetSibling == null) continue;
@@ -927,16 +965,20 @@ public class WaveCompareService
             }
         }
 
-        // Spouses
+        // Spouses (limit comparisons to avoid performance issues)
         if (source.SpouseIds.Any() && target.SpouseIds.Any() &&
             _currentSourceLoadResult != null && _currentDestLoadResult != null)
         {
-            foreach (var sourceSpouseId in source.SpouseIds)
+            // Limit to first 5 spouses to avoid performance issues
+            var sourceSpouses = source.SpouseIds.Take(5).ToList();
+            var targetSpouses = target.SpouseIds.Take(5).ToList();
+
+            foreach (var sourceSpouseId in sourceSpouses)
             {
                 var sourceSpouse = _currentSourceLoadResult.Persons.GetValueOrDefault(sourceSpouseId);
                 if (sourceSpouse == null) continue;
 
-                foreach (var targetSpouseId in target.SpouseIds)
+                foreach (var targetSpouseId in targetSpouses)
                 {
                     var targetSpouse = _currentDestLoadResult.Persons.GetValueOrDefault(targetSpouseId);
                     if (targetSpouse == null) continue;
@@ -972,5 +1014,132 @@ public class WaveCompareService
             SiblingsTotal = siblingsTotal,
             SpouseMatches = spouseMatches
         };
+    }
+
+    /// <summary>
+    /// Get close relatives of a person as candidates for matching.
+    /// Returns family members within 2 degrees of relationship.
+    /// </summary>
+    private List<PersonRecord> GetRelativeCandidates(
+        string fromPersonId,
+        Dictionary<string, PersonMapping> existingMappings)
+    {
+        if (_currentDestLoadResult == null)
+            return new List<PersonRecord>();
+
+        // Get the destination ID for the person we're expanding from
+        if (!existingMappings.TryGetValue(fromPersonId, out var fromMapping))
+        {
+            _logger.LogWarning(
+                "Cannot find mapping for fromPersonId {FromPersonId}, using all persons as fallback",
+                fromPersonId);
+            return _currentDestLoadResult.Persons.Values.ToList();
+        }
+
+        var destId = fromMapping.DestinationId;
+        if (!_currentDestLoadResult.Persons.TryGetValue(destId, out var destPerson))
+        {
+            _logger.LogWarning(
+                "Cannot find dest person {DestId}, using all persons as fallback",
+                destId);
+            return _currentDestLoadResult.Persons.Values.ToList();
+        }
+
+        var candidates = new HashSet<PersonRecord>();
+        var candidateIds = new HashSet<string>();
+
+        // Add the person themselves (shouldn't match, but for completeness)
+        candidateIds.Add(destId);
+
+        // Add parents
+        if (!string.IsNullOrEmpty(destPerson.FatherId))
+            candidateIds.Add(destPerson.FatherId);
+        if (!string.IsNullOrEmpty(destPerson.MotherId))
+            candidateIds.Add(destPerson.MotherId);
+
+        // Add spouses
+        foreach (var spouseId in destPerson.SpouseIds)
+            candidateIds.Add(spouseId);
+
+        // Add children
+        foreach (var childId in destPerson.ChildrenIds)
+            candidateIds.Add(childId);
+
+        // Add siblings
+        foreach (var siblingId in destPerson.SiblingIds)
+            candidateIds.Add(siblingId);
+
+        // Add grandparents (parents of parents)
+        foreach (var parentId in new[] { destPerson.FatherId, destPerson.MotherId })
+        {
+            if (string.IsNullOrEmpty(parentId))
+                continue;
+
+            if (_currentDestLoadResult.Persons.TryGetValue(parentId, out var parent))
+            {
+                if (!string.IsNullOrEmpty(parent.FatherId))
+                    candidateIds.Add(parent.FatherId);
+                if (!string.IsNullOrEmpty(parent.MotherId))
+                    candidateIds.Add(parent.MotherId);
+
+                // Add parent's spouses (step-parents)
+                foreach (var spouseId in parent.SpouseIds)
+                    candidateIds.Add(spouseId);
+            }
+        }
+
+        // Add grandchildren (children of children)
+        foreach (var childId in destPerson.ChildrenIds)
+        {
+            if (_currentDestLoadResult.Persons.TryGetValue(childId, out var child))
+            {
+                foreach (var grandchildId in child.ChildrenIds)
+                    candidateIds.Add(grandchildId);
+
+                // Add child's spouses
+                foreach (var spouseId in child.SpouseIds)
+                    candidateIds.Add(spouseId);
+            }
+        }
+
+        // Add nieces/nephews (children of siblings)
+        foreach (var siblingId in destPerson.SiblingIds)
+        {
+            if (_currentDestLoadResult.Persons.TryGetValue(siblingId, out var sibling))
+            {
+                foreach (var nieceNephewId in sibling.ChildrenIds)
+                    candidateIds.Add(nieceNephewId);
+            }
+        }
+
+        // Add aunts/uncles (siblings of parents)
+        foreach (var parentId in new[] { destPerson.FatherId, destPerson.MotherId })
+        {
+            if (string.IsNullOrEmpty(parentId))
+                continue;
+
+            if (_currentDestLoadResult.Persons.TryGetValue(parentId, out var parent))
+            {
+                foreach (var auntUncleId in parent.SiblingIds)
+                    candidateIds.Add(auntUncleId);
+            }
+        }
+
+        // Resolve IDs to PersonRecords
+        foreach (var id in candidateIds)
+        {
+            if (_currentDestLoadResult.Persons.TryGetValue(id, out var person))
+            {
+                candidates.Add(person);
+            }
+        }
+
+        _logger.LogDebug(
+            "Found {Count} relative candidates for {DestId} ({Name}): parents, spouses, children, siblings, grandparents, grandchildren, nieces/nephews, aunts/uncles",
+            candidates.Count,
+            destId,
+            destPerson.FullName);
+
+        return candidates.ToList();
     }
 }

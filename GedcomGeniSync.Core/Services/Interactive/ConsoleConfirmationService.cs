@@ -28,14 +28,38 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
 
     public InteractiveConfirmationResult AskUser(InteractiveConfirmationRequest request)
     {
-        Console.WriteLine();
-        PrintHeader(request);
-        PrintSourcePerson(request.SourcePerson, request.FoundVia, request.Level);
-        PrintCandidates(request.Candidates, request.MaxCandidates);
-        PrintFooter(request.Candidates.Count);
+        try
+        {
+            // Temporarily suppress debug logs to avoid interference with interactive prompt
+            // Debug logs go to Console.Out which can interfere with Console.ReadLine()
+            _logger.LogInformation("=== INTERACTIVE MODE: Requesting user confirmation for {SourceId} ===",
+                request.SourcePerson.Id);
 
-        var decision = GetUserInput(request.Candidates.Count);
-        return decision;
+            // CRITICAL: Force flush Console.Out to ensure all buffered logs are written
+            // BEFORE we start the interactive prompt. Otherwise buffered debug logs will
+            // appear mixed with the prompt and confuse ReadLine().
+            Console.Out.Flush();
+            System.Threading.Thread.Sleep(100); // Give logger time to flush
+
+            // Use Console.Error instead of Console.Out because SimpleConsole logger captures Console.Out
+            Console.Error.WriteLine();
+            PrintHeader(request);
+            PrintSourcePerson(request.SourcePerson, request.FoundVia, request.Level);
+            PrintCandidates(request.Candidates, request.MaxCandidates);
+            PrintFooter(request.Candidates.Count);
+            Console.Error.Flush();
+
+            var decision = GetUserInput(request.Candidates.Count);
+
+            _logger.LogInformation("=== INTERACTIVE MODE: User decision: {Decision} for {SourceId} ===",
+                decision.Decision, request.SourcePerson.Id);
+            return decision;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in AskUser");
+            throw;
+        }
     }
 
     private void PrintHeader(InteractiveConfirmationRequest request)
@@ -43,17 +67,17 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
         var bestScore = request.Candidates.Count > 0 ? request.Candidates[0].Score : 0;
         var scoreColor = GetScoreColor(bestScore);
 
-        Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine($"  {ANSI_BOLD}ТРЕБУЕТСЯ ПОДТВЕРЖДЕНИЕ{ANSI_RESET} (Score: {scoreColor}{bestScore}/100{ANSI_RESET})");
-        Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine();
+        Console.Error.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.Error.WriteLine($"  {ANSI_BOLD}ТРЕБУЕТСЯ ПОДТВЕРЖДЕНИЕ{ANSI_RESET} (Score: {scoreColor}{bestScore}/100{ANSI_RESET})");
+        Console.Error.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.Error.WriteLine();
     }
 
     private void PrintSourcePerson(PersonRecord person, string foundVia, int level)
     {
-        Console.WriteLine($"  {ANSI_BOLD}Персона в MyHeritage:{ANSI_RESET}");
-        Console.WriteLine($"    ID: {ANSI_GRAY}{person.Id}{ANSI_RESET}");
-        Console.WriteLine($"    Имя: {ANSI_BOLD}{FormatPersonName(person)}{ANSI_RESET}");
+        Console.Error.WriteLine($"  {ANSI_BOLD}Персона в MyHeritage:{ANSI_RESET}");
+        Console.Error.WriteLine($"    ID: {ANSI_GRAY}{person.Id}{ANSI_RESET}");
+        Console.Error.WriteLine($"    Имя: {ANSI_BOLD}{FormatPersonName(person)}{ANSI_RESET}");
 
         if (person.BirthDate != null || person.BirthPlace != null)
         {
@@ -67,7 +91,7 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
                 if (person.BirthDate != null) birthInfo.Append(", ");
                 birthInfo.Append(person.BirthPlace);
             }
-            Console.WriteLine(birthInfo.ToString());
+            Console.Error.WriteLine(birthInfo.ToString());
         }
 
         if (person.DeathDate != null || person.DeathPlace != null)
@@ -82,16 +106,16 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
                 if (person.DeathDate != null) deathInfo.Append(", ");
                 deathInfo.Append(person.DeathPlace);
             }
-            Console.WriteLine(deathInfo.ToString());
+            Console.Error.WriteLine(deathInfo.ToString());
         }
 
-        Console.WriteLine();
-        Console.WriteLine($"  {ANSI_CYAN}Найдено через:{ANSI_RESET} {foundVia} (Level {level})");
-        Console.WriteLine();
-        Console.WriteLine("───────────────────────────────────────────────────────────────");
-        Console.WriteLine($"  {ANSI_BOLD}КАНДИДАТЫ В GENI:{ANSI_RESET}");
-        Console.WriteLine("───────────────────────────────────────────────────────────────");
-        Console.WriteLine();
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"  {ANSI_CYAN}Найдено через:{ANSI_RESET} {foundVia} (Level {level})");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("───────────────────────────────────────────────────────────────");
+        Console.Error.WriteLine($"  {ANSI_BOLD}КАНДИДАТЫ В GENI:{ANSI_RESET}");
+        Console.Error.WriteLine("───────────────────────────────────────────────────────────────");
+        Console.Error.WriteLine();
     }
 
     private void PrintCandidates(List<CandidateMatch> candidates, int maxCandidates)
@@ -104,22 +128,22 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
             PrintCandidate(i + 1, candidate);
             if (i < candidatesToShow.Count - 1)
             {
-                Console.WriteLine();
+                Console.Error.WriteLine();
             }
         }
 
         if (candidates.Count > maxCandidates)
         {
-            Console.WriteLine();
-            Console.WriteLine($"  {ANSI_GRAY}... и ещё {candidates.Count - maxCandidates} кандидат(ов){ANSI_RESET}");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"  {ANSI_GRAY}... и ещё {candidates.Count - maxCandidates} кандидат(ов){ANSI_RESET}");
         }
     }
 
     private void PrintCandidate(int number, CandidateMatch candidate)
     {
         var scoreColor = GetScoreColor(candidate.Score);
-        Console.WriteLine($"  {ANSI_BOLD}[{number}]{ANSI_RESET} {FormatPersonName(candidate.Person)} (Score: {scoreColor}{candidate.Score}{ANSI_RESET})");
-        Console.WriteLine($"      ID: {ANSI_GRAY}{candidate.Person.Id}{ANSI_RESET}");
+        Console.Error.WriteLine($"  {ANSI_BOLD}[{number}]{ANSI_RESET} {FormatPersonName(candidate.Person)} (Score: {scoreColor}{candidate.Score}{ANSI_RESET})");
+        Console.Error.WriteLine($"      ID: {ANSI_GRAY}{candidate.Person.Id}{ANSI_RESET}");
 
         if (candidate.Person.BirthDate != null || candidate.Person.BirthPlace != null)
         {
@@ -133,7 +157,7 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
                 if (candidate.Person.BirthDate != null) birthInfo.Append(", ");
                 birthInfo.Append(candidate.Person.BirthPlace);
             }
-            Console.WriteLine(birthInfo.ToString());
+            Console.Error.WriteLine(birthInfo.ToString());
         }
 
         PrintScoreBreakdown(candidate.Breakdown);
@@ -196,32 +220,34 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
 
         if (parts.Count > 0)
         {
-            Console.WriteLine($"      Совпадения: {string.Join(", ", parts)}");
+            Console.Error.WriteLine($"      Совпадения: {string.Join(", ", parts)}");
         }
     }
 
     private void PrintFooter(int candidatesCount)
     {
-        Console.WriteLine();
-        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("═══════════════════════════════════════════════════════════════");
         if (candidatesCount > 0)
         {
-            Console.Write($"  Выберите: {ANSI_CYAN}[1-{candidatesCount}]{ANSI_RESET} принять, ");
+            Console.Error.Write($"  Выберите: {ANSI_CYAN}[1-{candidatesCount}]{ANSI_RESET} принять, ");
         }
         else
         {
-            Console.Write($"  Выберите: ");
+            Console.Error.Write($"  Выберите: ");
         }
-        Console.Write($"{ANSI_YELLOW}[S]{ANSI_RESET} пропустить, ");
-        Console.WriteLine($"{ANSI_RED}[R]{ANSI_RESET} отклонить все");
-        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.Error.Write($"{ANSI_YELLOW}[S]{ANSI_RESET} пропустить, ");
+        Console.Error.WriteLine($"{ANSI_RED}[R]{ANSI_RESET} отклонить все");
+        Console.Error.WriteLine("═══════════════════════════════════════════════════════════════");
     }
 
     private InteractiveConfirmationResult GetUserInput(int candidatesCount)
     {
         while (true)
         {
-            Console.Write($"Ваш выбор: ");
+            Console.Error.Write($"Ваш выбор: ");
+            Console.Error.Flush(); // Force flush before reading
+
             var input = Console.ReadLine()?.Trim().ToUpperInvariant();
 
             if (string.IsNullOrEmpty(input))
@@ -259,7 +285,7 @@ public class ConsoleConfirmationService : IInteractiveConfirmation
                 };
             }
 
-            Console.WriteLine($"{ANSI_RED}Неверный выбор. Попробуйте снова.{ANSI_RESET}");
+            Console.Error.WriteLine($"{ANSI_RED}Неверный выбор. Попробуйте снова.{ANSI_RESET}");
         }
     }
 

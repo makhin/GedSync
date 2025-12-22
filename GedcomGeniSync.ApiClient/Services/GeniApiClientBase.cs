@@ -138,10 +138,10 @@ public abstract class GeniApiClientBase
                         }
                     }
 
-                    // Use Retry-After if available, otherwise exponential backoff
-                    var waitTimeMs = retryAfterSeconds > 0
-                        ? retryAfterSeconds * 1000
-                        : delayMs * (int)Math.Pow(2, retryCount);
+                    var retryAfterMs = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0;
+                    var rateLimitWaitMs = _rateLimitInfo.IsExceeded ? _rateLimitInfo.GetRecommendedDelayMs() : 0;
+                    var backoffMs = delayMs * (int)Math.Pow(2, retryCount);
+                    var waitTimeMs = Math.Max(backoffMs, Math.Max(retryAfterMs, rateLimitWaitMs));
 
                     Logger.LogWarning(
                         "Rate limit exceeded (429). Retry {RetryCount}/{MaxRetries} after {WaitTimeMs}ms",
