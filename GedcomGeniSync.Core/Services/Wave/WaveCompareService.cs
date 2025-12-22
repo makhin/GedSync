@@ -544,35 +544,37 @@ public class WaveCompareService
                 if (validationResult.IsValid)
                 {
                     // Check interactive confirmation if score is low
-                    string foundViaDescription = $"{mapping.FoundVia} от \"{context.FromPersonId}\"";
+                    // Create local copy since 'mapping' is foreach iteration variable
+                    var currentMapping = mapping;
+                    string foundViaDescription = $"{currentMapping.FoundVia} от \"{context.FromPersonId}\"";
                     bool shouldAdd = TryInteractiveConfirmation(
-                        mapping,
+                        ref currentMapping,
                         foundViaDescription,
                         mappings,
                         out bool shouldSave);
 
                     if (shouldAdd)
                     {
-                        mappings[mapping.SourceId] = mapping;
-                        queue.Enqueue((mapping.SourceId, level + 1));
-                        processed.Add(mapping.SourceId);
+                        mappings[currentMapping.SourceId] = currentMapping;
+                        queue.Enqueue((currentMapping.SourceId, level + 1));
+                        processed.Add(currentMapping.SourceId);
                         newMappingsThisLevel++;
                         anyMemberMatched = true;
-                        allSourceFamilyMembers.Remove(mapping.SourceId);
+                        allSourceFamilyMembers.Remove(currentMapping.SourceId);
 
                         _logger.LogDebug(
                             "Added mapping {SourceId} -> {DestId} via {RelationType} at level {Level}",
-                            mapping.SourceId,
-                            mapping.DestinationId,
-                            mapping.FoundVia,
-                            mapping.Level);
+                            currentMapping.SourceId,
+                            currentMapping.DestinationId,
+                            currentMapping.FoundVia,
+                            currentMapping.Level);
                     }
                     else
                     {
                         _logger.LogInformation(
                             "Rejected mapping {SourceId} -> {DestId} via interactive confirmation or low score",
-                            mapping.SourceId,
-                            mapping.DestinationId);
+                            currentMapping.SourceId,
+                            currentMapping.DestinationId);
                     }
                 }
                 else
@@ -614,9 +616,10 @@ public class WaveCompareService
     /// <summary>
     /// Try to confirm mapping interactively if score is low
     /// Returns true if mapping should be added, false if rejected/skipped
+    /// Updates the mapping reference with user's selected candidate if applicable
     /// </summary>
     private bool TryInteractiveConfirmation(
-        PersonMapping mapping,
+        ref PersonMapping mapping,
         string foundVia,
         Dictionary<string, PersonMapping> existingMappings,
         out bool shouldSave)
@@ -654,40 +657,37 @@ public class WaveCompareService
 
         // Between thresholds - ask user
         _logger.LogInformation(
-            "Requesting user confirmation for {SourceId} -> {DestId} with score {Score}",
-            mapping.SourceId, mapping.DestinationId, score);
+            "Requesting user confirmation for {SourceId} with score {Score} (asking user for selection)",
+            mapping.SourceId, score);
 
         try
         {
             var sourcePerson = _currentSourceLoadResult.Persons[mapping.SourceId];
-            var destPerson = _currentDestLoadResult.Persons[mapping.DestinationId];
 
-            // TODO: Get other candidates and detailed breakdown
-            // For now, show only the current match
-            var candidates = new List<Models.Interactive.CandidateMatch>
+            // Find all potential candidates from destination tree
+            var allDestPersons = _currentDestLoadResult.Persons.Values;
+
+            // Use FindMatches to get all candidates above minThreshold
+            var matchCandidates = _fuzzyMatcher.FindMatches(
+                sourcePerson,
+                allDestPersons,
+                minScore: minThreshold);
+
+            // Convert to interactive candidates with detailed breakdown
+            var candidates = matchCandidates
+                .Take(_currentOptions.MaxCandidates)
+                .Select(mc => ConvertToInteractiveCandidate(mc))
+                .ToList();
+
+            // If no candidates found (shouldn't happen as we already have a mapping),
+            // fall back to the original mapping
+            if (candidates.Count == 0)
             {
-                new()
-                {
-                    Person = destPerson,
-                    Score = score,
-                    Breakdown = new Models.Interactive.ScoreBreakdown
-                    {
-                        // TODO: Get actual breakdown from FuzzyMatcher
-                        FirstNameScore = 0,
-                        LastNameScore = 0,
-                        BirthDateScore = 0,
-                        BirthPlaceScore = 0,
-                        GenderScore = 0,
-                        ParentsMatching = 0,
-                        ParentsTotal = 0,
-                        ChildrenMatching = 0,
-                        ChildrenTotal = 0,
-                        SiblingsMatching = 0,
-                        SiblingsTotal = 0,
-                        SpouseMatches = false
-                    }
-                }
-            };
+                _logger.LogWarning(
+                    "No candidates found for {SourceId}, accepting original mapping",
+                    mapping.SourceId);
+                return true;
+            }
 
             var request = new Models.Interactive.InteractiveConfirmationRequest
             {
@@ -700,12 +700,34 @@ public class WaveCompareService
 
             var result = _interactiveConfirmation.AskUser(request);
 
+            // If user confirmed, update mapping with selected candidate
+            if (result.Decision == Models.Interactive.UserDecision.Confirmed &&
+                result.SelectedScore.HasValue &&
+                result.SelectedScore.Value >= 1 &&
+                result.SelectedScore.Value <= candidates.Count)
+            {
+                var selectedCandidate = candidates[result.SelectedScore.Value - 1];
+                mapping = mapping with
+                {
+                    DestinationId = selectedCandidate.Person.Id,
+                    MatchScore = selectedCandidate.Score
+                };
+
+                _logger.LogInformation(
+                    "User selected candidate {DestId} with score {Score} for {SourceId}",
+                    selectedCandidate.Person.Id,
+                    selectedCandidate.Score,
+                    mapping.SourceId);
+            }
+
             // Save user decision
             shouldSave = true;
             var userMapping = new UserConfirmedMapping
             {
                 SourceId = mapping.SourceId,
-                DestinationId = mapping.DestinationId,
+                DestinationId = result.Decision == Models.Interactive.UserDecision.Confirmed
+                    ? mapping.DestinationId
+                    : null,
                 Type = result.Decision switch
                 {
                     Models.Interactive.UserDecision.Confirmed => ConfirmationType.Confirmed,
@@ -734,5 +756,211 @@ public class WaveCompareService
             _logger.LogError(ex, "Error during interactive confirmation");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Convert MatchCandidate to Interactive.CandidateMatch with detailed breakdown
+    /// </summary>
+    private Models.Interactive.CandidateMatch ConvertToInteractiveCandidate(MatchCandidate matchCandidate)
+    {
+        var breakdown = BuildScoreBreakdown(
+            matchCandidate.Source,
+            matchCandidate.Target,
+            matchCandidate.Reasons.ToList());
+
+        return new Models.Interactive.CandidateMatch
+        {
+            Person = matchCandidate.Target,
+            Score = (int)Math.Round(matchCandidate.Score),
+            Breakdown = breakdown
+        };
+    }
+
+    /// <summary>
+    /// Build ScoreBreakdown from MatchReasons and person records
+    /// </summary>
+    private Models.Interactive.ScoreBreakdown BuildScoreBreakdown(
+        PersonRecord source,
+        PersonRecord target,
+        List<MatchReason> reasons)
+    {
+        // Extract scores from MatchReasons
+        var firstNameReason = reasons.FirstOrDefault(r => r.Field == "FirstName");
+        var lastNameReason = reasons.FirstOrDefault(r => r.Field == "LastName");
+        var maidenNameReason = reasons.FirstOrDefault(r => r.Field == "MaidenName");
+        var birthDateReason = reasons.FirstOrDefault(r => r.Field == "BirthDate");
+        var birthPlaceReason = reasons.FirstOrDefault(r => r.Field == "BirthPlace");
+        var genderReason = reasons.FirstOrDefault(r => r.Field == "Gender");
+
+        // Calculate individual field scores (0-1 range)
+        // Points are already weighted, so we need to divide by weight to get raw score
+        // Use standard weights from MatchingOptions defaults
+        const double firstNameWeight = 25.0;
+        const double lastNameWeight = 20.0;
+        const double birthDateWeight = 15.0;
+        const double birthPlaceWeight = 10.0;
+
+        var firstNameScore = firstNameReason != null
+            ? Math.Min(1.0, firstNameReason.Points / firstNameWeight)
+            : 0.0;
+
+        var lastNameScore = lastNameReason != null || maidenNameReason != null
+            ? Math.Min(1.0, ((lastNameReason?.Points ?? 0) + (maidenNameReason?.Points ?? 0)) / lastNameWeight)
+            : 0.0;
+
+        var birthDateScore = birthDateReason != null
+            ? Math.Min(1.0, birthDateReason.Points / birthDateWeight)
+            : 0.0;
+
+        var birthPlaceScore = birthPlaceReason != null
+            ? Math.Min(1.0, birthPlaceReason.Points / birthPlaceWeight)
+            : 0.0;
+
+        var genderScore = genderReason != null
+            ? (genderReason.Points >= 0 ? 1.0 : 0.0)
+            : 1.0;
+
+        // Count family relations matches
+        int parentsMatching = 0;
+        int parentsTotal = 0;
+        int childrenMatching = 0;
+        int childrenTotal = 0;
+        int siblingsMatching = 0;
+        int siblingsTotal = 0;
+        bool spouseMatches = false;
+
+        // Parents
+        if (!string.IsNullOrEmpty(source.FatherId) || !string.IsNullOrEmpty(target.FatherId))
+        {
+            parentsTotal++;
+            if (!string.IsNullOrEmpty(source.FatherId) && !string.IsNullOrEmpty(target.FatherId))
+            {
+                // Check if fathers match (simplified - could use fuzzy comparison)
+                if (_currentSourceLoadResult != null && _currentDestLoadResult != null)
+                {
+                    var sourceFather = _currentSourceLoadResult.Persons.GetValueOrDefault(source.FatherId);
+                    var targetFather = _currentDestLoadResult.Persons.GetValueOrDefault(target.FatherId);
+                    if (sourceFather != null && targetFather != null)
+                    {
+                        var fatherMatch = _fuzzyMatcher.Compare(sourceFather, targetFather);
+                        if (fatherMatch.Score >= 70)
+                            parentsMatching++;
+                    }
+                }
+            }
+        }
+
+        if (!string.IsNullOrEmpty(source.MotherId) || !string.IsNullOrEmpty(target.MotherId))
+        {
+            parentsTotal++;
+            if (!string.IsNullOrEmpty(source.MotherId) && !string.IsNullOrEmpty(target.MotherId))
+            {
+                if (_currentSourceLoadResult != null && _currentDestLoadResult != null)
+                {
+                    var sourceMother = _currentSourceLoadResult.Persons.GetValueOrDefault(source.MotherId);
+                    var targetMother = _currentDestLoadResult.Persons.GetValueOrDefault(target.MotherId);
+                    if (sourceMother != null && targetMother != null)
+                    {
+                        var motherMatch = _fuzzyMatcher.Compare(sourceMother, targetMother);
+                        if (motherMatch.Score >= 70)
+                            parentsMatching++;
+                    }
+                }
+            }
+        }
+
+        // Children
+        childrenTotal = Math.Max(source.ChildrenIds.Count, target.ChildrenIds.Count);
+        if (childrenTotal > 0 && _currentSourceLoadResult != null && _currentDestLoadResult != null)
+        {
+            foreach (var sourceChildId in source.ChildrenIds)
+            {
+                var sourceChild = _currentSourceLoadResult.Persons.GetValueOrDefault(sourceChildId);
+                if (sourceChild == null) continue;
+
+                foreach (var targetChildId in target.ChildrenIds)
+                {
+                    var targetChild = _currentDestLoadResult.Persons.GetValueOrDefault(targetChildId);
+                    if (targetChild == null) continue;
+
+                    var childMatch = _fuzzyMatcher.Compare(sourceChild, targetChild);
+                    if (childMatch.Score >= 70)
+                    {
+                        childrenMatching++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Siblings
+        siblingsTotal = Math.Max(source.SiblingIds.Count, target.SiblingIds.Count);
+        if (siblingsTotal > 0 && _currentSourceLoadResult != null && _currentDestLoadResult != null)
+        {
+            foreach (var sourceSiblingId in source.SiblingIds)
+            {
+                var sourceSibling = _currentSourceLoadResult.Persons.GetValueOrDefault(sourceSiblingId);
+                if (sourceSibling == null) continue;
+
+                foreach (var targetSiblingId in target.SiblingIds)
+                {
+                    var targetSibling = _currentDestLoadResult.Persons.GetValueOrDefault(targetSiblingId);
+                    if (targetSibling == null) continue;
+
+                    var siblingMatch = _fuzzyMatcher.Compare(sourceSibling, targetSibling);
+                    if (siblingMatch.Score >= 70)
+                    {
+                        siblingsMatching++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Spouses
+        if (source.SpouseIds.Any() && target.SpouseIds.Any() &&
+            _currentSourceLoadResult != null && _currentDestLoadResult != null)
+        {
+            foreach (var sourceSpouseId in source.SpouseIds)
+            {
+                var sourceSpouse = _currentSourceLoadResult.Persons.GetValueOrDefault(sourceSpouseId);
+                if (sourceSpouse == null) continue;
+
+                foreach (var targetSpouseId in target.SpouseIds)
+                {
+                    var targetSpouse = _currentDestLoadResult.Persons.GetValueOrDefault(targetSpouseId);
+                    if (targetSpouse == null) continue;
+
+                    var spouseMatch = _fuzzyMatcher.Compare(sourceSpouse, targetSpouse);
+                    if (spouseMatch.Score >= 70)
+                    {
+                        spouseMatches = true;
+                        break;
+                    }
+                }
+
+                if (spouseMatches) break;
+            }
+        }
+
+        return new Models.Interactive.ScoreBreakdown
+        {
+            FirstNameScore = firstNameScore,
+            FirstNameDetails = firstNameReason?.Details,
+            LastNameScore = lastNameScore,
+            LastNameDetails = lastNameReason?.Details ?? maidenNameReason?.Details,
+            BirthDateScore = birthDateScore,
+            BirthDateDetails = birthDateReason?.Details,
+            BirthPlaceScore = birthPlaceScore,
+            BirthPlaceDetails = birthPlaceReason?.Details,
+            GenderScore = genderScore,
+            ParentsMatching = parentsMatching,
+            ParentsTotal = parentsTotal,
+            ChildrenMatching = childrenMatching,
+            ChildrenTotal = childrenTotal,
+            SiblingsMatching = siblingsMatching,
+            SiblingsTotal = siblingsTotal,
+            SpouseMatches = spouseMatches
+        };
     }
 }
