@@ -19,6 +19,12 @@ matching:
   # Maximum allowed birth year difference for matching
   maxBirthYearDifference: 10
 
+  # Hard cutoff for impossible birth year differences
+  hardMaxBirthYearDifference: 15
+
+  # Start of soft penalty zone for birth year differences
+  softPenaltyYearStart: 5
+
 sync:
   # Maximum BFS depth (null for unlimited)
   # Set to a number (e.g., 3) to limit how far from the anchor person to sync
@@ -79,3 +85,7 @@ interactive:
 
   # Maximum number of candidates to show to user
   maxCandidates: 5
+
+waveCompare:
+  # Enable conflict resolution after BFS
+  resolveConflicts: false

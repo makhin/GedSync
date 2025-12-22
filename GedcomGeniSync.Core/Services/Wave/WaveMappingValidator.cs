@@ -128,16 +128,14 @@ public class WaveMappingValidator
         }
 
         // ═══════════════════════════════════════════════════════════
-        // 6. Проверка семейной консистентности
+        // 6. Проверка транзитивной семейной консистентности
         // ═══════════════════════════════════════════════════════════
-        ValidateFamilyConsistency(
-            newMapping,
+        issues.AddRange(ValidateTransitiveConsistency(
             existingMappings,
             sourcePerson,
             destPerson,
             sourceTree,
-            destTree,
-            issues);
+            destTree));
 
         // Считаем валидным если нет проблем High severity
         var isValid = !issues.Any(i => i.Severity == Severity.High);
@@ -199,144 +197,194 @@ public class WaveMappingValidator
     }
 
     /// <summary>
-    /// Проверить консистентность семейных связей.
+    /// Проверить транзитивную консистентность семейных связей.
     /// </summary>
-    private void ValidateFamilyConsistency(
-        PersonMapping newMapping,
+    private List<ValidationIssue> ValidateTransitiveConsistency(
         IReadOnlyDictionary<string, PersonMapping> existingMappings,
         PersonRecord sourcePerson,
         PersonRecord destPerson,
         TreeGraph sourceTree,
-        TreeGraph destTree,
-        List<ValidationIssue> issues)
+        TreeGraph destTree)
     {
-        // Проверяем родителей
-        ValidateParent(
-            sourcePerson.FatherId,
-            destPerson.FatherId,
-            "Father",
-            newMapping,
-            existingMappings,
-            issues);
+        var issues = new List<ValidationIssue>();
 
-        ValidateParent(
-            sourcePerson.MotherId,
-            destPerson.MotherId,
-            "Mother",
-            newMapping,
-            existingMappings,
-            issues);
-
-        // Проверяем супругов (если сопоставлены)
-        ValidateSpouses(
+        issues.AddRange(ValidateSpouseConsistency(
             sourcePerson,
             destPerson,
-            newMapping,
             existingMappings,
             sourceTree,
-            destTree,
-            issues);
+            destTree));
 
-        // Проверяем детей (если сопоставлены)
-        ValidateChildren(
+        issues.AddRange(ValidateParentConsistency(
             sourcePerson,
             destPerson,
-            newMapping,
             existingMappings,
             sourceTree,
-            destTree,
-            issues);
+            destTree));
+
+        issues.AddRange(ValidateChildrenConsistency(
+            sourcePerson,
+            destPerson,
+            existingMappings,
+            sourceTree,
+            destTree));
+
+        issues.AddRange(ValidateSiblingConsistency(
+            sourcePerson,
+            destPerson,
+            existingMappings,
+            sourceTree,
+            destTree));
+
+        return issues;
     }
 
-    private void ValidateParent(
-        string? sourceParentId,
-        string? destParentId,
-        string parentType,
-        PersonMapping newMapping,
+    /// <summary>
+    /// Проверка консистентности сопоставленных супругов.
+    /// </summary>
+    private List<ValidationIssue> ValidateSpouseConsistency(
+        PersonRecord sourcePerson,
+        PersonRecord destPerson,
         IReadOnlyDictionary<string, PersonMapping> existingMappings,
-        List<ValidationIssue> issues)
+        TreeGraph sourceTree,
+        TreeGraph destTree)
     {
-        if (sourceParentId != null && existingMappings.TryGetValue(sourceParentId, out var parentMapping))
+        var issues = new List<ValidationIssue>();
+        var destSpouses = TreeNavigator.GetSpouses(destTree, destPerson.Id).ToHashSet();
+
+        foreach (var sourceSpouseId in TreeNavigator.GetSpouses(sourceTree, sourcePerson.Id))
         {
-            // Родитель сопоставлен — проверяем совпадение
-            if (destParentId != parentMapping.DestinationId)
+            if (!existingMappings.TryGetValue(sourceSpouseId, out var spouseMapping))
+                continue;
+
+            var destSpouseId = spouseMapping.DestinationId;
+            if (!destSpouses.Contains(destSpouseId))
             {
                 issues.Add(new ValidationIssue
                 {
                     Severity = Severity.Medium,
                     Type = IssueType.FamilyInconsistency,
-                    SourceId = newMapping.SourceId,
-                    DestId = newMapping.DestinationId,
-                    Message = $"{parentType} mismatch: expected {parentMapping.DestinationId}, got {destParentId}"
+                    SourceId = sourcePerson.Id,
+                    DestId = destPerson.Id,
+                    RelatedSourceId = sourceSpouseId,
+                    RelatedDestinationId = destSpouseId,
+                    Message = $"Spouse inconsistency: {sourcePerson.Id}'s spouse {sourceSpouseId} is mapped to {destSpouseId}, but {destPerson.Id} is not married to {destSpouseId} in destination tree"
                 });
             }
         }
+
+        return issues;
     }
 
-    private void ValidateSpouses(
+    /// <summary>
+    /// Проверка консистентности сопоставленных родителей.
+    /// </summary>
+    private List<ValidationIssue> ValidateParentConsistency(
         PersonRecord sourcePerson,
         PersonRecord destPerson,
-        PersonMapping newMapping,
         IReadOnlyDictionary<string, PersonMapping> existingMappings,
         TreeGraph sourceTree,
-        TreeGraph destTree,
-        List<ValidationIssue> issues)
+        TreeGraph destTree)
     {
-        // Получаем супругов из семей
-        var sourceSpouses = TreeNavigator.GetSpouses(sourceTree, sourcePerson.Id).ToHashSet();
-        var destSpouses = TreeNavigator.GetSpouses(destTree, destPerson.Id).ToHashSet();
+        var issues = new List<ValidationIssue>();
+        var destParents = TreeNavigator.GetParents(destTree, destPerson.Id).ToHashSet();
 
-        // Проверяем сопоставленных супругов
-        foreach (var sourceSpouseId in sourceSpouses)
+        foreach (var sourceParentId in TreeNavigator.GetParents(sourceTree, sourcePerson.Id))
         {
-            if (existingMappings.TryGetValue(sourceSpouseId, out var spouseMapping))
+            if (!existingMappings.TryGetValue(sourceParentId, out var parentMapping))
+                continue;
+
+            var destParentId = parentMapping.DestinationId;
+            if (!destParents.Contains(destParentId))
             {
-                if (!destSpouses.Contains(spouseMapping.DestinationId))
+                issues.Add(new ValidationIssue
                 {
-                    issues.Add(new ValidationIssue
-                    {
-                        Severity = Severity.Medium,
-                        Type = IssueType.FamilyInconsistency,
-                        SourceId = newMapping.SourceId,
-                        DestId = newMapping.DestinationId,
-                        Message = $"Spouse {sourceSpouseId} mapped to {spouseMapping.DestinationId} but not spouse in destination"
-                    });
-                }
+                    Severity = Severity.Medium,
+                    Type = IssueType.FamilyInconsistency,
+                    SourceId = sourcePerson.Id,
+                    DestId = destPerson.Id,
+                    RelatedSourceId = sourceParentId,
+                    RelatedDestinationId = destParentId,
+                    Message = $"Parent inconsistency: {sourcePerson.Id}'s parent {sourceParentId} is mapped to {destParentId}, but {destPerson.Id} does not list {destParentId} as a parent in destination tree"
+                });
             }
         }
+
+        return issues;
     }
 
-    private void ValidateChildren(
+    /// <summary>
+    /// Проверка консистентности сопоставленных детей.
+    /// </summary>
+    private List<ValidationIssue> ValidateChildrenConsistency(
         PersonRecord sourcePerson,
         PersonRecord destPerson,
-        PersonMapping newMapping,
         IReadOnlyDictionary<string, PersonMapping> existingMappings,
         TreeGraph sourceTree,
-        TreeGraph destTree,
-        List<ValidationIssue> issues)
+        TreeGraph destTree)
     {
-        // Получаем детей из семей
-        var sourceChildren = TreeNavigator.GetChildren(sourceTree, sourcePerson.Id).ToHashSet();
+        var issues = new List<ValidationIssue>();
         var destChildren = TreeNavigator.GetChildren(destTree, destPerson.Id).ToHashSet();
 
-        // Проверяем сопоставленных детей
-        foreach (var sourceChildId in sourceChildren)
+        foreach (var sourceChildId in TreeNavigator.GetChildren(sourceTree, sourcePerson.Id))
         {
-            if (existingMappings.TryGetValue(sourceChildId, out var childMapping))
+            if (!existingMappings.TryGetValue(sourceChildId, out var childMapping))
+                continue;
+
+            var destChildId = childMapping.DestinationId;
+            if (!destChildren.Contains(destChildId))
             {
-                if (!destChildren.Contains(childMapping.DestinationId))
+                issues.Add(new ValidationIssue
                 {
-                    issues.Add(new ValidationIssue
-                    {
-                        Severity = Severity.Medium,
-                        Type = IssueType.FamilyInconsistency,
-                        SourceId = newMapping.SourceId,
-                        DestId = newMapping.DestinationId,
-                        Message = $"Child {sourceChildId} mapped to {childMapping.DestinationId} but not child in destination"
-                    });
-                }
+                    Severity = Severity.Medium,
+                    Type = IssueType.FamilyInconsistency,
+                    SourceId = sourcePerson.Id,
+                    DestId = destPerson.Id,
+                    RelatedSourceId = sourceChildId,
+                    RelatedDestinationId = destChildId,
+                    Message = $"Child inconsistency: {sourcePerson.Id}'s child {sourceChildId} is mapped to {destChildId}, but {destPerson.Id} does not list {destChildId} as a child in destination tree"
+                });
             }
         }
+
+        return issues;
+    }
+
+    /// <summary>
+    /// Проверка консистентности сопоставленных сиблингов.
+    /// </summary>
+    private List<ValidationIssue> ValidateSiblingConsistency(
+        PersonRecord sourcePerson,
+        PersonRecord destPerson,
+        IReadOnlyDictionary<string, PersonMapping> existingMappings,
+        TreeGraph sourceTree,
+        TreeGraph destTree)
+    {
+        var issues = new List<ValidationIssue>();
+        var destSiblings = TreeNavigator.GetSiblings(destTree, destPerson.Id).ToHashSet();
+
+        foreach (var sourceSiblingId in TreeNavigator.GetSiblings(sourceTree, sourcePerson.Id))
+        {
+            if (!existingMappings.TryGetValue(sourceSiblingId, out var siblingMapping))
+                continue;
+
+            var destSiblingId = siblingMapping.DestinationId;
+            if (!destSiblings.Contains(destSiblingId))
+            {
+                issues.Add(new ValidationIssue
+                {
+                    Severity = Severity.Medium,
+                    Type = IssueType.FamilyInconsistency,
+                    SourceId = sourcePerson.Id,
+                    DestId = destPerson.Id,
+                    RelatedSourceId = sourceSiblingId,
+                    RelatedDestinationId = destSiblingId,
+                    Message = $"Sibling inconsistency: {sourcePerson.Id}'s sibling {sourceSiblingId} is mapped to {destSiblingId}, but {destPerson.Id} is not a sibling of {destSiblingId} in destination tree"
+                });
+            }
+        }
+
+        return issues;
     }
 }
 

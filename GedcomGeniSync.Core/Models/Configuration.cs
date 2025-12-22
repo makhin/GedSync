@@ -47,6 +47,12 @@ public class GedSyncConfiguration
     public CompareConfig Compare { get; set; } = new();
 
     /// <summary>
+    /// Wave compare configuration
+    /// </summary>
+    [JsonPropertyName("waveCompare")]
+    public WaveCompareConfig WaveCompare { get; set; } = new();
+
+    /// <summary>
     /// Photo configuration
     /// </summary>
     [JsonPropertyName("photo")]
@@ -130,6 +136,18 @@ public class MatchingConfig
     public int MaxBirthYearDifference { get; set; } = 10;
 
     /// <summary>
+    /// Hard cutoff for birth year difference (default: 15)
+    /// </summary>
+    [JsonPropertyName("hardMaxBirthYearDifference")]
+    public int HardMaxBirthYearDifference { get; set; } = 15;
+
+    /// <summary>
+    /// Start year for soft penalty zone (default: 5)
+    /// </summary>
+    [JsonPropertyName("softPenaltyYearStart")]
+    public int SoftPenaltyYearStart { get; set; } = 5;
+
+    /// <summary>
     /// Convert to MatchingOptions
     /// </summary>
     public MatchingOptions ToMatchingOptions()
@@ -145,7 +163,9 @@ public class MatchingConfig
             FamilyRelationsWeight = FamilyRelationsWeight,
             MatchThreshold = MatchThreshold,
             AutoMatchThreshold = AutoMatchThreshold,
-            MaxBirthYearDifference = MaxBirthYearDifference
+            MaxBirthYearDifference = MaxBirthYearDifference,
+            HardMaxBirthYearDifference = HardMaxBirthYearDifference,
+            SoftPenaltyYearStart = SoftPenaltyYearStart
         };
     }
 }
@@ -282,6 +302,21 @@ public class CompareConfig
             RequireUniqueMatch = RequireUniqueMatch
         };
     }
+}
+
+/// <summary>
+/// Wave compare configuration
+/// </summary>
+[
+    System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage
+]
+public class WaveCompareConfig
+{
+    /// <summary>
+    /// Enable conflict resolution after BFS (default: false)
+    /// </summary>
+    [JsonPropertyName("resolveConflicts")]
+    public bool ResolveConflicts { get; set; } = false;
 }
 
 /// <summary>

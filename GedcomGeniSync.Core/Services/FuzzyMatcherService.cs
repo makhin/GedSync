@@ -193,6 +193,29 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             });
         }
 
+        if (CheckBothParentsMatch(source, target))
+        {
+            var bonus = 15.0;
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "BothParentsMatch",
+                Points = bonus,
+                Details = "Both parents match (high confidence)"
+            });
+            _logger.LogDebug("Applied both-parents-match bonus of {Bonus} points", bonus);
+        }
+
+        var fullFamilyBonus = CalculateFullFamilyBonus(source, target);
+        if (fullFamilyBonus > 0)
+        {
+            reasonsBuilder.Add(new MatchReason
+            {
+                Field = "FullFamilyMatch",
+                Points = fullFamilyBonus,
+                Details = "Full family structure matches"
+            });
+        }
+
         var reasons = reasonsBuilder.ToImmutable();
         var rawScore = reasons.Sum(r => r.Points);
 
@@ -236,7 +259,7 @@ public class FuzzyMatcherService : IFuzzyMatcherService
             if (source.BirthYear.HasValue && candidate.BirthYear.HasValue)
             {
                 var yearDiff = Math.Abs(source.BirthYear.Value - candidate.BirthYear.Value);
-                if (yearDiff > _options.MaxBirthYearDifference)
+                if (yearDiff > _options.HardMaxBirthYearDifference)
                 {
                     _logger.LogTrace("Skipping candidate {Name} - birth year too different ({SourceYear} vs {TargetYear}, diff: {Diff})",
                         candidate.FullName, source.BirthYear, candidate.BirthYear, yearDiff);
@@ -508,8 +531,10 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         // Within tolerance
         if (yearDiff <= 1) return 0.80;
         if (yearDiff <= 2) return 0.60;
-        if (yearDiff <= 5) return 0.40;
-        if (yearDiff <= 10) return 0.20;
+
+        var softPenaltyStart = Math.Min(_options.SoftPenaltyYearStart, _options.MaxBirthYearDifference);
+        if (yearDiff <= softPenaltyStart) return 0.40;
+        if (yearDiff <= _options.MaxBirthYearDifference) return 0.20;
 
         return 0;
     }
@@ -682,6 +707,81 @@ public class FuzzyMatcherService : IFuzzyMatcherService
     }
 
     /// <summary>
+    /// Check if both parents match between source and target.
+    /// Requires person dictionaries to be set.
+    /// </summary>
+    private bool CheckBothParentsMatch(PersonRecord source, PersonRecord target)
+    {
+        if (_sourcePersonsCache == null || _destPersonsCache == null)
+            return false;
+
+        if (string.IsNullOrEmpty(source.FatherId) ||
+            string.IsNullOrEmpty(source.MotherId) ||
+            string.IsNullOrEmpty(target.FatherId) ||
+            string.IsNullOrEmpty(target.MotherId))
+            return false;
+
+        if (!_sourcePersonsCache.TryGetValue(source.FatherId, out var sourceFather) ||
+            !_sourcePersonsCache.TryGetValue(source.MotherId, out var sourceMother) ||
+            !_destPersonsCache.TryGetValue(target.FatherId, out var targetFather) ||
+            !_destPersonsCache.TryGetValue(target.MotherId, out var targetMother))
+            return false;
+
+        if (CompareRelativesByName(sourceFather, targetFather) < 0.8)
+            return false;
+
+        if (CompareRelativesByName(sourceMother, targetMother) < 0.8)
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Calculate bonus for full family match (parents + all children).
+    /// Returns 20 points when everything matches.
+    /// </summary>
+    private double CalculateFullFamilyBonus(PersonRecord source, PersonRecord target)
+    {
+        if (!CheckBothParentsMatch(source, target))
+            return 0;
+
+        if (source.ChildrenIds.Count == 0 || target.ChildrenIds.Count == 0)
+            return 0;
+
+        if (source.ChildrenIds.Count != target.ChildrenIds.Count)
+            return 0;
+
+        var sourcePersons = _sourcePersonsCache;
+        var destPersons = _destPersonsCache;
+        if (sourcePersons == null || destPersons == null)
+            return 0;
+
+        foreach (var sourceChildId in source.ChildrenIds)
+        {
+            if (!sourcePersons.TryGetValue(sourceChildId, out var sourceChild))
+                return 0;
+
+            var foundMatch = false;
+            foreach (var targetChildId in target.ChildrenIds)
+            {
+                if (!destPersons.TryGetValue(targetChildId, out var targetChild))
+                    return 0;
+
+                if (CompareRelativesByName(sourceChild, targetChild) >= 0.8)
+                {
+                    foundMatch = true;
+                    break;
+                }
+            }
+
+            if (!foundMatch)
+                return 0;
+        }
+
+        return 20.0;
+    }
+
+    /// <summary>
     /// Compare two relative IDs by resolving to PersonRecords and comparing names
     /// Returns 1.0 if they match, 0.0 if not
     /// </summary>
@@ -730,13 +830,13 @@ public class FuzzyMatcherService : IFuzzyMatcherService
         // Try to resolve all persons
         var sourcePersons = sourceIds
             .Select(id => _sourcePersonsCache?.GetValueOrDefault(id))
-            .Where(p => p != null)
-            .ToList()!;
+            .OfType<PersonRecord>()
+            .ToList();
 
         var targetPersons = targetIds
             .Select(id => _destPersonsCache?.GetValueOrDefault(id))
-            .Where(p => p != null)
-            .ToList()!;
+            .OfType<PersonRecord>()
+            .ToList();
 
         // If we couldn't resolve any persons, fall back to ID intersection
         if (!sourcePersons.Any() || !targetPersons.Any())
@@ -867,6 +967,8 @@ public record MatchingOptions
     public int MatchThreshold { get; init; } = 70;
     public int AutoMatchThreshold { get; init; } = 90;
     public int MaxBirthYearDifference { get; init; } = 10;
+    public int HardMaxBirthYearDifference { get; init; } = 15;
+    public int SoftPenaltyYearStart { get; init; } = 5;
 
     /// <summary>
     /// Total weight (sum of all weights)

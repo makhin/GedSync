@@ -396,6 +396,16 @@ public class WaveCompareService
         // ФОРМИРОВАНИЕ РЕЗУЛЬТАТА
         // ═══════════════════════════════════════════════════════════
 
+        if (options.ResolveConflicts)
+        {
+            _logger.LogInformation("Starting conflict resolution phase...");
+            var resolver = new MappingConflictResolver(_fuzzyMatcher, _logger);
+            resolver.ResolveConflicts(
+                mappings,
+                sourceLoadResult,
+                destLoadResult);
+        }
+
         var totalDuration = DateTime.UtcNow - startTime;
 
         // Найти несопоставленные персоны

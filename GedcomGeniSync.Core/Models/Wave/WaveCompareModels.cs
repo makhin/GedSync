@@ -113,6 +113,9 @@ public record WaveCompareOptions
 
     /// <summary>Максимальное количество кандидатов для показа пользователю</summary>
     public int MaxCandidates { get; init; } = 5;
+
+    /// <summary>Разрешать конфликты сопоставлений после BFS</summary>
+    public bool ResolveConflicts { get; init; } = false;
 }
 
 public enum ThresholdStrategy
@@ -164,6 +167,8 @@ public record ValidationIssue
     public required IssueType Type { get; init; }
     public string? SourceId { get; init; }
     public string? DestId { get; init; }
+    public string? RelatedSourceId { get; init; }
+    public string? RelatedDestinationId { get; init; }
     public required string Message { get; init; }
 }
 

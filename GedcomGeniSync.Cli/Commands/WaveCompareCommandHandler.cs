@@ -150,7 +150,8 @@ public class WaveCompareCommandHandler : IHostedCommand
                 Interactive = config.Interactive.Enabled,
                 LowConfidenceThreshold = config.Interactive.LowConfidenceThreshold,
                 MinConfidenceThreshold = config.Interactive.MinConfidenceThreshold,
-                MaxCandidates = config.Interactive.MaxCandidates
+                MaxCandidates = config.Interactive.MaxCandidates,
+                ResolveConflicts = config.WaveCompare.ResolveConflicts
             };
 
             var waveCompare = provider.GetRequiredService<GedcomGeniSync.Core.Services.Wave.WaveCompareService>();
