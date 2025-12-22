@@ -51,6 +51,12 @@ public class GedSyncConfiguration
     /// </summary>
     [JsonPropertyName("photo")]
     public PhotoConfig Photo { get; set; } = new();
+
+    /// <summary>
+    /// Interactive confirmation configuration
+    /// </summary>
+    [JsonPropertyName("interactive")]
+    public InteractiveConfig Interactive { get; set; } = new();
 }
 
 /// <summary>
@@ -315,4 +321,41 @@ public class PhotoConfig
     /// </summary>
     [JsonPropertyName("maxConcurrentDownloads")]
     public int MaxConcurrentDownloads { get; set; } = 4;
+}
+
+/// <summary>
+/// Interactive confirmation configuration
+/// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+public class InteractiveConfig
+{
+    /// <summary>
+    /// Enable interactive mode - ask user for confirmation on low confidence matches
+    /// </summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// Path to JSON file with user-confirmed mappings
+    /// </summary>
+    [JsonPropertyName("confirmedMappingsFile")]
+    public string ConfirmedMappingsFile { get; set; } = "confirmed-mappings.json";
+
+    /// <summary>
+    /// Threshold for automatic acceptance (scores >= this are auto-accepted, default: 70)
+    /// </summary>
+    [JsonPropertyName("lowConfidenceThreshold")]
+    public int LowConfidenceThreshold { get; set; } = 70;
+
+    /// <summary>
+    /// Minimum threshold for asking user (scores below this are auto-rejected, default: 50)
+    /// </summary>
+    [JsonPropertyName("minConfidenceThreshold")]
+    public int MinConfidenceThreshold { get; set; } = 50;
+
+    /// <summary>
+    /// Maximum number of candidates to show to user (default: 5)
+    /// </summary>
+    [JsonPropertyName("maxCandidates")]
+    public int MaxCandidates { get; set; } = 5;
 }

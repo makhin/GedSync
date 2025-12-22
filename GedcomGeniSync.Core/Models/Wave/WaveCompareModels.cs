@@ -98,6 +98,21 @@ public record WaveCompareOptions
 
     /// <summary>Базовый порог для fuzzy match (используется при Fixed стратегии)</summary>
     public int BaseThreshold { get; init; } = 60;
+
+    /// <summary>Путь к файлу с подтверждёнными пользователем соответствиями</summary>
+    public string? ConfirmedMappingsFile { get; init; }
+
+    /// <summary>Интерактивный режим — запрашивать пользователя при низком confidence</summary>
+    public bool Interactive { get; init; } = false;
+
+    /// <summary>Порог для автоматического принятия соответствий (без запроса пользователю)</summary>
+    public int LowConfidenceThreshold { get; init; } = 70;
+
+    /// <summary>Минимальный порог для запроса пользователю (ниже этого — автоотклонение)</summary>
+    public int MinConfidenceThreshold { get; init; } = 50;
+
+    /// <summary>Максимальное количество кандидатов для показа пользователю</summary>
+    public int MaxCandidates { get; init; } = 5;
 }
 
 public enum ThresholdStrategy

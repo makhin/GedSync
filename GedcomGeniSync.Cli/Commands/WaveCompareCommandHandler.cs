@@ -31,6 +31,7 @@ public class WaveCompareCommandHandler : IHostedCommand
     private readonly Option<string?> _detailedLogOption = new("--detailed-log", description: "Output detailed text log file path (optional)");
     private readonly Option<bool> _verboseOption = new("--verbose", () => false, description: "Enable verbose logging");
     private readonly Option<bool> _ignorePhotosOption = new("--ignore-photos", () => false, description: "Ignore photo differences when comparing");
+    private readonly Option<string?> _confirmedMappingsOption = new("--confirmed-mappings", description: "Path to JSON file with user-confirmed mappings (optional)");
 
     public WaveCompareCommandHandler(Startup startup)
     {
@@ -52,6 +53,7 @@ public class WaveCompareCommandHandler : IHostedCommand
         waveCompareCommand.AddOption(_detailedLogOption);
         waveCompareCommand.AddOption(_verboseOption);
         waveCompareCommand.AddOption(_ignorePhotosOption);
+        waveCompareCommand.AddOption(_confirmedMappingsOption);
 
         waveCompareCommand.SetHandler(HandleAsync);
         return waveCompareCommand;
@@ -71,6 +73,7 @@ public class WaveCompareCommandHandler : IHostedCommand
         var detailedLogPath = parseResult.GetValueForOption(_detailedLogOption);
         var verbose = parseResult.GetValueForOption(_verboseOption);
         var ignorePhotos = parseResult.GetValueForOption(_ignorePhotosOption);
+        var confirmedMappingsPath = parseResult.GetValueForOption(_confirmedMappingsOption);
 
         // Build set of fields to ignore
         var fieldsToIgnore = new HashSet<string>();
@@ -89,10 +92,18 @@ public class WaveCompareCommandHandler : IHostedCommand
                 sp.GetRequiredService<ILogger<PersonFieldComparer>>(),
                 fieldsToIgnore,
                 sp.GetService<IPhotoCompareService>()));
+            services.AddSingleton<GedcomGeniSync.Core.Services.Interactive.ConfirmedMappingsStore>(sp =>
+                new GedcomGeniSync.Core.Services.Interactive.ConfirmedMappingsStore(
+                    sp.GetRequiredService<ILogger<GedcomGeniSync.Core.Services.Interactive.ConfirmedMappingsStore>>()));
+            services.AddSingleton<GedcomGeniSync.Core.Services.Interactive.IInteractiveConfirmation>(sp =>
+                new GedcomGeniSync.Core.Services.Interactive.ConsoleConfirmationService(
+                    sp.GetRequiredService<ILogger<GedcomGeniSync.Core.Services.Interactive.ConsoleConfirmationService>>()));
             services.AddSingleton<GedcomGeniSync.Core.Services.Wave.WaveCompareService>(sp =>
                 new GedcomGeniSync.Core.Services.Wave.WaveCompareService(
                     sp.GetRequiredService<IFuzzyMatcherService>(),
-                    sp.GetRequiredService<ILogger<GedcomGeniSync.Core.Services.Wave.WaveCompareService>>()));
+                    sp.GetRequiredService<ILogger<GedcomGeniSync.Core.Services.Wave.WaveCompareService>>(),
+                    sp.GetRequiredService<GedcomGeniSync.Core.Services.Interactive.ConfirmedMappingsStore>(),
+                    sp.GetRequiredService<GedcomGeniSync.Core.Services.Interactive.IInteractiveConfirmation>()));
         });
 
         var provider = scope.ServiceProvider;
@@ -126,11 +137,20 @@ public class WaveCompareCommandHandler : IHostedCommand
                 _ => GedcomGeniSync.Core.Models.Wave.ThresholdStrategy.Adaptive
             };
 
+            // Load configuration for interactive options
+            var configService = provider.GetRequiredService<IConfigurationService>();
+            var config = configService.LoadConfiguration(null);
+
             var options = new GedcomGeniSync.Core.Models.Wave.WaveCompareOptions
             {
                 MaxLevel = maxLevel,
                 ThresholdStrategy = thresholdStrategy,
-                BaseThreshold = baseThreshold
+                BaseThreshold = baseThreshold,
+                ConfirmedMappingsFile = confirmedMappingsPath ?? config.Interactive.ConfirmedMappingsFile,
+                Interactive = config.Interactive.Enabled,
+                LowConfidenceThreshold = config.Interactive.LowConfidenceThreshold,
+                MinConfidenceThreshold = config.Interactive.MinConfidenceThreshold,
+                MaxCandidates = config.Interactive.MaxCandidates
             };
 
             var waveCompare = provider.GetRequiredService<GedcomGeniSync.Core.Services.Wave.WaveCompareService>();

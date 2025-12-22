@@ -1,4 +1,6 @@
+using GedcomGeniSync.Core.Models;
 using GedcomGeniSync.Core.Models.Wave;
+using GedcomGeniSync.Core.Services.Interactive;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using Microsoft.Extensions.Logging;
@@ -18,14 +20,24 @@ public class WaveCompareService
     private readonly TreeIndexer _treeIndexer;
     private readonly FamilyMatcher _familyMatcher;
     private readonly WaveMappingValidator _validator;
+    private readonly ConfirmedMappingsStore? _confirmedMappingsStore;
+    private readonly IInteractiveConfirmation? _interactiveConfirmation;
     private readonly ILogger<WaveCompareService> _logger;
+
+    private WaveCompareOptions? _currentOptions;
+    private GedcomLoadResult? _currentSourceLoadResult;
+    private GedcomLoadResult? _currentDestLoadResult;
 
     public WaveCompareService(
         IFuzzyMatcherService fuzzyMatcher,
-        ILogger<WaveCompareService> logger)
+        ILogger<WaveCompareService> logger,
+        ConfirmedMappingsStore? confirmedMappingsStore = null,
+        IInteractiveConfirmation? interactiveConfirmation = null)
     {
         _fuzzyMatcher = fuzzyMatcher;
         _logger = logger;
+        _confirmedMappingsStore = confirmedMappingsStore;
+        _interactiveConfirmation = interactiveConfirmation;
         _treeIndexer = new TreeIndexer(logger: null);
         _familyMatcher = new FamilyMatcher(logger: null, fuzzyMatcher: _fuzzyMatcher);
         _validator = new WaveMappingValidator(logger: null);
@@ -42,6 +54,11 @@ public class WaveCompareService
         WaveCompareOptions options)
     {
         var startTime = DateTime.UtcNow;
+
+        // Сохраняем для использования в интерактивном режиме
+        _currentOptions = options;
+        _currentSourceLoadResult = sourceLoadResult;
+        _currentDestLoadResult = destLoadResult;
 
         _logger.LogInformation(
             "Starting wave compare: Source={SourceCount} persons, Dest={DestCount} persons, MaxLevel={MaxLevel}",
@@ -75,6 +92,23 @@ public class WaveCompareService
         // Словарь сопоставлений: sourceId -> PersonMapping
         var mappings = new Dictionary<string, PersonMapping>();
 
+        // Загрузить подтверждённые соответствия (если указан файл)
+        ConfirmedMappingsFile? confirmedMappings = null;
+        HashSet<(string, string)> rejectedPairs = new();
+
+        if (!string.IsNullOrEmpty(options.ConfirmedMappingsFile) && _confirmedMappingsStore != null)
+        {
+            confirmedMappings = _confirmedMappingsStore.LoadMappings(options.ConfirmedMappingsFile);
+            if (confirmedMappings != null)
+            {
+                rejectedPairs = _confirmedMappingsStore.GetRejectedPairs(confirmedMappings);
+                _logger.LogInformation(
+                    "Loaded {ConfirmedCount} confirmed mappings, {RejectedCount} rejected pairs",
+                    confirmedMappings.Mappings.Count(m => m.Type == ConfirmationType.Confirmed),
+                    rejectedPairs.Count);
+            }
+        }
+
         // Добавляем якорь как первое сопоставление
         mappings[anchorSourceId] = new PersonMapping
         {
@@ -92,6 +126,46 @@ public class WaveCompareService
 
         // Множество обработанных персон
         var processed = new HashSet<string> { anchorSourceId };
+
+        // Добавить подтверждённые соответствия как дополнительные якоря
+        if (confirmedMappings != null)
+        {
+            var confirmedAnchors = _confirmedMappingsStore!.GetConfirmedAnchors(confirmedMappings);
+            foreach (var (sourceId, destId) in confirmedAnchors)
+            {
+                // Проверяем что эта персона существует в обоих деревьях
+                if (!sourceLoadResult.Persons.ContainsKey(sourceId) ||
+                    !destLoadResult.Persons.ContainsKey(destId))
+                {
+                    _logger.LogWarning(
+                        "Confirmed mapping {SourceId} -> {DestId} skipped: person not found in trees",
+                        sourceId, destId);
+                    continue;
+                }
+
+                // Пропускаем если уже есть в mappings (якорь имеет приоритет)
+                if (mappings.ContainsKey(sourceId))
+                {
+                    _logger.LogDebug("Confirmed mapping {SourceId} -> {DestId} skipped: already mapped as anchor", sourceId, destId);
+                    continue;
+                }
+
+                mappings[sourceId] = new PersonMapping
+                {
+                    SourceId = sourceId,
+                    DestinationId = destId,
+                    MatchScore = 100,
+                    Level = 0,
+                    FoundVia = RelationType.Anchor,
+                    FoundAt = DateTime.UtcNow
+                };
+
+                queue.Enqueue((sourceId, 0));
+                processed.Add(sourceId);
+
+                _logger.LogDebug("Added confirmed mapping as anchor: {SourceId} -> {DestId}", sourceId, destId);
+            }
+        }
 
         // Статистика по уровням
         var levelStats = new List<LevelStatistics>();
@@ -469,19 +543,37 @@ public class WaveCompareService
                 // Добавляем mapping только если валидация прошла
                 if (validationResult.IsValid)
                 {
-                    mappings[mapping.SourceId] = mapping;
-                    queue.Enqueue((mapping.SourceId, level + 1));
-                    processed.Add(mapping.SourceId);
-                    newMappingsThisLevel++;
-                    anyMemberMatched = true;
-                    allSourceFamilyMembers.Remove(mapping.SourceId);
+                    // Check interactive confirmation if score is low
+                    string foundViaDescription = $"{mapping.FoundVia} от \"{context.FromPersonId}\"";
+                    bool shouldAdd = TryInteractiveConfirmation(
+                        mapping,
+                        foundViaDescription,
+                        mappings,
+                        out bool shouldSave);
 
-                    _logger.LogDebug(
-                        "Added mapping {SourceId} -> {DestId} via {RelationType} at level {Level}",
-                        mapping.SourceId,
-                        mapping.DestinationId,
-                        mapping.FoundVia,
-                        mapping.Level);
+                    if (shouldAdd)
+                    {
+                        mappings[mapping.SourceId] = mapping;
+                        queue.Enqueue((mapping.SourceId, level + 1));
+                        processed.Add(mapping.SourceId);
+                        newMappingsThisLevel++;
+                        anyMemberMatched = true;
+                        allSourceFamilyMembers.Remove(mapping.SourceId);
+
+                        _logger.LogDebug(
+                            "Added mapping {SourceId} -> {DestId} via {RelationType} at level {Level}",
+                            mapping.SourceId,
+                            mapping.DestinationId,
+                            mapping.FoundVia,
+                            mapping.Level);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "Rejected mapping {SourceId} -> {DestId} via interactive confirmation or low score",
+                            mapping.SourceId,
+                            mapping.DestinationId);
+                    }
                 }
                 else
                 {
@@ -516,6 +608,131 @@ public class WaveCompareService
                         level + 1);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Try to confirm mapping interactively if score is low
+    /// Returns true if mapping should be added, false if rejected/skipped
+    /// </summary>
+    private bool TryInteractiveConfirmation(
+        PersonMapping mapping,
+        string foundVia,
+        Dictionary<string, PersonMapping> existingMappings,
+        out bool shouldSave)
+    {
+        shouldSave = false;
+
+        // Check if interactive mode is enabled
+        if (_currentOptions == null || !_currentOptions.Interactive ||
+            _interactiveConfirmation == null ||
+            _confirmedMappingsStore == null ||
+            _currentSourceLoadResult == null ||
+            _currentDestLoadResult == null)
+        {
+            return true; // No interactive mode, accept by default
+        }
+
+        int score = mapping.MatchScore;
+        int lowThreshold = _currentOptions.LowConfidenceThreshold;
+        int minThreshold = _currentOptions.MinConfidenceThreshold;
+
+        // High confidence - auto accept
+        if (score >= lowThreshold)
+        {
+            return true;
+        }
+
+        // Too low - auto reject
+        if (score < minThreshold)
+        {
+            _logger.LogInformation(
+                "Auto-rejected mapping {SourceId} -> {DestId} with score {Score} (below min threshold {MinThreshold})",
+                mapping.SourceId, mapping.DestinationId, score, minThreshold);
+            return false;
+        }
+
+        // Between thresholds - ask user
+        _logger.LogInformation(
+            "Requesting user confirmation for {SourceId} -> {DestId} with score {Score}",
+            mapping.SourceId, mapping.DestinationId, score);
+
+        try
+        {
+            var sourcePerson = _currentSourceLoadResult.Persons[mapping.SourceId];
+            var destPerson = _currentDestLoadResult.Persons[mapping.DestinationId];
+
+            // TODO: Get other candidates and detailed breakdown
+            // For now, show only the current match
+            var candidates = new List<Models.Interactive.CandidateMatch>
+            {
+                new()
+                {
+                    Person = destPerson,
+                    Score = score,
+                    Breakdown = new Models.Interactive.ScoreBreakdown
+                    {
+                        // TODO: Get actual breakdown from FuzzyMatcher
+                        FirstNameScore = 0,
+                        LastNameScore = 0,
+                        BirthDateScore = 0,
+                        BirthPlaceScore = 0,
+                        GenderScore = 0,
+                        ParentsMatching = 0,
+                        ParentsTotal = 0,
+                        ChildrenMatching = 0,
+                        ChildrenTotal = 0,
+                        SiblingsMatching = 0,
+                        SiblingsTotal = 0,
+                        SpouseMatches = false
+                    }
+                }
+            };
+
+            var request = new Models.Interactive.InteractiveConfirmationRequest
+            {
+                SourcePerson = sourcePerson,
+                Candidates = candidates,
+                FoundVia = foundVia,
+                Level = mapping.Level,
+                MaxCandidates = _currentOptions.MaxCandidates
+            };
+
+            var result = _interactiveConfirmation.AskUser(request);
+
+            // Save user decision
+            shouldSave = true;
+            var userMapping = new UserConfirmedMapping
+            {
+                SourceId = mapping.SourceId,
+                DestinationId = mapping.DestinationId,
+                Type = result.Decision switch
+                {
+                    Models.Interactive.UserDecision.Confirmed => ConfirmationType.Confirmed,
+                    Models.Interactive.UserDecision.Rejected => ConfirmationType.Rejected,
+                    Models.Interactive.UserDecision.Skipped => ConfirmationType.Skipped,
+                    _ => ConfirmationType.Skipped
+                },
+                ConfirmedAt = DateTime.UtcNow,
+                OriginalScore = score
+            };
+
+            // Save to file
+            if (!string.IsNullOrEmpty(_currentOptions.ConfirmedMappingsFile))
+            {
+                _confirmedMappingsStore.AddOrUpdateMapping(
+                    _currentOptions.ConfirmedMappingsFile,
+                    userMapping,
+                    sourceFile: "source.ged", // TODO: Get actual file names
+                    destinationFile: "dest.ged");
+            }
+
+            return result.Decision == Models.Interactive.UserDecision.Confirmed;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during interactive confirmation");
+            return false;
         }
     }
 }

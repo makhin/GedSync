@@ -46,3 +46,36 @@ paths:
 logging:
   # Enable verbose logging
   verbose: false
+
+photo:
+  # Enable photo processing features
+  enabled: true
+
+  # Directory for cached photos
+  cacheDirectory: "./photos"
+
+  # Download photos during GEDCOM load
+  downloadOnLoad: true
+
+  # Similarity threshold for perceptual hash comparison
+  similarityThreshold: 0.95
+
+  # Maximum concurrent photo downloads
+  maxConcurrentDownloads: 4
+
+interactive:
+  # Enable interactive mode - ask user for confirmation on low confidence matches
+  enabled: false
+
+  # Path to JSON file with user-confirmed mappings
+  confirmedMappingsFile: "confirmed-mappings.json"
+
+  # Threshold for automatic acceptance (scores >= this are auto-accepted)
+  # Scores between minConfidenceThreshold and lowConfidenceThreshold require user confirmation
+  lowConfidenceThreshold: 70
+
+  # Minimum threshold for asking user (scores below this are auto-rejected)
+  minConfidenceThreshold: 50
+
+  # Maximum number of candidates to show to user
+  maxCandidates: 5
