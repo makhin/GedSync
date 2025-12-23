@@ -13,6 +13,9 @@ using GedcomGeniSync.Services.Photo;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("GedcomGeniSync.Tests")]
 
 namespace GedcomGeniSync.Cli.Commands;
 
@@ -244,7 +247,7 @@ public class WaveCompareCommandHandler : IHostedCommand
         }
     }
 
-    private static GedcomGeniSync.Core.Models.Wave.WaveHighConfidenceReport BuildWaveReport(
+    internal static GedcomGeniSync.Core.Models.Wave.WaveHighConfidenceReport BuildWaveReport(
         GedcomGeniSync.Core.Models.Wave.WaveCompareResult result,
         string sourceFile,
         string destinationFile,
@@ -288,18 +291,40 @@ public class WaveCompareCommandHandler : IHostedCommand
                 continue;
             }
 
-            var relation = FindHighConfidenceRelation(sourcePerson, mappingBySource, confidenceThreshold);
-            if (relation == null)
+            var relations = FindHighConfidenceRelations(sourcePerson, mappingBySource, confidenceThreshold);
+            if (relations.Count == 0)
             {
                 continue;
+            }
+
+            // First relation becomes the primary relation (for backward compatibility)
+            var primaryRelation = relations[0];
+
+            // Remaining relations become additional relations
+            var additionalRelations = relations.Count > 1
+                ? relations.Skip(1).Select(r => new AdditionalRelation
+                {
+                    RelatedToNodeId = r.RelatedSourceId,
+                    RelationType = r.RelationType
+                }).ToImmutableList()
+                : ImmutableList<AdditionalRelation>.Empty;
+
+            // Find the source family ID for this person (for child relations to find union)
+            string? sourceFamilyId = null;
+            if (primaryRelation.RelationType == CompareRelationType.Child && sourcePerson.ChildOfFamilyIds.Count > 0)
+            {
+                // Use the first family where this person is a child
+                sourceFamilyId = sourcePerson.ChildOfFamilyIds[0];
             }
 
             additions.Add(new NodeToAdd
             {
                 SourceId = sourcePerson.Id,
                 PersonData = ConvertToPersonData(sourcePerson),
-                RelatedToNodeId = relation.Value.RelatedSourceId,
-                RelationType = relation.Value.RelationType,
+                RelatedToNodeId = primaryRelation.RelatedSourceId,
+                RelationType = primaryRelation.RelationType,
+                AdditionalRelations = additionalRelations,
+                SourceFamilyId = sourceFamilyId,
                 DepthFromExisting = unmatched.NearestMatchedLevel ?? 1
             });
         }
@@ -318,45 +343,74 @@ public class WaveCompareCommandHandler : IHostedCommand
         };
     }
 
-    private static (string RelatedSourceId, CompareRelationType RelationType)? FindHighConfidenceRelation(
+    /// <summary>
+    /// Finds all high-confidence relations for a person (not just the first one)
+    /// </summary>
+    private static ImmutableList<RelationInfo> FindHighConfidenceRelations(
         PersonRecord person,
         IReadOnlyDictionary<string, GedcomGeniSync.Core.Models.Wave.PersonMapping> mappingBySource,
         int confidenceThreshold)
     {
+        var relations = ImmutableList.CreateBuilder<RelationInfo>();
+
         bool HasHighConfidence(string? relativeId) =>
             !string.IsNullOrWhiteSpace(relativeId)
             && mappingBySource.TryGetValue(relativeId!, out var mapping)
             && mapping.MatchScore >= confidenceThreshold;
 
-        if (person.SpouseIds.FirstOrDefault(HasHighConfidence) is { } spouseId)
+        // Priority 1: Spouses - collect ALL spouses with high confidence
+        foreach (var spouseId in person.SpouseIds.Where(HasHighConfidence))
         {
-            return (spouseId, CompareRelationType.Spouse);
+            relations.Add(new RelationInfo(spouseId, CompareRelationType.Spouse));
         }
 
+        // Priority 2: Parents - collect BOTH parents if available
         if (HasHighConfidence(person.FatherId))
         {
-            return (person.FatherId!, CompareRelationType.Child);
+            relations.Add(new RelationInfo(person.FatherId!, CompareRelationType.Child));
         }
 
         if (HasHighConfidence(person.MotherId))
         {
-            return (person.MotherId!, CompareRelationType.Child);
+            relations.Add(new RelationInfo(person.MotherId!, CompareRelationType.Child));
         }
 
-        var childRelation = person.ChildrenIds.FirstOrDefault(HasHighConfidence);
-        if (!string.IsNullOrEmpty(childRelation))
+        // Priority 3: Children - collect ALL children with high confidence
+        foreach (var childId in person.ChildrenIds.Where(HasHighConfidence))
         {
-            return (childRelation!, CompareRelationType.Parent);
+            relations.Add(new RelationInfo(childId, CompareRelationType.Parent));
         }
 
-        var siblingRelation = person.SiblingIds.FirstOrDefault(HasHighConfidence);
-        if (!string.IsNullOrEmpty(siblingRelation))
+        // Priority 4: Siblings - only if no other relations found
+        if (relations.Count == 0)
         {
-            return (siblingRelation!, CompareRelationType.Sibling);
+            foreach (var siblingId in person.SiblingIds.Where(HasHighConfidence))
+            {
+                relations.Add(new RelationInfo(siblingId, CompareRelationType.Sibling));
+            }
         }
 
-        return null;
+        return relations.ToImmutable();
     }
+
+    /// <summary>
+    /// Legacy method for backward compatibility - returns first relation only
+    /// </summary>
+    private static (string RelatedSourceId, CompareRelationType RelationType)? FindHighConfidenceRelation(
+        PersonRecord person,
+        IReadOnlyDictionary<string, GedcomGeniSync.Core.Models.Wave.PersonMapping> mappingBySource,
+        int confidenceThreshold)
+    {
+        var relations = FindHighConfidenceRelations(person, mappingBySource, confidenceThreshold);
+        return relations.Count > 0
+            ? (relations[0].RelatedSourceId, relations[0].RelationType)
+            : null;
+    }
+
+    /// <summary>
+    /// Information about a relation to an existing person
+    /// </summary>
+    private record RelationInfo(string RelatedSourceId, CompareRelationType RelationType);
 
     private static PersonData ConvertToPersonData(PersonRecord person)
     {

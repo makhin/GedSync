@@ -276,19 +276,45 @@ public record NodeToAdd
     public required PersonData PersonData { get; init; }
 
     /// <summary>
-    /// ID of existing matched node this is related to
+    /// ID of existing matched node this is related to (primary relation for backward compatibility)
     /// </summary>
     public string? RelatedToNodeId { get; init; }
 
     /// <summary>
-    /// Relationship type to the related node
+    /// Relationship type to the related node (primary relation for backward compatibility)
     /// </summary>
     public CompareRelationType? RelationType { get; init; }
+
+    /// <summary>
+    /// Additional relations to existing nodes (e.g., second parent, multiple spouses)
+    /// </summary>
+    public ImmutableList<AdditionalRelation> AdditionalRelations { get; init; } = ImmutableList<AdditionalRelation>.Empty;
+
+    /// <summary>
+    /// Source family ID (FAM) this person belongs to in GEDCOM (for finding unions in destination)
+    /// </summary>
+    public string? SourceFamilyId { get; init; }
 
     /// <summary>
     /// Depth from matched/anchor nodes
     /// </summary>
     public int DepthFromExisting { get; init; }
+}
+
+/// <summary>
+/// Additional relation for nodes with multiple high-confidence connections
+/// </summary>
+public record AdditionalRelation
+{
+    /// <summary>
+    /// ID of existing matched node this is related to
+    /// </summary>
+    public required string RelatedToNodeId { get; init; }
+
+    /// <summary>
+    /// Relationship type to the related node
+    /// </summary>
+    public required CompareRelationType RelationType { get; init; }
 }
 
 /// <summary>
