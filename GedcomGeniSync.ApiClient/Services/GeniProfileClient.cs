@@ -686,7 +686,13 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         var response = await ExecuteWithRetryAsync(() => client.PostAsync(url, content));
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<GeniAddResult>();
+        // Log raw response to debug deserialization issues
+        var jsonContent = await response.Content.ReadAsStringAsync();
+        Logger.LogDebug("=== RAW GENI API RESPONSE for {UrlPath} ===", urlPath);
+        Logger.LogDebug("{Json}", jsonContent);
+        Logger.LogDebug("=== END RAW RESPONSE ===");
+
+        var result = System.Text.Json.JsonSerializer.Deserialize<GeniAddResult>(jsonContent);
         logSuccess(result);
 
         return result?.Profile;
