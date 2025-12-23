@@ -297,6 +297,12 @@ public class AddExecutor
             _logger.LogInformation("All profiles processed successfully. Progress file deleted.");
         }
 
+        // Phase 3: Validate family relations and identify issues requiring manual correction
+        if (result.Successful > 0)
+        {
+            ValidateFamilyRelations(sortedNodes, profileMap, result);
+        }
+
         return result;
     }
 
@@ -630,5 +636,153 @@ public class AddExecutor
             .Replace("g", string.Empty, StringComparison.OrdinalIgnoreCase);
 
         return normalized;
+    }
+
+    /// <summary>
+    /// Phase 3: Validates family relations and identifies missing links
+    /// Since Geni API doesn't support linking existing profiles, this method
+    /// generates a report of issues that require manual correction
+    /// </summary>
+    public void ValidateFamilyRelations(
+        List<NodeToAdd> addedNodes,
+        Dictionary<string, string> profileMap,
+        Commands.AddResult result)
+    {
+        _logger.LogInformation("Phase 3: Validating family relations for {Count} created profiles...", result.CreatedProfiles.Count);
+
+        foreach (var node in addedNodes)
+        {
+            // Skip if profile wasn't created
+            if (!result.CreatedProfiles.TryGetValue(node.SourceId, out var geniId))
+                continue;
+
+            var sourcePerson = _gedcom.Persons.GetValueOrDefault(node.SourceId);
+            if (sourcePerson == null)
+                continue;
+
+            // Check for missing parent links
+            CheckMissingParentLinks(node, sourcePerson, profileMap, geniId, result);
+
+            // Check for missing spouse links
+            CheckMissingSpouseLinks(node, sourcePerson, profileMap, geniId, result);
+        }
+
+        if (result.RelationIssues.Count > 0)
+        {
+            _logger.LogWarning("⚠ Found {Count} family relation issues that require manual correction in Geni",
+                result.RelationIssues.Count);
+
+            // Group and log issues by type
+            var issuesByType = result.RelationIssues.GroupBy(i => i.Type);
+            foreach (var group in issuesByType)
+            {
+                _logger.LogWarning("  - {Type}: {Count} issues", group.Key, group.Count());
+            }
+        }
+        else
+        {
+            _logger.LogInformation("✓ No family relation issues found");
+        }
+    }
+
+    /// <summary>
+    /// Checks if a child is missing connection to second parent
+    /// </summary>
+    private void CheckMissingParentLinks(
+        NodeToAdd node,
+        PersonRecord sourcePerson,
+        Dictionary<string, string> profileMap,
+        string geniId,
+        Commands.AddResult result)
+    {
+        // Only relevant if this person was added as a child
+        if (node.RelationType != CompareRelationType.Child)
+            return;
+
+        // Check if person has both parents in GEDCOM
+        var hasFather = !string.IsNullOrWhiteSpace(sourcePerson.FatherId);
+        var hasMother = !string.IsNullOrWhiteSpace(sourcePerson.MotherId);
+
+        if (!hasFather && !hasMother)
+            return;
+
+        // Check which parents exist in Geni
+        var fatherInGeni = hasFather && profileMap.ContainsKey(sourcePerson.FatherId!);
+        var motherInGeni = hasMother && profileMap.ContainsKey(sourcePerson.MotherId!);
+
+        // If both parents exist in Geni but we only added to one of them
+        if (fatherInGeni && motherInGeni)
+        {
+            // Check if we found a union (which means both parents were linked)
+            var secondParent = node.AdditionalRelations
+                .FirstOrDefault(r => r.RelationType == CompareRelationType.Child);
+
+            if (secondParent == null)
+            {
+                // This shouldn't happen with Phase 2 implementation, but log it if it does
+                var missingParentId = node.RelatedToNodeId == sourcePerson.FatherId
+                    ? sourcePerson.MotherId!
+                    : sourcePerson.FatherId!;
+
+                result.RelationIssues.Add(new Commands.RelationIssue
+                {
+                    Type = Commands.RelationIssueType.MissingParentLink,
+                    SourceId = node.SourceId,
+                    GeniId = geniId,
+                    RelatedSourceId = missingParentId,
+                    RelatedGeniId = profileMap.GetValueOrDefault(missingParentId),
+                    Description = $"Child {geniId} is missing link to second parent (GEDCOM: {missingParentId}). " +
+                                  "This requires manual correction in Geni."
+                });
+
+                _logger.LogWarning("  ⚠ {SourceId}: Missing link to second parent {ParentId}",
+                    node.SourceId, missingParentId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks if two parents who are spouses in GEDCOM are not linked in Geni
+    /// </summary>
+    private void CheckMissingSpouseLinks(
+        NodeToAdd node,
+        PersonRecord sourcePerson,
+        Dictionary<string, string> profileMap,
+        string geniId,
+        Commands.AddResult result)
+    {
+        // Only check for people who have spouses in GEDCOM
+        if (sourcePerson.SpouseIds.Count == 0)
+            return;
+
+        foreach (var spouseId in sourcePerson.SpouseIds)
+        {
+            // Skip if spouse doesn't exist in profile map
+            if (!profileMap.TryGetValue(spouseId, out var spouseGeniId))
+                continue;
+
+            // Check if this spouse was just created (both profiles are new)
+            var spouseWasCreated = result.CreatedProfiles.ContainsKey(spouseId);
+            var thisWasCreated = result.CreatedProfiles.ContainsKey(node.SourceId);
+
+            // If both profiles were just created, they might not be linked as spouses
+            // This can happen when we add two parents separately
+            if (spouseWasCreated && thisWasCreated)
+            {
+                result.RelationIssues.Add(new Commands.RelationIssue
+                {
+                    Type = Commands.RelationIssueType.MissingSpouseLink,
+                    SourceId = node.SourceId,
+                    GeniId = geniId,
+                    RelatedSourceId = spouseId,
+                    RelatedGeniId = spouseGeniId,
+                    Description = $"Profiles {geniId} and {spouseGeniId} are spouses in GEDCOM but may not be linked in Geni. " +
+                                  "Verify and link manually if needed."
+                });
+
+                _logger.LogWarning("  ⚠ {SourceId}: Possible missing spouse link to {SpouseId}",
+                    node.SourceId, spouseId);
+            }
+        }
     }
 }

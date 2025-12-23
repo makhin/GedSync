@@ -245,6 +245,12 @@ public class AddResult
     public int PhotosFailed { get; set; }
     public List<AddError> Errors { get; set; } = new();
     public Dictionary<string, string> CreatedProfiles { get; set; } = new(); // SourceId -> GeniProfileId
+
+    /// <summary>
+    /// Issues found during family relations validation (Phase 3)
+    /// These require manual correction in Geni
+    /// </summary>
+    public List<RelationIssue> RelationIssues { get; set; } = new();
 }
 
 /// <summary>
@@ -255,4 +261,61 @@ public class AddError
     public required string SourceId { get; set; }
     public required string RelationType { get; set; }
     public required string ErrorMessage { get; set; }
+}
+
+/// <summary>
+/// Issue with family relation that requires manual correction
+/// </summary>
+public class RelationIssue
+{
+    /// <summary>
+    /// Type of relation issue
+    /// </summary>
+    public required RelationIssueType Type { get; set; }
+
+    /// <summary>
+    /// Source ID of the profile with the issue
+    /// </summary>
+    public required string SourceId { get; set; }
+
+    /// <summary>
+    /// Geni ID of the created profile
+    /// </summary>
+    public string? GeniId { get; set; }
+
+    /// <summary>
+    /// Related profile source ID
+    /// </summary>
+    public string? RelatedSourceId { get; set; }
+
+    /// <summary>
+    /// Related profile Geni ID
+    /// </summary>
+    public string? RelatedGeniId { get; set; }
+
+    /// <summary>
+    /// Description of the issue
+    /// </summary>
+    public required string Description { get; set; }
+}
+
+/// <summary>
+/// Type of family relation issue
+/// </summary>
+public enum RelationIssueType
+{
+    /// <summary>
+    /// Child is missing connection to second parent
+    /// </summary>
+    MissingParentLink,
+
+    /// <summary>
+    /// Two parents are not linked as spouses
+    /// </summary>
+    MissingSpouseLink,
+
+    /// <summary>
+    /// Partner is missing connection to existing children
+    /// </summary>
+    MissingChildLink
 }
