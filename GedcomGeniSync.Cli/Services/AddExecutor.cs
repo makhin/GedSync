@@ -119,6 +119,16 @@ public class AddExecutor
                 _logger.LogInformation("[Depth {Depth}] Processing {Summary} (Source: {SourceId})",
                     node.DepthFromExisting, personSummary, node.SourceId);
 
+                // Skip profiles without first name AND last name - additional safety check
+                if (string.IsNullOrWhiteSpace(node.PersonData.FirstName) &&
+                    string.IsNullOrWhiteSpace(node.PersonData.LastName))
+                {
+                    _logger.LogWarning("  Skipping profile without first name or last name (Source: {SourceId})",
+                        node.SourceId);
+                    result.Skipped++;
+                    continue;
+                }
+
                 // Find related profile in Geni
                 if (string.IsNullOrEmpty(node.RelatedToNodeId))
                 {
@@ -154,7 +164,41 @@ public class AddExecutor
                         break;
 
                     case CompareRelationType.Child:
-                        // Current person is child of related node -> add as child
+                        // Current person is child of related node -> check for second parent
+                        // Phase 2: Handle two parents scenario
+                        var secondParentRelation = node.AdditionalRelations
+                            .FirstOrDefault(r => r.RelationType == CompareRelationType.Child);
+
+                        if (secondParentRelation != null &&
+                            profileMap.TryGetValue(secondParentRelation.RelatedToNodeId, out var secondParentGeniId))
+                        {
+                            var cleanSecondParentId = CleanProfileId(secondParentGeniId);
+                            _logger.LogInformation("  Found second parent {SecondParentId}, looking for common union", cleanSecondParentId);
+
+                            // Find all common unions between both parents
+                            var commonUnions = await FindCommonUnionsAsync(cleanGeniId, cleanSecondParentId);
+
+                            if (commonUnions.Count > 0)
+                            {
+                                // Select the best union (handles multiple unions scenario)
+                                var selectedUnion = SelectBestUnion(commonUnions);
+
+                                if (selectedUnion != null && !string.IsNullOrEmpty(selectedUnion.Id))
+                                {
+                                    // Extract numeric union ID (remove "union-" prefix if present)
+                                    var unionId = selectedUnion.Id.Replace("union-", string.Empty);
+                                    _logger.LogInformation("  Adding child to union {UnionId}", unionId);
+                                    createdProfile = await _profileClient.AddChildToUnionAsync(unionId, profileCreate);
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                _logger.LogInformation("  No common union found, will add to first parent only");
+                            }
+                        }
+
+                        // Fallback: add as child to first parent only
                         _logger.LogInformation("  Adding as child to {GeniId}", cleanGeniId);
                         createdProfile = await _profileClient.AddChildAsync(cleanGeniId, profileCreate);
                         break;
@@ -463,5 +507,128 @@ public class AddExecutor
 
         // Ensure g prefix
         return id.StartsWith('g') ? id : $"g{id}";
+    }
+
+    /// <summary>
+    /// Finds all common unions between two profiles (e.g., both parents of a child)
+    /// </summary>
+    /// <param name="profile1Id">First profile ID (Geni format)</param>
+    /// <param name="profile2Id">Second profile ID (Geni format)</param>
+    /// <returns>List of common unions found</returns>
+    private async Task<List<GeniUnion>> FindCommonUnionsAsync(string profile1Id, string profile2Id)
+    {
+        var commonUnions = new List<GeniUnion>();
+
+        try
+        {
+            _logger.LogDebug("  Looking for common unions between {Profile1} and {Profile2}", profile1Id, profile2Id);
+
+            // Get immediate family for first profile
+            var family = await _profileClient.GetImmediateFamilyAsync(profile1Id);
+            if (family?.Nodes == null)
+            {
+                _logger.LogDebug("  No family data found for {ProfileId}", profile1Id);
+                return commonUnions;
+            }
+
+            // Iterate through nodes looking for union nodes
+            foreach (var (nodeId, node) in family.Nodes)
+            {
+                // Skip non-union nodes
+                if (!nodeId.StartsWith("union-") || node.Union == null)
+                    continue;
+
+                var union = node.Union;
+
+                // Check if both profiles are partners in this union
+                var partners = union.Partners ?? new List<string>();
+
+                // Partner IDs might be in different formats, so we normalize them
+                var normalizedPartners = partners.Select(p => NormalizeProfileId(p)).ToList();
+                var normalizedProfile1 = NormalizeProfileId(profile1Id);
+                var normalizedProfile2 = NormalizeProfileId(profile2Id);
+
+                if (normalizedPartners.Contains(normalizedProfile1) && normalizedPartners.Contains(normalizedProfile2))
+                {
+                    _logger.LogDebug("  Found common union: {UnionId} (Status: {Status})",
+                        union.Id, union.Status ?? "active");
+                    commonUnions.Add(union);
+                }
+            }
+
+            if (commonUnions.Count == 0)
+            {
+                _logger.LogDebug("  No common unions found between {Profile1} and {Profile2}", profile1Id, profile2Id);
+            }
+
+            return commonUnions;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "  Error finding common unions between {Profile1} and {Profile2}", profile1Id, profile2Id);
+            return commonUnions;
+        }
+    }
+
+    /// <summary>
+    /// Selects the best union from multiple candidates
+    /// Prefers active unions (not divorced) over ex-spouse unions
+    /// </summary>
+    /// <param name="unions">List of candidate unions</param>
+    /// <returns>The selected union, or null if list is empty</returns>
+    private GeniUnion? SelectBestUnion(List<GeniUnion> unions)
+    {
+        if (unions.Count == 0)
+            return null;
+
+        if (unions.Count == 1)
+            return unions[0];
+
+        // Multiple unions found - log warning
+        _logger.LogWarning("  ⚠ Found {Count} unions between the same partners. Selecting best match...", unions.Count);
+
+        // Strategy: Prefer active unions over ex-spouse
+        var activeUnions = unions.Where(u =>
+            string.IsNullOrEmpty(u.Status) ||
+            !u.Status.Equals("ex_spouse", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (activeUnions.Count > 0)
+        {
+            var selectedUnion = activeUnions[0];
+            _logger.LogInformation("  Selected active union: {UnionId}", selectedUnion.Id);
+
+            if (activeUnions.Count > 1)
+            {
+                _logger.LogWarning("  ⚠ Multiple active unions found. Using first one: {UnionId}. " +
+                    "Consider manual review.", selectedUnion.Id);
+            }
+
+            return selectedUnion;
+        }
+
+        // All unions are ex-spouse - take the first one
+        var fallbackUnion = unions[0];
+        _logger.LogWarning("  All unions are ex-spouse. Using first one: {UnionId}. " +
+            "Consider manual review.", fallbackUnion.Id);
+        return fallbackUnion;
+    }
+
+    /// <summary>
+    /// Normalizes profile ID to a consistent format for comparison
+    /// Converts various formats (g123, profile-g123, profile-123) to just the numeric part
+    /// </summary>
+    private static string NormalizeProfileId(string profileId)
+    {
+        if (string.IsNullOrWhiteSpace(profileId))
+            return string.Empty;
+
+        // Remove common prefixes
+        var normalized = profileId
+            .Replace("profile-g", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("g", string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        return normalized;
     }
 }

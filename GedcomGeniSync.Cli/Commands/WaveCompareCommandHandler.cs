@@ -317,6 +317,13 @@ public class WaveCompareCommandHandler : IHostedCommand
                 sourceFamilyId = sourcePerson.ChildOfFamilyIds[0];
             }
 
+            // Skip profiles without first name AND last name - they cannot be meaningfully transferred
+            if (string.IsNullOrWhiteSpace(sourcePerson.FirstName) && string.IsNullOrWhiteSpace(sourcePerson.LastName))
+            {
+                // Skip silently at this stage - will be logged in AddExecutor if needed
+                continue;
+            }
+
             additions.Add(new NodeToAdd
             {
                 SourceId = sourcePerson.Id,
