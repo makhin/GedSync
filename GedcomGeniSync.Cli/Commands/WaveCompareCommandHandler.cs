@@ -177,7 +177,10 @@ public class WaveCompareCommandHandler : IHostedCommand
             logger.LogInformation("Validation Issues: {Issues}",
                 result.Statistics.ValidationIssuesCount);
 
-            const int highConfidenceThreshold = 90;
+            // Use interactive lowConfidenceThreshold for high-confidence relations
+            // This ensures consistency: if we trust a match enough to auto-accept it,
+            // we should also trust it enough to include in additionalRelations
+            int highConfidenceThreshold = config.Interactive.LowConfidenceThreshold;
             var fieldComparer = provider.GetRequiredService<IPersonFieldComparer>();
             var highConfidenceReport = BuildWaveReport(
                 result,
@@ -192,6 +195,18 @@ public class WaveCompareCommandHandler : IHostedCommand
                 "High-confidence report prepared: {ToUpdate} updates, {ToAdd} additions",
                 highConfidenceReport.Individuals.NodesToUpdate.Count,
                 highConfidenceReport.Individuals.NodesToAdd.Count);
+
+            // Check API for duplicates if enabled
+            if (config.WaveCompare.CheckApiBeforeAdd)
+            {
+                var mappingBySource = result.Mappings.ToDictionary(m => m.SourceId, m => m);
+                highConfidenceReport = await FilterDuplicatesViaApiAsync(
+                    highConfidenceReport,
+                    mappingBySource,
+                    config,
+                    provider,
+                    logger);
+            }
 
             var payload = new
             {
@@ -441,5 +456,137 @@ public class WaveCompareCommandHandler : IHostedCommand
             ResidenceAddress = person.ResidenceAddress ?? person.FormattedResidence,
             Notes = person.Notes
         };
+    }
+
+    /// <summary>
+    /// Filter out profiles that already exist on Geni by checking via API
+    /// </summary>
+    private static async Task<GedcomGeniSync.Core.Models.Wave.WaveHighConfidenceReport> FilterDuplicatesViaApiAsync(
+        GedcomGeniSync.Core.Models.Wave.WaveHighConfidenceReport report,
+        IReadOnlyDictionary<string, GedcomGeniSync.Core.Models.Wave.PersonMapping> mappingBySource,
+        GedSyncConfiguration config,
+        IServiceProvider provider,
+        ILogger logger)
+    {
+        var apiClient = provider.GetRequiredService<GedcomGeniSync.ApiClient.Services.Interfaces.IGeniProfileClient>();
+        var duplicateChecker = new Services.ApiDuplicateChecker(
+            apiClient,
+            provider.GetRequiredService<ILogger<Services.ApiDuplicateChecker>>(),
+            config.WaveCompare.ApiDuplicatesCacheFile);
+
+        logger.LogInformation("Checking {Count} profiles via Geni API for duplicates...",
+            report.Individuals.NodesToAdd.Count);
+
+        var filteredNodes = new List<NodeToAdd>();
+        var foundInApi = new List<GedcomGeniSync.Core.Models.Wave.ApiFoundProfile>();
+
+        foreach (var nodeToAdd in report.Individuals.NodesToAdd)
+        {
+            // Get Geni profile ID of the relative
+            if (!mappingBySource.TryGetValue(nodeToAdd.RelatedToNodeId, out var mapping))
+            {
+                logger.LogWarning(
+                    "Cannot verify {SourceId} - related profile {RelatedId} not found in mappings",
+                    nodeToAdd.SourceId,
+                    nodeToAdd.RelatedToNodeId);
+                filteredNodes.Add(nodeToAdd); // Keep if we can't verify
+                continue;
+            }
+
+            var geniProfileId = NormalizeProfileId(mapping.DestinationId);
+            if (string.IsNullOrEmpty(geniProfileId))
+            {
+                logger.LogWarning(
+                    "Cannot verify {SourceId} - invalid Geni ID for related profile",
+                    nodeToAdd.SourceId);
+                filteredNodes.Add(nodeToAdd); // Keep if we can't verify
+                continue;
+            }
+
+            // Check for duplicate via API
+            var duplicateResult = await duplicateChecker.CheckForDuplicateAsync(nodeToAdd, geniProfileId);
+            if (duplicateResult != null)
+            {
+                logger.LogInformation(
+                    "Skipping {SourceId} ({Name}) - duplicate found on Geni: {GeniId}",
+                    nodeToAdd.SourceId,
+                    $"{nodeToAdd.PersonData.FirstName} {nodeToAdd.PersonData.LastName}",
+                    duplicateResult.GeniProfileId);
+
+                // Add to list of profiles found in API
+                foundInApi.Add(new GedcomGeniSync.Core.Models.Wave.ApiFoundProfile
+                {
+                    SourceId = nodeToAdd.SourceId,
+                    SourcePersonSummary = CreatePersonSummary(nodeToAdd.PersonData),
+                    GeniProfileId = duplicateResult.GeniProfileId,
+                    GeniProfileName = duplicateResult.GeniProfileName,
+                    GeniProfileUrl = duplicateResult.GeniProfileUrl,
+                    RelationType = nodeToAdd.RelationType?.ToString(),
+                    FoundViaGeniId = duplicateResult.FoundViaGeniId
+                });
+            }
+            else
+            {
+                filteredNodes.Add(nodeToAdd);
+            }
+        }
+
+        logger.LogInformation(
+            "API duplicate check complete: {Kept} profiles kept, {Filtered} duplicates filtered out",
+            filteredNodes.Count,
+            foundInApi.Count);
+
+        // Return updated report with filtered nodes and found profiles
+        return report with
+        {
+            Individuals = report.Individuals with
+            {
+                NodesToAdd = filteredNodes.ToImmutableList(),
+                ProfilesFoundInApi = foundInApi.ToImmutableList()
+            }
+        };
+    }
+
+    /// <summary>
+    /// Create a person summary string from PersonData
+    /// </summary>
+    private static string CreatePersonSummary(PersonData personData)
+    {
+        var name = $"{personData.FirstName} {personData.LastName}".Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            name = "(no name)";
+
+        var parts = new List<string> { name };
+
+        if (personData.BirthDate != null || personData.BirthPlace != null)
+        {
+            var birth = personData.BirthDate ?? personData.BirthPlace ?? "";
+            parts.Add($"b. {birth}");
+        }
+
+        if (personData.DeathDate != null || personData.DeathPlace != null)
+        {
+            var death = personData.DeathDate ?? personData.DeathPlace ?? "";
+            parts.Add($"d. {death}");
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>
+    /// Normalize Geni profile ID from various formats to just the numeric ID
+    /// </summary>
+    private static string NormalizeProfileId(string? profileId)
+    {
+        if (string.IsNullOrWhiteSpace(profileId))
+            return string.Empty;
+
+        // Remove "geni:" prefix if present
+        var normalized = profileId.Replace("geni:", "", StringComparison.OrdinalIgnoreCase);
+
+        // Remove @ symbols if present (from GEDCOM IDs)
+        normalized = normalized.Replace("@", "").Replace("I", "");
+
+        return normalized;
     }
 }

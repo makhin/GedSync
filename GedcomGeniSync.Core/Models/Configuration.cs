@@ -317,6 +317,20 @@ public class WaveCompareConfig
     /// </summary>
     [JsonPropertyName("resolveConflicts")]
     public bool ResolveConflicts { get; set; } = false;
+
+    /// <summary>
+    /// Check Geni API before adding profiles to prevent duplicates (default: false)
+    /// When enabled, queries Geni API to verify profile doesn't already exist before adding to nodesToAdd
+    /// </summary>
+    [JsonPropertyName("checkApiBeforeAdd")]
+    public bool CheckApiBeforeAdd { get; set; } = false;
+
+    /// <summary>
+    /// Path to cache file for API duplicate check results (default: "api-duplicates-cache.json")
+    /// Caches results to avoid repeated API calls for the same profiles
+    /// </summary>
+    [JsonPropertyName("apiDuplicatesCacheFile")]
+    public string ApiDuplicatesCacheFile { get; set; } = "api-duplicates-cache.json";
 }
 
 /// <summary>

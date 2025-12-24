@@ -248,4 +248,36 @@ public record WaveIndividualsReport
 
     /// <summary>Nodes to add to destination tree</summary>
     public required System.Collections.Immutable.ImmutableList<GedcomGeniSync.Models.NodeToAdd> NodesToAdd { get; init; }
+
+    /// <summary>Profiles found in Geni API but not present in GEDCOM file (prevented duplicates)</summary>
+    public System.Collections.Immutable.ImmutableList<ApiFoundProfile> ProfilesFoundInApi { get; init; } =
+        System.Collections.Immutable.ImmutableList<ApiFoundProfile>.Empty;
+}
+
+/// <summary>
+/// Profile found in Geni API that prevented adding a duplicate.
+/// Represents a profile that exists on Geni.com but is not present in the exported GEDCOM file.
+/// </summary>
+public record ApiFoundProfile
+{
+    /// <summary>Source ID from GEDCOM that would have been added</summary>
+    public required string SourceId { get; init; }
+
+    /// <summary>Source person summary (name, birth/death)</summary>
+    public required string SourcePersonSummary { get; init; }
+
+    /// <summary>Geni profile ID that was found via API</summary>
+    public required string GeniProfileId { get; init; }
+
+    /// <summary>Geni profile name</summary>
+    public required string GeniProfileName { get; init; }
+
+    /// <summary>Geni profile URL for easy access</summary>
+    public string? GeniProfileUrl { get; init; }
+
+    /// <summary>Relation type through which the duplicate was found</summary>
+    public string? RelationType { get; init; }
+
+    /// <summary>Geni ID of the relative through which this profile was found</summary>
+    public required string FoundViaGeniId { get; init; }
 }
