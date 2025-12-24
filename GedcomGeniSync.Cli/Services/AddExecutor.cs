@@ -668,19 +668,47 @@ public class AddExecutor
     }
 
     /// <summary>
-    /// Normalizes profile ID to a consistent format for comparison
-    /// Converts various formats (g123, profile-g123, profile-123) to just the numeric part
+    /// Normalizes profile ID to a consistent format for comparison.
+    /// Handles various formats:
+    /// - Full URL: https://www.geni.com/api/profile-34828568625 → 34828568625
+    /// - Prefixed: profile-g34828568625, profile-34828568625 → 34828568625
+    /// - Short: g34828568625 → 34828568625
+    /// - Numeric: 34828568625 → 34828568625
     /// </summary>
-    private static string NormalizeProfileId(string profileId)
+    internal static string NormalizeProfileId(string profileId)
     {
         if (string.IsNullOrWhiteSpace(profileId))
             return string.Empty;
 
-        // Remove common prefixes
-        var normalized = profileId
-            .Replace("profile-g", string.Empty, StringComparison.OrdinalIgnoreCase)
-            .Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase)
-            .Replace("g", string.Empty, StringComparison.OrdinalIgnoreCase);
+        var normalized = profileId;
+
+        // Handle full URL format: https://www.geni.com/api/profile-34828568625
+        if (normalized.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            var lastSlash = normalized.LastIndexOf('/');
+            if (lastSlash >= 0)
+            {
+                normalized = normalized[(lastSlash + 1)..];
+            }
+        }
+
+        // Remove "profile-g" prefix (must be before "profile-" to avoid partial match)
+        if (normalized.StartsWith("profile-g", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[9..]; // Length of "profile-g"
+        }
+        // Remove "profile-" prefix
+        else if (normalized.StartsWith("profile-", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[8..]; // Length of "profile-"
+        }
+
+        // Remove leading 'g' prefix (not all 'g' characters!)
+        if (normalized.StartsWith('g') || normalized.StartsWith('G'))
+        {
+            normalized = normalized[1..];
+        }
 
         return normalized;
     }
