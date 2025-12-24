@@ -27,6 +27,7 @@ public class AddCommandHandler : IHostedCommand
     private readonly Option<bool> _syncPhotosOption = new("--sync-photos", () => true, description: "Upload photos from MyHeritage");
     private readonly Option<int> _maxDepthOption = new("--max-depth", () => int.MaxValue, description: "Maximum depth from existing nodes to add");
     private readonly Option<bool> _resumeOption = new("--resume", () => false, description: "Resume from previous progress");
+    private readonly Option<bool> _interactiveOption = new("--interactive", () => false, description: "Prompt for confirmation before each add/update operation");
 
     public AddCommandHandler(Startup startup)
     {
@@ -45,6 +46,7 @@ public class AddCommandHandler : IHostedCommand
         addCommand.AddOption(_syncPhotosOption);
         addCommand.AddOption(_maxDepthOption);
         addCommand.AddOption(_resumeOption);
+        addCommand.AddOption(_interactiveOption);
 
         addCommand.SetHandler(HandleAsync);
         return addCommand;
@@ -61,12 +63,18 @@ public class AddCommandHandler : IHostedCommand
         var verbose = parseResult.GetValueForOption(_verboseOption);
         var syncPhotos = parseResult.GetValueForOption(_syncPhotosOption);
         var maxDepth = parseResult.GetValueForOption(_maxDepthOption);
+        var interactive = parseResult.GetValueForOption(_interactiveOption);
 
         var accessToken = new Lazy<string>(() => AccessTokenResolver.ResolveFromFile(tokenFile));
 
         await using var scope = _startup.CreateScope(verbose, services =>
         {
             services.AddSingleton<WaveReportLoader>();
+
+            services.AddSingleton<InteractiveConfirmationService>(sp =>
+                new InteractiveConfirmationService(
+                    interactive,
+                    sp.GetRequiredService<ILogger<InteractiveConfirmationService>>()));
 
             services.AddSingleton<IGeniProfileClient>(sp =>
             {
@@ -168,6 +176,7 @@ public class AddCommandHandler : IHostedCommand
             var profileClient = provider.GetRequiredService<IGeniProfileClient>();
             var photoClient = provider.GetRequiredService<IGeniPhotoClient>();
             var photoService = provider.GetRequiredService<IPhotoDownloadService>();
+            var confirmationService = provider.GetRequiredService<InteractiveConfirmationService>();
 
             var addService = new AddExecutor(
                 profileClient,
@@ -176,6 +185,7 @@ public class AddCommandHandler : IHostedCommand
                 provider.GetService<GedcomGeniSync.Services.Photo.IPhotoCacheService>(),
                 gedcomResult,
                 logger,
+                confirmationService,
                 progressTracker,
                 inputPath);
 

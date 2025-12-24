@@ -19,6 +19,7 @@ public class AddExecutor
     private readonly IPhotoCacheService? _photoCacheService;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
+    private readonly InteractiveConfirmationService _confirmationService;
     private readonly ProgressTracker? _progressTracker;
     private readonly string? _inputFile;
 
@@ -29,6 +30,7 @@ public class AddExecutor
         IPhotoCacheService? photoCacheService,
         GedcomLoadResult gedcom,
         ILogger logger,
+        InteractiveConfirmationService confirmationService,
         ProgressTracker? progressTracker = null,
         string? inputFile = null)
     {
@@ -38,6 +40,7 @@ public class AddExecutor
         _photoCacheService = photoCacheService;
         _gedcom = gedcom;
         _logger = logger;
+        _confirmationService = confirmationService;
         _progressTracker = progressTracker;
         _inputFile = inputFile;
     }
@@ -150,6 +153,50 @@ public class AddExecutor
 
                 // Map PersonData to GeniProfileCreate
                 var profileCreate = MapToGeniProfileCreate(node.PersonData);
+
+                // Interactive confirmation if enabled
+                if (_confirmationService.IsEnabled)
+                {
+                    // Prepare primary relative info
+                    var primaryRelative = CreateRelativeInfo(
+                        node.RelatedToNodeId,
+                        relatedGeniId,
+                        null);
+
+                    // Prepare additional relatives info
+                    var additionalRelatives = new List<RelativeInfo>();
+                    foreach (var additionalRel in node.AdditionalRelations)
+                    {
+                        if (profileMap.TryGetValue(additionalRel.RelatedToNodeId, out var additionalGeniId))
+                        {
+                            var relInfo = CreateRelativeInfo(
+                                additionalRel.RelatedToNodeId,
+                                additionalGeniId,
+                                additionalRel.RelationType.ToString());
+                            additionalRelatives.Add(relInfo);
+                        }
+                    }
+
+                    var confirmation = _confirmationService.ConfirmAddProfile(
+                        node.SourceId,
+                        node.PersonData,
+                        node.RelationType?.ToString() ?? "Unknown",
+                        primaryRelative,
+                        additionalRelatives.Count > 0 ? additionalRelatives : null);
+
+                    if (confirmation == ConfirmationResult.Skipped)
+                    {
+                        _logger.LogWarning("  User skipped adding profile {SourceId}", node.SourceId);
+                        result.Skipped++;
+                        continue;
+                    }
+
+                    if (confirmation == ConfirmationResult.Aborted)
+                    {
+                        _logger.LogWarning("⊘ Operation aborted by user");
+                        throw new OperationCanceledException("Operation aborted by user");
+                    }
+                }
 
                 // Create profile using appropriate API
                 GeniProfile? createdProfile = null;
@@ -784,5 +831,30 @@ public class AddExecutor
                     node.SourceId, spouseId);
             }
         }
+    }
+
+    /// <summary>
+    /// Creates RelativeInfo for display in interactive confirmation
+    /// </summary>
+    private RelativeInfo CreateRelativeInfo(string sourceId, string geniId, string? relationType)
+    {
+        var relativePerson = _gedcom.Persons.GetValueOrDefault(sourceId);
+        var name = relativePerson != null
+            ? $"{relativePerson.FirstName} {relativePerson.MiddleName} {relativePerson.LastName}".Trim()
+            : sourceId;
+
+        // Add birth year if available for better identification
+        if (relativePerson?.BirthDate != null)
+        {
+            name += $" (b. {relativePerson.BirthDate})";
+        }
+
+        return new RelativeInfo
+        {
+            SourceId = sourceId,
+            GeniId = geniId,
+            Name = name,
+            RelationType = relationType
+        };
     }
 }
