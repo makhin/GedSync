@@ -32,6 +32,26 @@ public static class PhotoSourceDetector
 
     public static bool IsGeniUrl(string url) => IsHostMatch(url, GeniHosts);
 
+    /// <summary>
+    /// Normalizes a URL for use as a cache key.
+    /// For Geni URLs, removes the hash query parameter since the same file can have different hash values.
+    /// </summary>
+    public static string NormalizeCacheKey(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return url;
+
+        if (!IsGeniUrl(url))
+            return url;
+
+        // For Geni URLs, remove query string (contains hash that changes)
+        // Example: https://media.geni.com/.../file.jpg?hash=abc.123 -> https://media.geni.com/.../file.jpg
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return url;
+
+        return uri.GetLeftPart(UriPartial.Path);
+    }
+
     private static bool IsHostMatch(string url, IEnumerable<string> hosts)
     {
         if (string.IsNullOrWhiteSpace(url))

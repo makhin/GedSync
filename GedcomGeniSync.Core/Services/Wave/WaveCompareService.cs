@@ -199,13 +199,6 @@ public class WaveCompareService
 
             _logger.LogDebug("Processing person {PersonId} at level {Level}", currentSourceId, level);
 
-            // Проверяем ограничение глубины
-            if (level >= options.MaxLevel)
-            {
-                _logger.LogDebug("Reached max level {MaxLevel}, stopping expansion", options.MaxLevel);
-                continue;
-            }
-
             // Проверяем, сопоставлена ли персона
             if (!mappings.ContainsKey(currentSourceId))
             {

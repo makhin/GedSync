@@ -42,6 +42,16 @@ public interface IPhotoCacheService
     void UpdateEntry(string url, string? contentHash, string? perceptualHash);
 
     /// <summary>
+    /// Record that two photos have been matched.
+    /// </summary>
+    void RecordMatch(string sourceUrl, string destinationUrl);
+
+    /// <summary>
+    /// Check if a photo has already been matched with a specific destination.
+    /// </summary>
+    bool IsAlreadyMatched(string sourceUrl, string destinationUrl);
+
+    /// <summary>
     /// Persist cache index to disk.
     /// </summary>
     Task SaveIndexAsync();

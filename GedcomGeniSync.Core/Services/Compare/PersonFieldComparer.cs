@@ -41,7 +41,7 @@ public class PersonFieldComparer : IPersonFieldComparer
         // Compare name fields
         CompareStringField(differences, "FirstName", source.FirstName, destination.FirstName);
         CompareStringField(differences, "LastName", source.LastName, destination.LastName);
-        CompareStringField(differences, "MaidenName", source.MaidenName, destination.MaidenName);
+        CompareMaidenName(differences, source, destination);
         CompareStringField(differences, "MiddleName", source.MiddleName, destination.MiddleName);
         CompareStringField(differences, "Nickname", source.Nickname, destination.Nickname);
         CompareStringField(differences, "Suffix", source.Suffix, destination.Suffix);
@@ -94,6 +94,46 @@ public class PersonFieldComparer : IPersonFieldComparer
             _logger.LogDebug("Field difference found: {FieldName} - source has value, destination is empty",
                 fieldName);
         }
+    }
+
+    private void CompareMaidenName(
+        ImmutableList<FieldDiff>.Builder differences,
+        PersonRecord source,
+        PersonRecord destination)
+    {
+        // Only add difference if source has maiden name and destination doesn't
+        if (string.IsNullOrWhiteSpace(source.MaidenName))
+        {
+            return; // Source has no maiden name, nothing to add
+        }
+
+        if (!string.IsNullOrWhiteSpace(destination.MaidenName))
+        {
+            return; // Destination already has maiden name, nothing to add
+        }
+
+        // Source has maiden name, destination doesn't
+        // Check if destination's LastName matches source's MaidenName
+        // This happens when destination has maiden name in SURN field but no _MARNM
+        if (!string.IsNullOrWhiteSpace(destination.LastName) &&
+            source.MaidenName.Trim().Equals(destination.LastName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogDebug(
+                "Maiden name '{MaidenName}' found in destination's LastName, not adding as difference",
+                source.MaidenName);
+            return; // Maiden name already exists in destination.LastName
+        }
+
+        // Source has maiden name, destination doesn't have it anywhere
+        differences.Add(new FieldDiff
+        {
+            FieldName = "MaidenName",
+            SourceValue = source.MaidenName.Trim(),
+            DestinationValue = null,
+            Action = FieldAction.Add
+        });
+
+        _logger.LogDebug("Field difference found: MaidenName - source has value, destination is empty");
     }
 
     private void CompareDateField(

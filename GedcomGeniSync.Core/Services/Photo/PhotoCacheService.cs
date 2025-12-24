@@ -51,10 +51,11 @@ public class PhotoCacheService : IPhotoCacheService
         if (string.IsNullOrWhiteSpace(url))
             return false;
 
+        var cacheKey = PhotoSourceDetector.NormalizeCacheKey(url);
         PhotoCacheEntry? entry;
         lock (_indexSync)
         {
-            _index.Entries.TryGetValue(url, out entry);
+            _index.Entries.TryGetValue(cacheKey, out entry);
         }
 
         if (entry == null)
@@ -69,13 +70,14 @@ public class PhotoCacheService : IPhotoCacheService
         if (string.IsNullOrWhiteSpace(url))
             return null;
 
+        var cacheKey = PhotoSourceDetector.NormalizeCacheKey(url);
         lock (_indexSync)
         {
-            if (!_index.Entries.TryGetValue(url, out var entry))
+            if (!_index.Entries.TryGetValue(cacheKey, out var entry))
                 return null;
 
             var updated = entry with { LastAccessedAt = DateTime.UtcNow };
-            _index.Entries[url] = updated;
+            _index.Entries[cacheKey] = updated;
             return updated;
         }
     }
@@ -131,14 +133,15 @@ public class PhotoCacheService : IPhotoCacheService
         if (string.IsNullOrWhiteSpace(url))
             return null;
 
+        var cacheKey = PhotoSourceDetector.NormalizeCacheKey(url);
         PhotoCacheEntry? entry;
         lock (_indexSync)
         {
-            if (!_index.Entries.TryGetValue(url, out entry))
+            if (!_index.Entries.TryGetValue(cacheKey, out entry))
                 return null;
 
             var updated = entry with { LastAccessedAt = DateTime.UtcNow };
-            _index.Entries[url] = updated;
+            _index.Entries[cacheKey] = updated;
             entry = updated;
         }
 
@@ -170,9 +173,10 @@ public class PhotoCacheService : IPhotoCacheService
         if (string.IsNullOrWhiteSpace(url))
             return;
 
+        var cacheKey = PhotoSourceDetector.NormalizeCacheKey(url);
         lock (_indexSync)
         {
-            if (!_index.Entries.TryGetValue(url, out var entry))
+            if (!_index.Entries.TryGetValue(cacheKey, out var entry))
                 return;
 
             var updated = entry with
@@ -181,8 +185,69 @@ public class PhotoCacheService : IPhotoCacheService
                 PerceptualHash = perceptualHash ?? entry.PerceptualHash
             };
 
-            _index.Entries[url] = updated;
+            _index.Entries[cacheKey] = updated;
         }
+    }
+
+    public void RecordMatch(string sourceUrl, string destinationUrl)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUrl) || string.IsNullOrWhiteSpace(destinationUrl))
+            return;
+
+        var sourceCacheKey = PhotoSourceDetector.NormalizeCacheKey(sourceUrl);
+        var destCacheKey = PhotoSourceDetector.NormalizeCacheKey(destinationUrl);
+        var now = DateTime.UtcNow;
+
+        lock (_indexSync)
+        {
+            // Update source entry with match info
+            if (_index.Entries.TryGetValue(sourceCacheKey, out var sourceEntry))
+            {
+                var updated = sourceEntry with
+                {
+                    MatchedWithUrl = destCacheKey,
+                    MatchedAt = now
+                };
+                _index.Entries[sourceCacheKey] = updated;
+            }
+
+            // Update destination entry with match info (bidirectional)
+            if (_index.Entries.TryGetValue(destCacheKey, out var destEntry))
+            {
+                var updated = destEntry with
+                {
+                    MatchedWithUrl = sourceCacheKey,
+                    MatchedAt = now
+                };
+                _index.Entries[destCacheKey] = updated;
+            }
+        }
+    }
+
+    public bool IsAlreadyMatched(string sourceUrl, string destinationUrl)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUrl) || string.IsNullOrWhiteSpace(destinationUrl))
+            return false;
+
+        var sourceCacheKey = PhotoSourceDetector.NormalizeCacheKey(sourceUrl);
+        var destCacheKey = PhotoSourceDetector.NormalizeCacheKey(destinationUrl);
+
+        lock (_indexSync)
+        {
+            if (_index.Entries.TryGetValue(sourceCacheKey, out var sourceEntry))
+            {
+                if (string.Equals(sourceEntry.MatchedWithUrl, destCacheKey, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            if (_index.Entries.TryGetValue(destCacheKey, out var destEntry))
+            {
+                if (string.Equals(destEntry.MatchedWithUrl, sourceCacheKey, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     public async Task SaveIndexAsync()
@@ -242,7 +307,8 @@ public class PhotoCacheService : IPhotoCacheService
         if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(personId))
             return null;
 
-        var cached = GetCachedEntryIfPresent(url, personId);
+        var cacheKey = PhotoSourceDetector.NormalizeCacheKey(url);
+        var cached = GetCachedEntryIfPresent(cacheKey, personId);
         if (cached != null)
         {
             // If same URL is used by multiple persons, create a person-specific entry pointing to same file
@@ -269,8 +335,8 @@ public class PhotoCacheService : IPhotoCacheService
 
                 lock (_indexSync)
                 {
-                    // Store under composite key: url|personId
-                    _index.Entries[$"{url}|{personId}"] = personEntry;
+                    // Store under composite key: cacheKey|personId
+                    _index.Entries[$"{cacheKey}|{personId}"] = personEntry;
                 }
 
                 return personEntry;
@@ -296,7 +362,7 @@ public class PhotoCacheService : IPhotoCacheService
         var now = DateTime.UtcNow;
         var entry = new PhotoCacheEntry
         {
-            Url = url,
+            Url = cacheKey, // Store normalized URL
             LocalPath = relativePath,
             PersonId = personId,
             Source = source,
@@ -309,7 +375,7 @@ public class PhotoCacheService : IPhotoCacheService
 
         lock (_indexSync)
         {
-            _index.Entries[url] = entry;
+            _index.Entries[cacheKey] = entry;
         }
 
         if (saveIndex)
@@ -320,25 +386,25 @@ public class PhotoCacheService : IPhotoCacheService
         return entry;
     }
 
-    private PhotoCacheEntry? GetCachedEntryIfPresent(string url, string? personId = null)
+    private PhotoCacheEntry? GetCachedEntryIfPresent(string cacheKey, string? personId = null)
     {
         lock (_indexSync)
         {
-            // First try composite key url|personId if personId provided
+            // First try composite key cacheKey|personId if personId provided
             if (!string.IsNullOrWhiteSpace(personId) &&
-                _index.Entries.TryGetValue($"{url}|{personId}", out var personEntry))
+                _index.Entries.TryGetValue($"{cacheKey}|{personId}", out var personEntry))
             {
                 var personFullPath = ResolveLocalPath(personEntry.LocalPath);
                 if (File.Exists(personFullPath))
                 {
                     var updatedPerson = personEntry with { LastAccessedAt = DateTime.UtcNow };
-                    _index.Entries[$"{url}|{personId}"] = updatedPerson;
+                    _index.Entries[$"{cacheKey}|{personId}"] = updatedPerson;
                     return updatedPerson;
                 }
             }
 
-            // Fall back to URL-only key
-            if (!_index.Entries.TryGetValue(url, out var entry))
+            // Fall back to cacheKey-only key
+            if (!_index.Entries.TryGetValue(cacheKey, out var entry))
                 return null;
 
             var fullPath = ResolveLocalPath(entry.LocalPath);
@@ -346,7 +412,7 @@ public class PhotoCacheService : IPhotoCacheService
                 return null;
 
             var updated = entry with { LastAccessedAt = DateTime.UtcNow };
-            _index.Entries[url] = updated;
+            _index.Entries[cacheKey] = updated;
             return updated;
         }
     }

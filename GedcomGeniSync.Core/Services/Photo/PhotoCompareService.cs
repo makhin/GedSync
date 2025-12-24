@@ -61,10 +61,21 @@ public class PhotoCompareService : IPhotoCompareService
 
         foreach (var source in sourceSignatures)
         {
+            // Check if this source photo is already matched with any destination photo
+            var previousMatch = FindPreviouslyMatchedDestination(source, destinationPool);
+            if (previousMatch != null)
+            {
+                matched.Add(CreateResult(source, previousMatch, 1.0, true, "Previously matched (cached)"));
+                destinationPool.Remove(previousMatch);
+                _logger.LogDebug("Skipping comparison for {Url} - already matched", source.Entry.Url);
+                continue;
+            }
+
             var exactMatch = FindExactMatch(source, destinationPool);
             if (exactMatch != null)
             {
                 matched.Add(CreateResult(source, exactMatch, 1.0, true, "Content hash match"));
+                _photoCacheService.RecordMatch(source.Entry.Url, exactMatch.Entry.Url);
                 destinationPool.Remove(exactMatch);
                 continue;
             }
@@ -74,6 +85,8 @@ public class PhotoCompareService : IPhotoCompareService
             {
                 similar.Add(CreateResult(source, bestSimilar.Value.Signature, bestSimilar.Value.Similarity, false,
                     "Perceptual hash similarity"));
+                // Also record similar matches to avoid re-comparing
+                _photoCacheService.RecordMatch(source.Entry.Url, bestSimilar.Value.Signature.Entry.Url);
                 destinationPool.Remove(bestSimilar.Value.Signature);
                 continue;
             }
@@ -81,7 +94,7 @@ public class PhotoCompareService : IPhotoCompareService
             newPhotos.Add(source.Entry);
         }
 
-        // Save cache index if any hashes were computed
+        // Save cache index if any hashes were computed or matches recorded
         await _photoCacheService.SaveIndexAsync().ConfigureAwait(false);
 
         return new PhotoCompareReport
@@ -173,6 +186,20 @@ public class PhotoCompareService : IPhotoCompareService
         return contentHash != null || perceptualHash.HasValue
             ? new PhotoSignature(entry, contentHash, perceptualHash)
             : null;
+    }
+
+    private PhotoSignature? FindPreviouslyMatchedDestination(
+        PhotoSignature source,
+        List<PhotoSignature> candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (_photoCacheService.IsAlreadyMatched(source.Entry.Url, candidate.Entry.Url))
+            {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private static PhotoSignature? FindExactMatch(

@@ -56,6 +56,23 @@ public class WaveMappingValidator
         }
 
         // ═══════════════════════════════════════════════════════════
+        // 0. Проверка минимальной информации (имя или фамилия)
+        // ═══════════════════════════════════════════════════════════
+        if (string.IsNullOrWhiteSpace(sourcePerson.FirstName) &&
+            string.IsNullOrWhiteSpace(sourcePerson.LastName))
+        {
+            issues.Add(new ValidationIssue
+            {
+                Severity = Severity.High,
+                Type = IssueType.InvalidSourceId,
+                SourceId = newMapping.SourceId,
+                DestId = newMapping.DestinationId,
+                Message = $"Source person {newMapping.SourceId} has no first name or last name - insufficient information for matching"
+            });
+            return new ValidationResult { IsValid = false, Issues = issues };
+        }
+
+        // ═══════════════════════════════════════════════════════════
         // 1. Проверка пола
         // ═══════════════════════════════════════════════════════════
         if (sourcePerson.Gender != destPerson.Gender &&
