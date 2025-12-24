@@ -13,6 +13,7 @@
 9. [Улучшение 8: Фонетическое сопоставление](#9-улучшение-8-фонетическое-сопоставление)
 10. [Улучшение 9: Машинное обучение](#10-улучшение-9-машинное-обучение)
 11. [План реализации по фазам](#11-план-реализации-по-фазам)
+12. [Готовые библиотеки и решения](#12-готовые-библиотеки-и-решения)
 
 ---
 
@@ -2210,6 +2211,102 @@ public class MatchingFeedbackStore
 |---|-----------|-------|-----------|
 | 8 | Фонетическое сопоставление | SlavicSoundex.cs | Средняя |
 | 9 | ML обучение на обратной связи | MatchingFeedback*.cs | Высокая |
+
+---
+
+## 12. Готовые библиотеки и решения
+
+### 12.1 Транслитерация (Улучшение 4)
+
+| Пакет | Описание | Установка |
+|-------|----------|-----------|
+| **[NickBuhro.Translit](https://github.com/nick-buhro/Translit)** | GOST 7.79-2000 (ISO 9), двунаправленная, RU/UA/BY/BG/MK. 1000+ тестов, без зависимостей | `dotnet add package NickBuhro.Translit` |
+| [Cyrillic.Convert](https://github.com/bajceticnenad/Cyrillic.Convert) | 10 языков включая грузинский, армянский, казахский | `dotnet add package Cyrillic.Convert` |
+
+**Рекомендация:** `NickBuhro.Translit` - покрывает все славянские языки по стандарту GOST.
+
+### 12.2 Фонетическое сопоставление (Улучшение 8)
+
+| Пакет | Алгоритмы | Установка |
+|-------|-----------|-----------|
+| **[Lucene.Net.Analysis.Phonetic](https://www.nuget.org/packages/Lucene.Net.Analysis.Phonetic/)** | Soundex, Double Metaphone, **Beider-Morse**, Cologne, NYSIIS | `dotnet add package Lucene.Net.Analysis.Phonetic` |
+| [Phonix](https://github.com/eldersantos/phonix) | Double Metaphone, Soundex, Caverphone, Match Rating | `dotnet add package Phonix` |
+| [TwinFinder.Nuget](https://www.nuget.org/packages/TwinFinder.Nuget) | Фонетика + метрики (Levenshtein, Jaccard, Jaro-Winkler) | `dotnet add package TwinFinder.Nuget` |
+
+**Рекомендация:** `Lucene.Net.Analysis.Phonetic` содержит **Beider-Morse** - алгоритм специально разработанный для славянских/еврейских имён. Он учитывает:
+- Женские формы фамилий (Novikova ↔ Novikov)
+- 16 языков включая русский, польский, чешский
+- Final devoicing (озвончение в славянских языках)
+
+### 12.3 Fuzzy-matching строк
+
+| Пакет | Описание | Установка |
+|-------|----------|-----------|
+| **[FuzzySharp](https://github.com/JakeBayer/FuzzySharp)** | Порт FuzzyWuzzy, Ratio/PartialRatio/TokenSort | `dotnet add package FuzzySharp` |
+| [FuzzyString](https://www.nuget.org/packages/FuzzyString) | 11 алгоритмов: Jaro-Winkler, Levenshtein, Jaccard и др. | `dotnet add package FuzzyString` |
+| [String.Similarity](https://www.nuget.org/packages/String.Similarity) | Десяток алгоритмов сходства строк | `dotnet add package String.Similarity` |
+
+### 12.4 Парсинг GEDCOM-дат (Улучшение 7)
+
+| Источник | Описание | Лицензия |
+|----------|----------|----------|
+| **[GeneGenie.Gedcom](https://github.com/TheGeneGenieProject/GeneGenie.Gedcom)** | Полный парсер дат с поддержкой ABT/BEF/AFT/BET, календарей, CalculateSimilarityScore() | AGPL-3.0 |
+| [GedcomParser](https://github.com/jaklithn/GedcomParser) | Простой парсер GEDCOM в POCO | MIT |
+
+**Примечание:** GeneGenie.Gedcom содержит готовый `CalculateSimilarityScore()` для дат, но лицензия AGPL-3.0 требует открытия исходного кода.
+
+### 12.5 Географическое сопоставление (Улучшение 3)
+
+| Источник | Описание |
+|----------|----------|
+| **[GeoNames API](https://www.geonames.org/)** | 25+ млн географических названий, fuzzy-поиск, иерархия мест |
+| [GeoFinder](https://github.com/corb555/GeoFinder) | Специально для генеалогии - кладбища, исторические места |
+| [Historic Gazetteer](https://gov.genealogy.net/) | Исторические немецкие названия мест (genealogy.net) |
+
+### 12.6 Словарь имён (Улучшение 2)
+
+| Источник | Описание |
+|----------|----------|
+| **[Behind the Name API](https://www.behindthename.com/api/)** | API для вариантов имён. В среднем 32 варианта на имя |
+| [tfmorris/Names](https://github.com/tfmorris/Names) | Готовая база `givenname_behindthename.txt` с вариантами |
+| [Wiktionary: Slavic surnames](https://en.wiktionary.org/wiki/Appendix:Slavic_surnames) | Кросс-ссылки между вариантами фамилий |
+
+### 12.7 Машинное обучение (Улучшение 9)
+
+| Пакет | Описание | Установка |
+|-------|----------|-----------|
+| **[ML.NET](https://dotnet.microsoft.com/apps/machinelearning-ai/ml-dotnet)** | Binary/Multiclass classification, AutoML | `dotnet add package Microsoft.ML` |
+| [ML.NET Model Builder](https://marketplace.visualstudio.com/items?itemName=MLNET.07) | Visual Studio extension для AutoML | VS Extension |
+
+### 12.8 Что использовать готовое vs писать самим
+
+| Улучшение | Готовое решение | Писать самим |
+|-----------|-----------------|--------------|
+| 1. Женские формы фамилий | Beider-Morse в Lucene.Net | SurnameNormalizer (простой) |
+| 2. Словарь имён | Behind the Name API / tfmorris/Names | Загрузчик CSV |
+| 3. Географическое сопоставление | GeoNames API | PlaceNormalizer (обёртка) |
+| 4. Транслитерация | **NickBuhro.Translit** | — |
+| 5. Контекстные бонусы | — | FamilyContextScorer |
+| 6. Многопроходное сопоставление | — | MultiPassMatcher |
+| 7. Обработка дат | GeneGenie (AGPL) или своё | DateComparer |
+| 8. Фонетика | **Beider-Morse в Lucene.Net** | — |
+| 9. ML | **ML.NET** | MatchingFeedbackStore |
+
+### 12.9 Рекомендуемый минимальный набор пакетов
+
+```bash
+# Транслитерация - готовое решение
+dotnet add package NickBuhro.Translit
+
+# Фонетика с Beider-Morse для славянских имён
+dotnet add package Lucene.Net.Analysis.Phonetic
+
+# Fuzzy-matching
+dotnet add package FuzzySharp
+
+# ML (для фазы D)
+dotnet add package Microsoft.ML
+```
 
 ---
 
