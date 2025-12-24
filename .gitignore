@@ -32,3 +32,6 @@ Thumbs.db
 
 .fake
 /photos
+/backup
+/*.ged
+/geni_token.json
