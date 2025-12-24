@@ -2248,12 +2248,30 @@ public class MatchingFeedbackStore
 
 ### 12.4 Парсинг GEDCOM-дат (Улучшение 7)
 
-| Источник | Описание | Лицензия |
-|----------|----------|----------|
-| **[GeneGenie.Gedcom](https://github.com/TheGeneGenieProject/GeneGenie.Gedcom)** | Полный парсер дат с поддержкой ABT/BEF/AFT/BET, календарей, CalculateSimilarityScore() | AGPL-3.0 |
-| [GedcomParser](https://github.com/jaklithn/GedcomParser) | Простой парсер GEDCOM в POCO | MIT |
+**✅ Парсинг уже решён в проекте!**
 
-**Примечание:** GeneGenie.Gedcom содержит готовый `CalculateSimilarityScore()` для дат, но лицензия AGPL-3.0 требует открытия исходного кода.
+Проект использует **[Gedcom.Net.SDK](https://www.nuget.org/packages/Gedcom.Net.SDK)** (Patagames), который полностью покрывает парсинг дат:
+
+```csharp
+using Patagames.GedcomNetSdk.Dates;
+
+// Поддерживаемые типы дат в SDK:
+// DateExact, Date           — точные даты
+// DateAbout, DateEstimated  — ABT, EST
+// DateCalculate             — CAL
+// DateBefore, DateAfter     — BEF, AFT
+// DateBetween, DateFromTo   — BET...AND, FROM...TO
+// DatePhrase                — текстовые даты с интерпретацией
+```
+
+Парсинг уже работает в `GedcomLoader.ConvertDate()` — см. строки 1088-1241.
+
+**Что нужно дописать:** только `DateComparer` — логику сравнения и расчёта similarity между двумя распарсенными датами.
+
+| Источник | Описание | Статус |
+|----------|----------|--------|
+| **Gedcom.Net.SDK** | Парсинг всех типов GEDCOM-дат | ✅ Уже используется |
+| [GeneGenie.Gedcom](https://github.com/TheGeneGenieProject/GeneGenie.Gedcom) | Референс для `CalculateSimilarityScore()` | AGPL-3.0 (только как референс) |
 
 ### 12.5 Географическое сопоставление (Улучшение 3)
 
@@ -2288,7 +2306,7 @@ public class MatchingFeedbackStore
 | 4. Транслитерация | **NickBuhro.Translit** | — |
 | 5. Контекстные бонусы | — | FamilyContextScorer |
 | 6. Многопроходное сопоставление | — | MultiPassMatcher |
-| 7. Обработка дат | GeneGenie (AGPL) или своё | DateComparer |
+| 7. Обработка дат | **Gedcom.Net.SDK** (парсинг ✅) | DateComparer (только сравнение) |
 | 8. Фонетика | **Beider-Morse в Lucene.Net** | — |
 | 9. ML | **ML.NET** | MatchingFeedbackStore |
 
