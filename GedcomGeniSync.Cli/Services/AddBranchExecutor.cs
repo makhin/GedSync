@@ -1,6 +1,5 @@
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
-using GedcomGeniSync.Cli.Commands;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using Microsoft.Extensions.Logging;
@@ -288,7 +287,7 @@ public class AddBranchExecutor
     /// Find a related person who has already been created in Geni.
     ///
     /// Priority order is important for proper tree structure:
-    /// 1. Spouse - if spouse exists, add as partner (creates union)
+    /// 1. Partner - if spouse/partner exists, add as partner (creates union)
     /// 2. Children - if child exists, add as parent to child
     /// 3. Parents - if parent exists, add as child to parent
     ///
@@ -298,13 +297,13 @@ public class AddBranchExecutor
     /// </summary>
     private (string? relatedToId, RelationType relationType) FindRelatedCreatedProfile(PersonRecord person)
     {
-        // Priority 1: Check if any spouse is created
+        // Priority 1: Check if any spouse/partner is created
         // This ensures proper union creation when adding couples
         foreach (var spouseId in person.SpouseIds)
         {
             if (_createdProfiles.ContainsKey(spouseId))
             {
-                return (spouseId, RelationType.Spouse);
+                return (spouseId, RelationType.Partner);
             }
         }
 
@@ -368,7 +367,7 @@ public class AddBranchExecutor
                 _logger.LogInformation("  Adding as parent to {ChildId}", cleanRelatedId);
                 return await _profileClient.AddParentAsync(cleanRelatedId, profileCreate);
 
-            case RelationType.Spouse:
+            case RelationType.Partner:
                 // Person is spouse of related -> add as partner
                 _logger.LogInformation("  Adding as partner to {PartnerId}", cleanRelatedId);
                 return await _profileClient.AddPartnerAsync(cleanRelatedId, profileCreate);

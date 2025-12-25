@@ -263,7 +263,7 @@ public class AddBranchCommandHandler : IHostedCommand
         // Check if start is a spouse of anchor
         if (startPerson.SpouseIds.Contains(anchorId))
         {
-            return RelationType.Spouse;
+            return RelationType.Partner;
         }
 
         // Check if start is a sibling of anchor
@@ -287,30 +287,4 @@ public class AddBranchCommandHandler : IHostedCommand
         }
         return id;
     }
-}
-
-/// <summary>
-/// Type of relationship between two persons
-/// </summary>
-public enum RelationType
-{
-    /// <summary>
-    /// Person is a child of the related person
-    /// </summary>
-    Child,
-
-    /// <summary>
-    /// Person is a parent of the related person
-    /// </summary>
-    Parent,
-
-    /// <summary>
-    /// Person is a spouse/partner of the related person
-    /// </summary>
-    Spouse,
-
-    /// <summary>
-    /// Person is a sibling of the related person
-    /// </summary>
-    Sibling
 }
