@@ -285,24 +285,21 @@ public class AddBranchExecutor
     }
 
     /// <summary>
-    /// Find a related person who has already been created in Geni
+    /// Find a related person who has already been created in Geni.
+    ///
+    /// Priority order is important for proper tree structure:
+    /// 1. Spouse - if spouse exists, add as partner (creates union)
+    /// 2. Children - if child exists, add as parent to child
+    /// 3. Parents - if parent exists, add as child to parent
+    ///
+    /// This order ensures that when adding ancestors (parents, grandparents),
+    /// we prefer to add them as partners first (if spouse already created),
+    /// which creates proper unions. Otherwise we add as parent to existing child.
     /// </summary>
     private (string? relatedToId, RelationType relationType) FindRelatedCreatedProfile(PersonRecord person)
     {
-        // Priority: Parents > Spouses > Children (to maintain proper tree structure)
-
-        // Check if either parent is created
-        if (!string.IsNullOrEmpty(person.FatherId) && _createdProfiles.ContainsKey(person.FatherId))
-        {
-            return (person.FatherId, RelationType.Child);
-        }
-
-        if (!string.IsNullOrEmpty(person.MotherId) && _createdProfiles.ContainsKey(person.MotherId))
-        {
-            return (person.MotherId, RelationType.Child);
-        }
-
-        // Check if any spouse is created
+        // Priority 1: Check if any spouse is created
+        // This ensures proper union creation when adding couples
         foreach (var spouseId in person.SpouseIds)
         {
             if (_createdProfiles.ContainsKey(spouseId))
@@ -311,13 +308,26 @@ public class AddBranchExecutor
             }
         }
 
-        // Check if any child is created (person is parent)
+        // Priority 2: Check if any child is created (person is parent)
+        // This handles adding parents/grandparents going up the tree
         foreach (var childId in person.ChildrenIds)
         {
             if (_createdProfiles.ContainsKey(childId))
             {
                 return (childId, RelationType.Parent);
             }
+        }
+
+        // Priority 3: Check if either parent is created
+        // This handles adding children going down the tree
+        if (!string.IsNullOrEmpty(person.FatherId) && _createdProfiles.ContainsKey(person.FatherId))
+        {
+            return (person.FatherId, RelationType.Child);
+        }
+
+        if (!string.IsNullOrEmpty(person.MotherId) && _createdProfiles.ContainsKey(person.MotherId))
+        {
+            return (person.MotherId, RelationType.Child);
         }
 
         return (null, RelationType.Child);
@@ -467,11 +477,16 @@ public class AddBranchExecutor
     }
 
     /// <summary>
-    /// Enqueue relatives for BFS traversal
+    /// Enqueue relatives for BFS traversal.
+    ///
+    /// Order is important for proper relationship creation:
+    /// 1. Spouses - so they can be added as partners
+    /// 2. Parents (as pairs) - father first, then mother, so mother can be added as partner
+    /// 3. Children - after parents to maintain proper tree structure
     /// </summary>
     private void EnqueueRelatives(PersonRecord person, int currentDepth, Queue<(string, int)> queue)
     {
-        // Enqueue spouse(s)
+        // 1. Enqueue spouse(s) first - they should be processed soon after this person
         foreach (var spouseId in person.SpouseIds)
         {
             if (_visited.Add(spouseId))
@@ -481,7 +496,45 @@ public class AddBranchExecutor
             }
         }
 
-        // Enqueue children
+        // 2. Enqueue parents as a pair (if both exist)
+        // Enqueue one parent, then immediately their spouse, so they're processed together
+        var fatherEnqueued = false;
+        var motherEnqueued = false;
+
+        if (!string.IsNullOrEmpty(person.FatherId) && _visited.Add(person.FatherId))
+        {
+            queue.Enqueue((person.FatherId, currentDepth + 1));
+            _logger.LogDebug("  Enqueued father: {FatherId}", person.FatherId);
+            fatherEnqueued = true;
+        }
+
+        // Enqueue mother right after father so they're adjacent in queue
+        if (!string.IsNullOrEmpty(person.MotherId) && _visited.Add(person.MotherId))
+        {
+            queue.Enqueue((person.MotherId, currentDepth + 1));
+            _logger.LogDebug("  Enqueued mother: {MotherId}", person.MotherId);
+            motherEnqueued = true;
+        }
+
+        // If we have both parents, also enqueue father's spouse (mother) immediately if not done
+        // This ensures parent couples stay together in processing order
+        if (fatherEnqueued && !motherEnqueued && !string.IsNullOrEmpty(person.FatherId))
+        {
+            var father = _gedcom.Persons.GetValueOrDefault(person.FatherId);
+            if (father != null)
+            {
+                foreach (var fatherSpouseId in father.SpouseIds)
+                {
+                    if (_visited.Add(fatherSpouseId))
+                    {
+                        queue.Enqueue((fatherSpouseId, currentDepth + 1));
+                        _logger.LogDebug("  Enqueued father's spouse: {SpouseId}", fatherSpouseId);
+                    }
+                }
+            }
+        }
+
+        // 3. Enqueue children last
         foreach (var childId in person.ChildrenIds)
         {
             if (_visited.Add(childId))
@@ -489,19 +542,6 @@ public class AddBranchExecutor
                 queue.Enqueue((childId, currentDepth + 1));
                 _logger.LogDebug("  Enqueued child: {ChildId}", childId);
             }
-        }
-
-        // Enqueue parents (only if not already visited - prevents going back to anchor direction)
-        if (!string.IsNullOrEmpty(person.FatherId) && _visited.Add(person.FatherId))
-        {
-            queue.Enqueue((person.FatherId, currentDepth + 1));
-            _logger.LogDebug("  Enqueued father: {FatherId}", person.FatherId);
-        }
-
-        if (!string.IsNullOrEmpty(person.MotherId) && _visited.Add(person.MotherId))
-        {
-            queue.Enqueue((person.MotherId, currentDepth + 1));
-            _logger.LogDebug("  Enqueued mother: {MotherId}", person.MotherId);
         }
 
         // Note: We don't enqueue siblings here - they should be discovered through parents
