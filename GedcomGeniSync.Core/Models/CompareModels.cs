@@ -2,84 +2,7 @@ using System.Collections.Immutable;
 
 namespace GedcomGeniSync.Models;
 
-#region Root Compare Result
-
-/// <summary>
-/// Root comparison result containing all comparison data
-/// </summary>
-public record CompareResult
-{
-    /// <summary>
-    /// Source GEDCOM file path (MyHeritage)
-    /// </summary>
-    public required string SourceFile { get; init; }
-
-    /// <summary>
-    /// Destination GEDCOM file path (Geni export)
-    /// </summary>
-    public required string DestinationFile { get; init; }
-
-    /// <summary>
-    /// When the comparison was performed
-    /// </summary>
-    public DateTime ComparedAt { get; init; }
-
-    /// <summary>
-    /// Anchor information
-    /// </summary>
-    public required AnchorInfo Anchors { get; init; }
-
-    /// <summary>
-    /// Comparison options used
-    /// </summary>
-    public required CompareOptions Options { get; init; }
-
-    /// <summary>
-    /// Statistics about the comparison
-    /// </summary>
-    public required CompareStatistics Statistics { get; init; }
-
-    /// <summary>
-    /// Individual (INDI) comparison results
-    /// </summary>
-    public required IndividualCompareResult Individuals { get; init; }
-
-    /// <summary>
-    /// Family (FAM) comparison results
-    /// </summary>
-    public required FamilyCompareResult Families { get; init; }
-
-    /// <summary>
-    /// Detailed results for each comparison iteration
-    /// </summary>
-    public ImmutableList<CompareIterationResult> Iterations { get; init; } = ImmutableList<CompareIterationResult>.Empty;
-}
-
-/// <summary>
-/// Anchor person information
-/// </summary>
-public record AnchorInfo
-{
-    /// <summary>
-    /// Anchor person ID in source GEDCOM
-    /// </summary>
-    public required string SourceId { get; init; }
-
-    /// <summary>
-    /// Anchor person ID in destination GEDCOM
-    /// </summary>
-    public required string DestinationId { get; init; }
-
-    /// <summary>
-    /// Geni Profile ID of anchor person (from RFN)
-    /// </summary>
-    public string? GeniProfileId { get; init; }
-
-    /// <summary>
-    /// Whether anchor match was confirmed
-    /// </summary>
-    public bool MatchConfirmed { get; init; }
-}
+#region Compare Options and Statistics
 
 /// <summary>
 /// Options used for comparison
@@ -115,45 +38,6 @@ public record CompareOptions
     /// Whether to require unique matches (default: true)
     /// </summary>
     public bool RequireUniqueMatch { get; init; } = true;
-}
-
-/// <summary>
-/// Statistics about the comparison
-/// </summary>
-public record CompareStatistics
-{
-    public required IndividualStats Individuals { get; init; }
-    public required FamilyStats Families { get; init; }
-}
-
-public record CompareIterationResult
-{
-    public int Iteration { get; init; }
-    public required IndividualCompareResult Individuals { get; init; }
-    public required FamilyCompareResult Families { get; init; }
-    public required CompareStatistics Statistics { get; init; }
-    public int NewPersonMappings { get; init; }
-}
-
-public record IndividualStats
-{
-    public int TotalSource { get; init; }
-    public int TotalDestination { get; init; }
-    public int Matched { get; init; }
-    public int ToUpdate { get; init; }
-    public int ToAdd { get; init; }
-    public int ToDelete { get; init; }
-    public int Ambiguous { get; init; }
-}
-
-public record FamilyStats
-{
-    public int TotalSource { get; init; }
-    public int TotalDestination { get; init; }
-    public int Matched { get; init; }
-    public int ToUpdate { get; init; }
-    public int ToAdd { get; init; }
-    public int ToDelete { get; init; }
 }
 
 #endregion

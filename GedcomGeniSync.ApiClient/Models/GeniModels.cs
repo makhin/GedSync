@@ -4,10 +4,66 @@ using System.Text.Json.Serialization;
 
 namespace GedcomGeniSync.ApiClient.Models;
 
+#region Base Types
+
+/// <summary>
+/// Interface for Geni entities with an ID that can extract numeric part.
+/// </summary>
+public interface IGeniEntity
+{
+    string Id { get; }
+}
+
+/// <summary>
+/// Extension methods for Geni entities.
+/// </summary>
+public static class GeniEntityExtensions
+{
+    /// <summary>
+    /// Extracts the numeric ID from a Geni entity ID, removing URL and type prefixes.
+    /// </summary>
+    public static string GetNumericId(this IGeniEntity entity)
+    {
+        if (string.IsNullOrEmpty(entity.Id))
+            return string.Empty;
+
+        return entity.Id
+            .Replace("https://www.geni.com/api/", "")
+            .Replace("profile-", "")
+            .Replace("union-", "")
+            .Replace("photo-", "");
+    }
+}
+
+/// <summary>
+/// Base class for API results containing a list of items.
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniListResult<T>
+{
+    [JsonPropertyName("results")]
+    public List<T>? Results { get; set; }
+}
+
+/// <summary>
+/// Base class for paginated API results.
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniPaginatedResult<T> : GeniListResult<T>
+{
+    [JsonPropertyName("page")]
+    public int Page { get; set; }
+
+    [JsonPropertyName("total_count")]
+    public int TotalCount { get; set; }
+}
+
+#endregion
+
 #region DTOs
 
 [ExcludeFromCodeCoverage]
-public class GeniProfile
+public class GeniProfile : IGeniEntity
 {
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
@@ -130,9 +186,8 @@ public class GeniProfile
     [JsonPropertyName("is_curator")]
     public bool? IsCurator { get; set; }
 
-    // Helper to extract numeric ID from full URL
-    public string NumericId => Id.Replace("https://www.geni.com/api/profile-", "")
-                                 .Replace("profile-", "");
+    // Helper to extract numeric ID from full URL (uses IGeniEntity extension)
+    public string NumericId => this.GetNumericId();
 
     /// <summary>
     /// Get birth date as formatted string (from either Birth event or legacy BirthDateString)
@@ -340,10 +395,10 @@ public class GeniEdges
 }
 
 [ExcludeFromCodeCoverage]
-public class GeniUnion
+public class GeniUnion : IGeniEntity
 {
     [JsonPropertyName("id")]
-    public string? Id { get; set; }
+    public string Id { get; set; } = string.Empty;
 
     [JsonPropertyName("url")]
     public string? Url { get; set; }
@@ -380,9 +435,8 @@ public class GeniUnion
     [JsonPropertyName("divorce")]
     public GeniEvent? Divorce { get; set; }
 
-    // Helper to extract numeric ID from full URL
-    public string NumericId => Id?.Replace("https://www.geni.com/api/union-", "")
-                                 .Replace("union-", "") ?? string.Empty;
+    // Helper to extract numeric ID from full URL (uses IGeniEntity extension)
+    public string NumericId => this.GetNumericId();
 
     /// <summary>
     /// Get marriage date as formatted string (from Marriage event or legacy MarriageDateObject)
@@ -411,18 +465,11 @@ public class GeniUnion
                                 ?? DivorceLocationObject?.PlaceName;
 }
 
+/// <summary>
+/// Search results containing profiles with pagination.
+/// </summary>
 [ExcludeFromCodeCoverage]
-public class GeniSearchResult
-{
-    [JsonPropertyName("results")]
-    public List<GeniProfile>? Results { get; set; }
-
-    [JsonPropertyName("page")]
-    public int Page { get; set; }
-
-    [JsonPropertyName("total_count")]
-    public int TotalCount { get; set; }
-}
+public class GeniSearchResult : GeniPaginatedResult<GeniProfile> { }
 
 /// <summary>
 /// Represents a date in Geni API with day, month, year, and formatted date
@@ -493,19 +540,17 @@ public class GeniEvent
     public GeniLocation? Location { get; set; }
 }
 
+/// <summary>
+/// Batch profile fetch results.
+/// </summary>
 [ExcludeFromCodeCoverage]
-public class GeniBatchProfileResult
-{
-    [JsonPropertyName("results")]
-    public List<GeniProfile>? Results { get; set; }
-}
+public class GeniBatchProfileResult : GeniListResult<GeniProfile> { }
 
+/// <summary>
+/// Batch union fetch results.
+/// </summary>
 [ExcludeFromCodeCoverage]
-public class GeniBatchUnionResult
-{
-    [JsonPropertyName("results")]
-    public List<GeniUnion>? Results { get; set; }
-}
+public class GeniBatchUnionResult : GeniListResult<GeniUnion> { }
 
 [ExcludeFromCodeCoverage]
 public class GeniAddResult
@@ -517,7 +562,7 @@ public class GeniAddResult
     public GeniUnion? Union { get; set; }
 }
 
-public class GeniPhoto
+public class GeniPhoto : IGeniEntity
 {
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
@@ -557,9 +602,8 @@ public class GeniPhoto
     [JsonPropertyName("updated_at")]
     public string? UpdatedAt { get; set; }
 
-    public string NumericId => Id
-        .Replace("https://www.geni.com/api/photo-", "")
-        .Replace("photo-", "");
+    // Helper to extract numeric ID from full URL (uses IGeniEntity extension)
+    public string NumericId => this.GetNumericId();
 }
 
 public class GeniPhotoUpdate
@@ -595,22 +639,14 @@ public class PhotoTagPosition
     public double Height { get; set; }
 }
 
-public class GeniPhotoListResult
-{
-    [JsonPropertyName("results")]
-    public List<GeniPhoto>? Results { get; set; }
+/// <summary>
+/// Photo list results with pagination.
+/// </summary>
+public class GeniPhotoListResult : GeniPaginatedResult<GeniPhoto> { }
 
-    [JsonPropertyName("page")]
-    public int Page { get; set; }
-
-    [JsonPropertyName("total_count")]
-    public int TotalCount { get; set; }
-}
-
-public class GeniPhotoTagsResult
-{
-    [JsonPropertyName("results")]
-    public List<GeniPhotoTag>? Results { get; set; }
-}
+/// <summary>
+/// Photo tags list results.
+/// </summary>
+public class GeniPhotoTagsResult : GeniListResult<GeniPhotoTag> { }
 
 #endregion
