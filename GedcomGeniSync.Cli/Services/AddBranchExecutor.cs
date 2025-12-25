@@ -666,6 +666,7 @@ public class AddBranchExecutor
 
     /// <summary>
     /// Clean profile ID to Geni API format (g{numeric_id})
+    /// Handles various formats: I123, g123, profile-123, etc.
     /// </summary>
     private static string CleanProfileId(string profileId)
     {
@@ -676,6 +677,13 @@ public class AddBranchExecutor
             ? profileId[(profileId.LastIndexOf(':') + 1)..]
             : profileId.Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase);
 
+        // Remove leading 'I' if present (MyHeritage/GEDCOM format like I6000000207133980253)
+        if (id.StartsWith("I", StringComparison.OrdinalIgnoreCase) && id.Length > 1 && char.IsDigit(id[1]))
+        {
+            id = id.Substring(1);
+        }
+
+        // Ensure 'g' prefix for Geni API format
         return id.StartsWith('g') ? id : $"g{id}";
     }
 

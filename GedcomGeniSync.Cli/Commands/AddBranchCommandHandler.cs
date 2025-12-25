@@ -276,15 +276,28 @@ public class AddBranchCommandHandler : IHostedCommand
     }
 
     /// <summary>
-    /// Normalize GEDCOM ID by removing escape prefix if present.
+    /// Normalize GEDCOM ID by removing escape prefix if present and adding @ symbols if missing.
     /// Command line preprocessing adds \ prefix to prevent @ from being interpreted.
+    /// GEDCOM IDs are typically formatted as @I123@ but users may provide just I123.
     /// </summary>
     private static string NormalizeGedcomId(string id)
     {
+        // Remove escape prefix if present
         if (id.StartsWith("\\"))
         {
-            return id.Substring(1);
+            id = id.Substring(1);
         }
+
+        // Add @ symbols if not already present
+        if (!id.StartsWith("@"))
+        {
+            id = "@" + id;
+        }
+        if (!id.EndsWith("@"))
+        {
+            id = id + "@";
+        }
+
         return id;
     }
 }

@@ -546,7 +546,7 @@ public class AddExecutor
     /// <summary>
     /// Cleans profile ID by converting to Geni API format (g{numeric_id})
     /// </summary>
-    /// <param name="profileId">Profile ID that may contain prefixes like "geni:", "profile-", or "profile-g"</param>
+    /// <param name="profileId">Profile ID that may contain prefixes like "geni:", "profile-", "profile-g", or "I" (MyHeritage format)</param>
     /// <returns>Profile ID in format g{numeric_id} for use in API URLs</returns>
     private static string CleanProfileId(string profileId)
     {
@@ -557,6 +557,12 @@ public class AddExecutor
         var id = profileId.Contains(':')
             ? profileId[(profileId.LastIndexOf(':') + 1)..]
             : profileId.Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        // Remove leading 'I' if present (MyHeritage/GEDCOM format like I6000000207133980253)
+        if (id.StartsWith("I", StringComparison.OrdinalIgnoreCase) && id.Length > 1 && char.IsDigit(id[1]))
+        {
+            id = id.Substring(1);
+        }
 
         // Ensure g prefix
         return id.StartsWith('g') ? id : $"g{id}";
