@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.ApiClient.Services;
@@ -30,7 +31,8 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
     {
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/photos";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/photos";
         Logger.LogDebug("GET {Url}", url);
 
         try
@@ -63,7 +65,8 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(filePath);
         }
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-photo";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/add-photo";
         var fileBytes = await File.ReadAllBytesAsync(filePath);
 
         return await UploadPhotoInternalAsync(
@@ -89,7 +92,8 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(fileName);
         }
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-photo";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/add-photo";
 
         return await UploadPhotoInternalAsync(
             url,
@@ -120,7 +124,8 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(filePath);
         }
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/add-mugshot";
         var fileBytes = await File.ReadAllBytesAsync(filePath);
 
         return await UploadPhotoInternalAsync(
@@ -142,7 +147,8 @@ public class GeniPhotoClient : GeniApiClientBase, IGeniPhotoClient
             return CreateDryRunPhoto(fileName);
         }
 
-        var url = $"{BaseUrl}/profile-{profileId}/add-mugshot";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/add-mugshot";
 
         return await UploadPhotoInternalAsync(
             url,

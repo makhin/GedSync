@@ -2,6 +2,7 @@ using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Cli.Services;
@@ -213,6 +214,7 @@ public class AddBranchExecutor
     /// <summary>
     /// Check if anchor's spouse exists and should be added to the created profiles map.
     /// This helps with proper child-to-union linking.
+    /// Also updates the anchor's stored ID if we discover the internal ID format.
     /// </summary>
     private async Task CheckAndAddAnchorSpouseAsync(PersonRecord anchorPerson, string anchorSourceId, string anchorGeniId)
     {
@@ -221,6 +223,19 @@ public class AddBranchExecutor
         {
             var family = await _profileClient.GetImmediateFamilyAsync(anchorGeniId);
             if (family?.Nodes == null) return;
+
+            // Update anchor's stored ID with the internal ID format if available
+            // This ensures ID comparison works when API returns internal IDs in unions
+            if (family.Focus?.Id != null)
+            {
+                var internalId = CleanProfileId(family.Focus.Id);
+                if (internalId != CleanProfileId(anchorGeniId))
+                {
+                    _logger.LogDebug("Updating anchor {Source} ID: {OldId} -> {NewId} (internal format)",
+                        anchorSourceId, anchorGeniId, internalId);
+                    _createdProfiles[anchorSourceId] = internalId;
+                }
+            }
 
             foreach (var spouseSourceId in anchorPerson.SpouseIds)
             {
@@ -370,6 +385,15 @@ public class AddBranchExecutor
 
             case RelationType.Partner:
                 // Person is spouse of related -> add as partner
+                // Check if the related profile (spouse) has children that should have BOTH parents
+                // If so, add to the existing union instead of creating a new one
+                var existingChildUnion = await FindUnionWithChildrenAsync(person, cleanRelatedId);
+                if (existingChildUnion != null)
+                {
+                    _logger.LogInformation("  Adding as partner to union {UnionId} (has common children)", existingChildUnion);
+                    return await _profileClient.AddPartnerToUnionAsync(existingChildUnion, profileCreate);
+                }
+
                 _logger.LogInformation("  Adding as partner to {PartnerId}", cleanRelatedId);
                 return await _profileClient.AddPartnerAsync(cleanRelatedId, profileCreate);
 
@@ -442,6 +466,102 @@ public class AddBranchExecutor
     }
 
     /// <summary>
+    /// Find an existing union where the spouse has children that should also have the current person as parent.
+    /// Used when adding a second parent to ensure they're linked to the correct union with their children.
+    /// </summary>
+    private async Task<string?> FindUnionWithChildrenAsync(PersonRecord person, string spouseGeniId)
+    {
+        try
+        {
+            // Get spouse's GEDCOM record to find common children
+            var spouseSourceId = person.SpouseIds.FirstOrDefault(id =>
+                _createdProfiles.TryGetValue(id, out var geniId) &&
+                NormalizeProfileId(geniId) == NormalizeProfileId(spouseGeniId));
+
+            if (spouseSourceId == null) return null;
+
+            var spouse = _gedcom.Persons.GetValueOrDefault(spouseSourceId);
+            if (spouse == null) return null;
+
+            // Find children that both person and spouse have in common
+            var commonChildrenIds = person.ChildrenIds
+                .Intersect(spouse.ChildrenIds, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (commonChildrenIds.Count == 0) return null;
+
+            // Check if any common child is already created in Geni
+            foreach (var childId in commonChildrenIds)
+            {
+                if (!_createdProfiles.TryGetValue(childId, out var childGeniId))
+                    continue;
+
+                // This child is created - find which union they're in with the spouse
+                var spouseFamily = await _profileClient.GetImmediateFamilyAsync(spouseGeniId);
+                if (spouseFamily?.Nodes == null) continue;
+
+                foreach (var (nodeId, node) in spouseFamily.Nodes)
+                {
+                    if (!nodeId.StartsWith("union-")) continue;
+
+                    // Check if this union has the child
+                    List<string> childIds;
+                    if (node.Union?.Children != null && node.Union.Children.Count > 0)
+                    {
+                        childIds = node.Union.Children;
+                    }
+                    else if (node.Edges != null)
+                    {
+                        // Extract children from edges
+                        childIds = ExtractChildrenFromEdges(node.Edges);
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    var normalizedChildren = childIds.Select(NormalizeProfileId).ToList();
+                    if (normalizedChildren.Contains(NormalizeProfileId(childGeniId)))
+                    {
+                        // Found a union with our child - return this union ID
+                        var unionId = node.Union?.Id ?? nodeId;
+                        return unionId.Replace("union-", "");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error finding union with children for {PersonId}", person.Id);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extract child profile IDs from edges data
+    /// </summary>
+    private static List<string> ExtractChildrenFromEdges(GeniEdges edges)
+    {
+        var children = new List<string>();
+        if (edges.AdditionalData == null) return children;
+
+        foreach (var (key, value) in edges.AdditionalData)
+        {
+            if (!key.StartsWith("profile-")) continue;
+
+            if (value.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                value.TryGetProperty("rel", out var relProp) &&
+                relProp.GetString() == "child")
+            {
+                children.Add(key);
+            }
+        }
+
+        return children;
+    }
+
+    /// <summary>
     /// Find a union between two parents
     /// </summary>
     private async Task<string?> FindUnionBetweenParentsAsync(string parent1Id, string parent2Id)
@@ -451,20 +571,38 @@ public class AddBranchExecutor
             var family = await _profileClient.GetImmediateFamilyAsync(parent1Id);
             if (family?.Nodes == null) return null;
 
+            var normalizedParent1 = NormalizeProfileId(parent1Id);
+            var normalizedParent2 = NormalizeProfileId(parent2Id);
+
             foreach (var (nodeId, node) in family.Nodes)
             {
                 if (!nodeId.StartsWith("union-")) continue;
-                if (node.Union == null) continue;
 
-                var partners = node.Union.Partners ?? new List<string>();
+                List<string> partners;
+
+                if (node.Union?.Partners != null && node.Union.Partners.Count > 0)
+                {
+                    // Use full union data if available
+                    partners = node.Union.Partners;
+                }
+                else if (node.Edges != null)
+                {
+                    // Fallback: extract partners from edges data (when union fetch failed)
+                    partners = node.Edges.GetPartnerProfileIds();
+                    _logger.LogDebug("Union {NodeId}: extracted {Count} partners from edges", nodeId, partners.Count);
+                }
+                else
+                {
+                    continue;
+                }
+
                 var normalizedPartners = partners.Select(NormalizeProfileId).ToList();
-                var normalizedParent1 = NormalizeProfileId(parent1Id);
-                var normalizedParent2 = NormalizeProfileId(parent2Id);
 
                 if (normalizedPartners.Contains(normalizedParent1) && normalizedPartners.Contains(normalizedParent2))
                 {
                     // Return just the numeric part of the union ID
-                    return node.Union.Id?.Replace("union-", "") ?? nodeId.Replace("union-", "");
+                    var unionId = node.Union?.Id ?? nodeId;
+                    return unionId.Replace("union-", "");
                 }
             }
         }
@@ -599,6 +737,9 @@ public class AddBranchExecutor
     /// </summary>
     private static GeniProfileCreate MapToGeniProfileCreate(PersonRecord person)
     {
+        // Person is alive unless they have a death date
+        var isAlive = person.DeathDate == null;
+
         return new GeniProfileCreate
         {
             FirstName = person.FirstName,
@@ -611,7 +752,8 @@ public class AddBranchExecutor
             Death = CreateEventInput(person.DeathDate, person.DeathPlace),
             Burial = CreateEventInput(person.BurialDate, person.BurialPlace),
             Occupation = person.Occupation,
-            Nicknames = person.Nickname
+            Nicknames = person.Nickname,
+            IsAlive = isAlive
         };
     }
 

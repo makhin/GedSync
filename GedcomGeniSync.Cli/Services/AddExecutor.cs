@@ -4,6 +4,7 @@ using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
 using GedcomGeniSync.Services.Photo;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.Cli.Services;
@@ -438,6 +439,9 @@ public class AddExecutor
     /// </summary>
     private GeniProfileCreate MapToGeniProfileCreate(PersonData personData)
     {
+        // Person is alive unless they have a death date
+        var isAlive = string.IsNullOrEmpty(personData.DeathDate);
+
         return new GeniProfileCreate
         {
             FirstName = personData.FirstName,
@@ -450,7 +454,8 @@ public class AddExecutor
             Death = CreateEventInput(personData.DeathDate, personData.DeathPlace),
             Burial = CreateEventInput(personData.BurialDate, personData.BurialPlace),
             Occupation = personData.Occupation,
-            Nicknames = personData.Nickname
+            Nicknames = personData.Nickname,
+            IsAlive = isAlive
         };
     }
 

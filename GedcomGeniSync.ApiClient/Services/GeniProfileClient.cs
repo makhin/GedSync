@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Json;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
+using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace GedcomGeniSync.ApiClient.Services;
@@ -29,7 +30,8 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
     {
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}";
         Logger.LogDebug("GET {Url}", url);
 
         try
@@ -115,7 +117,8 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
     {
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/immediate-family";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/immediate-family";
         Logger.LogDebug("GET {Url}", url);
 
         try
@@ -387,40 +390,43 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
     public async Task<GeniProfile?> AddChildAsync(string parentProfileId, GeniProfileCreate child)
     {
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(parentProfileId);
         return await ExecuteAddProfileOperationAsync(
-            $"profile-{parentProfileId}/add-child",
+            $"profile-{cleanId}/add-child",
             child,
             () => Logger.LogInformation(
                 "[DRY-RUN] Would create child {FirstName} {LastName} for parent {ParentId}",
                 child.FirstName,
                 child.LastName,
-                parentProfileId),
+                cleanId),
             result => Logger.LogInformation("Created child profile {ProfileId}", result?.Profile?.Id));
     }
 
     public async Task<GeniProfile?> AddParentAsync(string childProfileId, GeniProfileCreate parent)
     {
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(childProfileId);
         return await ExecuteAddProfileOperationAsync(
-            $"profile-{childProfileId}/add-parent",
+            $"profile-{cleanId}/add-parent",
             parent,
             () => Logger.LogInformation(
                 "[DRY-RUN] Would create parent {FirstName} {LastName} for child {ChildId}",
                 parent.FirstName,
                 parent.LastName,
-                childProfileId),
+                cleanId),
             result => Logger.LogInformation("Created parent profile {ProfileId}", result?.Profile?.Id));
     }
 
     public async Task<GeniProfile?> AddPartnerAsync(string profileId, GeniProfileCreate partner)
     {
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
         return await ExecuteAddProfileOperationAsync(
-            $"profile-{profileId}/add-partner",
+            $"profile-{cleanId}/add-partner",
             partner,
             () => Logger.LogInformation(
                 "[DRY-RUN] Would create partner {FirstName} {LastName} for {ProfileId}",
                 partner.FirstName,
                 partner.LastName,
-                profileId),
+                cleanId),
             result => Logger.LogInformation("Created partner profile {ProfileId}", result?.Profile?.Id));
     }
 
@@ -483,7 +489,8 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
         await ThrottleAsync();
 
-        var url = $"{BaseUrl}/profile-{profileId}/update";
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        var url = $"{BaseUrl}/profile-{cleanId}/update";
         Logger.LogDebug("POST {Url}", url);
 
         try
@@ -509,10 +516,15 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 
     #region Helper Methods
 
-    private static FormUrlEncodedContent CreateFormContent(GeniProfileCreate profile)
+    /// <summary>
+    /// Creates form-encoded content from profile data.
+    /// Works with both GeniProfileCreate and GeniProfileUpdate since they inherit from GeniProfileDataBase.
+    /// </summary>
+    private static FormUrlEncodedContent CreateFormContent(GeniProfileDataBase profile)
     {
         var values = new Dictionary<string, string>();
 
+        // Name fields
         if (!string.IsNullOrEmpty(profile.FirstName))
             values["first_name"] = profile.FirstName;
 
@@ -528,68 +540,21 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         if (!string.IsNullOrEmpty(profile.Suffix))
             values["suffix"] = profile.Suffix;
 
+        if (!string.IsNullOrEmpty(profile.Title))
+            values["title"] = profile.Title;
+
+        if (!string.IsNullOrEmpty(profile.DisplayName))
+            values["display_name"] = profile.DisplayName;
+
         if (!string.IsNullOrEmpty(profile.Gender))
             values["gender"] = profile.Gender;
-
-        // Event objects (proper API format)
-        if (profile.Birth != null)
-        {
-            AddEventToFormData(values, "birth", profile.Birth);
-        }
-
-        if (profile.Death != null)
-        {
-            AddEventToFormData(values, "death", profile.Death);
-        }
-
-        if (profile.Burial != null)
-        {
-            AddEventToFormData(values, "burial", profile.Burial);
-        }
-
-        if (!string.IsNullOrEmpty(profile.Occupation))
-            values["occupation"] = profile.Occupation;
-
-        if (!string.IsNullOrEmpty(profile.Nicknames))
-            values["nicknames"] = profile.Nicknames;
-
-        return new FormUrlEncodedContent(values);
-    }
-
-    private static FormUrlEncodedContent CreateFormContent(GeniProfileUpdate update)
-    {
-        var values = new Dictionary<string, string>();
-
-        if (!string.IsNullOrEmpty(update.FirstName))
-            values["first_name"] = update.FirstName;
-
-        if (!string.IsNullOrEmpty(update.MiddleName))
-            values["middle_name"] = update.MiddleName;
-
-        if (!string.IsNullOrEmpty(update.LastName))
-            values["last_name"] = update.LastName;
-
-        if (!string.IsNullOrEmpty(update.MaidenName))
-            values["maiden_name"] = update.MaidenName;
-
-        if (!string.IsNullOrEmpty(update.Suffix))
-            values["suffix"] = update.Suffix;
-
-        if (!string.IsNullOrEmpty(update.Gender))
-            values["gender"] = update.Gender;
-
-        if (!string.IsNullOrEmpty(update.Occupation))
-            values["occupation"] = update.Occupation;
-
-        if (!string.IsNullOrEmpty(update.AboutMe))
-            values["about_me"] = update.AboutMe;
 
         // Multilingual names
         // Format: names[locale][field]=value
         // Example: names[ru][first_name]=Иван, names[en][first_name]=Ivan
-        if (update.Names != null)
+        if (profile.Names != null)
         {
-            foreach (var (locale, fields) in update.Names)
+            foreach (var (locale, fields) in profile.Names)
             {
                 foreach (var (field, value) in fields)
                 {
@@ -601,41 +566,35 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
             }
         }
 
-        if (!string.IsNullOrEmpty(update.Nicknames))
-            values["nicknames"] = update.Nicknames;
+        // Event objects
+        if (profile.Birth != null)
+            AddEventToFormData(values, "birth", profile.Birth);
 
-        if (!string.IsNullOrEmpty(update.Title))
-            values["title"] = update.Title;
+        if (profile.Death != null)
+            AddEventToFormData(values, "death", profile.Death);
 
-        if (update.IsAlive.HasValue)
-            values["is_alive"] = update.IsAlive.Value.ToString().ToLower();
+        if (profile.Baptism != null)
+            AddEventToFormData(values, "baptism", profile.Baptism);
 
-        if (!string.IsNullOrEmpty(update.CauseOfDeath))
-            values["cause_of_death"] = update.CauseOfDeath;
+        if (profile.Burial != null)
+            AddEventToFormData(values, "burial", profile.Burial);
 
-        // Birth event
-        if (update.Birth != null)
-        {
-            AddEventToFormData(values, "birth", update.Birth);
-        }
+        // Additional info
+        if (!string.IsNullOrEmpty(profile.Occupation))
+            values["occupation"] = profile.Occupation;
 
-        // Death event
-        if (update.Death != null)
-        {
-            AddEventToFormData(values, "death", update.Death);
-        }
+        if (!string.IsNullOrEmpty(profile.Nicknames))
+            values["nicknames"] = profile.Nicknames;
 
-        // Baptism event
-        if (update.Baptism != null)
-        {
-            AddEventToFormData(values, "baptism", update.Baptism);
-        }
+        if (!string.IsNullOrEmpty(profile.AboutMe))
+            values["about_me"] = profile.AboutMe;
 
-        // Burial event
-        if (update.Burial != null)
-        {
-            AddEventToFormData(values, "burial", update.Burial);
-        }
+        if (!string.IsNullOrEmpty(profile.CauseOfDeath))
+            values["cause_of_death"] = profile.CauseOfDeath;
+
+        // Living status
+        if (profile.IsAlive.HasValue)
+            values["is_alive"] = profile.IsAlive.Value.ToString().ToLower();
 
         return new FormUrlEncodedContent(values);
     }
@@ -692,7 +651,29 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         Logger.LogDebug("{Json}", jsonContent);
         Logger.LogDebug("=== END RAW RESPONSE ===");
 
+        // Try to deserialize as GeniAddResult first (expected format: {"profile": {...}})
         var result = System.Text.Json.JsonSerializer.Deserialize<GeniAddResult>(jsonContent);
+
+        // If profile is null, try deserializing directly as GeniProfile
+        // (Geni API may return the profile directly without wrapper)
+        if (result?.Profile == null && !string.IsNullOrWhiteSpace(jsonContent))
+        {
+            Logger.LogInformation("GeniAddResult.Profile is null. Raw API response: {Json}", jsonContent);
+            try
+            {
+                var directProfile = System.Text.Json.JsonSerializer.Deserialize<GeniProfile>(jsonContent);
+                if (directProfile?.Id != null)
+                {
+                    result = new GeniAddResult { Profile = directProfile };
+                    Logger.LogInformation("Successfully deserialized directly to GeniProfile: {Id}", directProfile.Id);
+                }
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                Logger.LogWarning(ex, "Failed to deserialize response as GeniProfile");
+            }
+        }
+
         logSuccess(result);
 
         return result?.Profile;

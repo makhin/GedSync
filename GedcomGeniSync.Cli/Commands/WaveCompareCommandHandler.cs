@@ -574,5 +574,5 @@ public class WaveCompareCommandHandler : IHostedCommand
     }
 
     // Use ProfileIdHelper for profile ID operations
-    private static string NormalizeProfileId(string? profileId) => Services.ProfileIdHelper.NormalizeProfileId(profileId);
+    private static string NormalizeProfileId(string? profileId) => ProfileIdHelper.NormalizeProfileId(profileId);
 }

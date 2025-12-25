@@ -155,84 +155,60 @@ public class GeniProfile
     public string? DeathPlace => Death?.Location?.FormattedLocation ?? Death?.Location?.PlaceName ?? DeathLocationString;
 }
 
+/// <summary>
+/// Base class for profile data used in Geni API operations.
+/// API documentation: https://www.geni.com/platform/developer/help/api?path=profile%2Fadd
+/// Note: Same fields are supported for both create and update operations.
+/// </summary>
 [ExcludeFromCodeCoverage]
-public class GeniProfileCreate
+public abstract class GeniProfileDataBase
 {
+    // Name fields
     public string? FirstName { get; set; }
     public string? MiddleName { get; set; }
     public string? LastName { get; set; }
     public string? MaidenName { get; set; }
     public string? Suffix { get; set; }
+    public string? Title { get; set; }  // Dr., Mr., Mrs., etc.
+    public string? DisplayName { get; set; }
     public string? Gender { get; set; } // "male" or "female"
 
-    // Event objects (proper API format for add-child/add-parent)
+    // Event objects
     public GeniEventInput? Birth { get; set; }
     public GeniEventInput? Death { get; set; }
-    public GeniEventInput? Burial { get; set; }
-
-    public string? Occupation { get; set; }
-    public string? Nicknames { get; set; }
-}
-
-[ExcludeFromCodeCoverage]
-public class GeniProfileUpdate
-{
-    [JsonPropertyName("first_name")]
-    public string? FirstName { get; set; }
-
-    [JsonPropertyName("middle_name")]
-    public string? MiddleName { get; set; }
-
-    [JsonPropertyName("last_name")]
-    public string? LastName { get; set; }
-
-    [JsonPropertyName("maiden_name")]
-    public string? MaidenName { get; set; }
-
-    [JsonPropertyName("suffix")]
-    public string? Suffix { get; set; }
-
-    [JsonPropertyName("gender")]
-    public string? Gender { get; set; }
-
-    [JsonPropertyName("birth")]
-    public GeniEventInput? Birth { get; set; }
-
-    [JsonPropertyName("death")]
-    public GeniEventInput? Death { get; set; }
-
-    [JsonPropertyName("baptism")]
     public GeniEventInput? Baptism { get; set; }
-
-    [JsonPropertyName("burial")]
     public GeniEventInput? Burial { get; set; }
 
-    [JsonPropertyName("occupation")]
+    // Additional info
     public string? Occupation { get; set; }
-
-    [JsonPropertyName("about_me")]
+    public string? Nicknames { get; set; }  // comma-delimited list
     public string? AboutMe { get; set; }
+    public string? CauseOfDeath { get; set; }
 
     /// <summary>
-    /// Multilingual names support
-    /// Example: {"ru": {"first_name": "Иван", "last_name": "Иванов"}, "en": {"first_name": "Ivan", "last_name": "Ivanov"}}
+    /// Multilingual names support.
+    /// Example: {"ru": {"first_name": "Иван"}, "en": {"first_name": "Ivan"}}
     /// Supported fields per locale: first_name, middle_name, last_name, maiden_name, suffix, title
     /// </summary>
-    [JsonPropertyName("names")]
     public Dictionary<string, Dictionary<string, string>>? Names { get; set; }
 
-    [JsonPropertyName("nicknames")]
-    public string? Nicknames { get; set; }  // comma-delimited
-
-    [JsonPropertyName("title")]
-    public string? Title { get; set; }
-
-    [JsonPropertyName("is_alive")]
+    /// <summary>
+    /// Whether the person is alive. Should be set to true unless there's a death date.
+    /// </summary>
     public bool? IsAlive { get; set; }
-
-    [JsonPropertyName("cause_of_death")]
-    public string? CauseOfDeath { get; set; }
 }
+
+/// <summary>
+/// Profile data for creating a new profile via add-child, add-parent, add-partner APIs.
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniProfileCreate : GeniProfileDataBase { }
+
+/// <summary>
+/// Profile data for updating an existing profile.
+/// </summary>
+[ExcludeFromCodeCoverage]
+public class GeniProfileUpdate : GeniProfileDataBase { }
 
 /// <summary>
 /// Input model for creating/updating events (birth, death, baptism, burial) in Geni API
@@ -330,6 +306,37 @@ public class GeniEdges
 {
     [JsonPropertyName("union")]
     public List<string>? Unions { get; set; }
+
+    /// <summary>
+    /// Captures additional edge data not mapped to properties.
+    /// For union nodes, this contains profile IDs as keys with {rel: "partner"|"child"} as values.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalData { get; set; }
+
+    /// <summary>
+    /// Extracts partner profile IDs from the edges data (for union nodes).
+    /// </summary>
+    public List<string> GetPartnerProfileIds()
+    {
+        var partners = new List<string>();
+        if (AdditionalData == null) return partners;
+
+        foreach (var (key, value) in AdditionalData)
+        {
+            if (!key.StartsWith("profile-")) continue;
+
+            // Check if this edge has rel="partner"
+            if (value.ValueKind == JsonValueKind.Object &&
+                value.TryGetProperty("rel", out var relProp) &&
+                relProp.GetString() == "partner")
+            {
+                partners.Add(key);
+            }
+        }
+
+        return partners;
+    }
 }
 
 [ExcludeFromCodeCoverage]
