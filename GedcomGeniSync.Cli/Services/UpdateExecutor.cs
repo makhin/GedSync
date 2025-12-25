@@ -585,24 +585,8 @@ public class UpdateExecutor
         return result.Year.HasValue ? result : null;
     }
 
-    /// <summary>
-    /// Cleans profile ID by converting to Geni API format (g{numeric_id})
-    /// </summary>
-    /// <param name="profileId">Profile ID that may contain prefixes like "geni:", "profile-", or "profile-g"</param>
-    /// <returns>Profile ID in format g{numeric_id} for use in API URLs</returns>
-    private static string CleanProfileId(string profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-            return profileId;
-
-        // Extract numeric part
-        var id = profileId.Contains(':')
-            ? profileId[(profileId.LastIndexOf(':') + 1)..]
-            : profileId.Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase);
-
-        // Ensure g prefix
-        return id.StartsWith('g') ? id : $"g{id}";
-    }
+    // Use ProfileIdHelper for profile ID operations
+    private static string CleanProfileId(string profileId) => ProfileIdHelper.CleanProfileId(profileId);
 
     /// <summary>
     /// Extracts photo identifier from Geni photo URL for matching purposes

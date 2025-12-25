@@ -573,20 +573,6 @@ public class WaveCompareCommandHandler : IHostedCommand
         return string.Join(", ", parts);
     }
 
-    /// <summary>
-    /// Normalize Geni profile ID from various formats to just the numeric ID
-    /// </summary>
-    private static string NormalizeProfileId(string? profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-            return string.Empty;
-
-        // Remove "geni:" prefix if present
-        var normalized = profileId.Replace("geni:", "", StringComparison.OrdinalIgnoreCase);
-
-        // Remove @ symbols if present (from GEDCOM IDs)
-        normalized = normalized.Replace("@", "").Replace("I", "");
-
-        return normalized;
-    }
+    // Use ProfileIdHelper for profile ID operations
+    private static string NormalizeProfileId(string? profileId) => Services.ProfileIdHelper.NormalizeProfileId(profileId);
 }

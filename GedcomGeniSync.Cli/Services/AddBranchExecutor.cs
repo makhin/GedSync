@@ -664,55 +664,9 @@ public class AddBranchExecutor
         };
     }
 
-    /// <summary>
-    /// Clean profile ID to Geni API format (g{numeric_id})
-    /// Handles various formats: I123, g123, profile-123, etc.
-    /// </summary>
-    private static string CleanProfileId(string profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-            return profileId;
-
-        var id = profileId.Contains(':')
-            ? profileId[(profileId.LastIndexOf(':') + 1)..]
-            : profileId.Replace("profile-", string.Empty, StringComparison.OrdinalIgnoreCase);
-
-        // Remove leading 'I' if present (MyHeritage/GEDCOM format like I6000000207133980253)
-        if (id.StartsWith("I", StringComparison.OrdinalIgnoreCase) && id.Length > 1 && char.IsDigit(id[1]))
-        {
-            id = id.Substring(1);
-        }
-
-        // Ensure 'g' prefix for Geni API format
-        return id.StartsWith('g') ? id : $"g{id}";
-    }
-
-    /// <summary>
-    /// Normalize profile ID for comparison
-    /// </summary>
-    private static string NormalizeProfileId(string profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-            return string.Empty;
-
-        var normalized = profileId;
-
-        if (normalized.Contains('/'))
-        {
-            var lastSlash = normalized.LastIndexOf('/');
-            normalized = normalized[(lastSlash + 1)..];
-        }
-
-        if (normalized.StartsWith("profile-g", StringComparison.OrdinalIgnoreCase))
-            normalized = normalized[9..];
-        else if (normalized.StartsWith("profile-", StringComparison.OrdinalIgnoreCase))
-            normalized = normalized[8..];
-
-        if (normalized.StartsWith('g') || normalized.StartsWith('G'))
-            normalized = normalized[1..];
-
-        return normalized;
-    }
+    // Use ProfileIdHelper.CleanProfileId and ProfileIdHelper.NormalizeProfileId
+    private static string CleanProfileId(string profileId) => ProfileIdHelper.CleanProfileId(profileId);
+    private static string NormalizeProfileId(string profileId) => ProfileIdHelper.NormalizeProfileId(profileId);
 }
 
 /// <summary>
