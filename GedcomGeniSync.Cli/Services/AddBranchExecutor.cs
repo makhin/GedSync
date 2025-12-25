@@ -231,17 +231,16 @@ public class AddBranchExecutor
                 foreach (var (nodeId, node) in family.Nodes)
                 {
                     if (!nodeId.StartsWith("profile-")) continue;
-                    if (node.Profile == null) continue;
+                    if (node.Id == null) continue;
 
-                    // Check if this profile might be the spouse
-                    // Compare by name and relationship
-                    var profile = node.Profile;
-                    if (IsLikelyMatch(spouseInGedcom, profile))
+                    // Check if this node might be the spouse
+                    // Compare by name
+                    if (IsLikelyMatchNode(spouseInGedcom, node))
                     {
-                        _createdProfiles[spouseSourceId] = profile.Id;
+                        _createdProfiles[spouseSourceId] = node.Id;
                         _visited.Add(spouseSourceId);
                         _logger.LogInformation("Found anchor's spouse in Geni: {SpouseName} ({SourceId}) -> {GeniId}",
-                            spouseInGedcom.FullName, spouseSourceId, profile.Id);
+                            spouseInGedcom.FullName, spouseSourceId, node.Id);
                         break;
                     }
                 }
@@ -254,13 +253,13 @@ public class AddBranchExecutor
     }
 
     /// <summary>
-    /// Simple check if a GEDCOM person might match a Geni profile
+    /// Simple check if a GEDCOM person might match a Geni node (from immediate family response)
     /// </summary>
-    private static bool IsLikelyMatch(PersonRecord gedcomPerson, GeniProfile geniProfile)
+    private static bool IsLikelyMatchNode(PersonRecord gedcomPerson, GeniNode geniNode)
     {
         // Compare first names (case-insensitive)
         var gedcomFirst = gedcomPerson.FirstName?.Trim().ToLowerInvariant() ?? "";
-        var geniFirst = geniProfile.FirstName?.Trim().ToLowerInvariant() ?? "";
+        var geniFirst = geniNode.FirstName?.Trim().ToLowerInvariant() ?? "";
 
         if (string.IsNullOrEmpty(gedcomFirst) || string.IsNullOrEmpty(geniFirst))
             return false;
@@ -268,13 +267,15 @@ public class AddBranchExecutor
         // Simple name match
         if (gedcomFirst == geniFirst)
         {
-            // If birth years are available, they should match
+            // If birth date string is available, try to extract year and compare
             var gedcomBirthYear = gedcomPerson.BirthYear;
-            var geniBirthYear = geniProfile.Birth?.Date?.Year;
-
-            if (gedcomBirthYear.HasValue && geniBirthYear.HasValue)
+            if (gedcomBirthYear.HasValue && !string.IsNullOrEmpty(geniNode.BirthDate))
             {
-                return Math.Abs(gedcomBirthYear.Value - geniBirthYear.Value) <= 2;
+                // BirthDate format might be "YYYY-MM-DD" or similar
+                if (int.TryParse(geniNode.BirthDate.Split('-')[0], out var geniBirthYear))
+                {
+                    return Math.Abs(gedcomBirthYear.Value - geniBirthYear) <= 2;
+                }
             }
 
             return true; // Names match, no conflicting birth years
