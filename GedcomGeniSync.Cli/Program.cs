@@ -20,6 +20,7 @@ class Program
             new WaveCompareCommandHandler(startup),
             new UpdateCommandHandler(startup),
             new AddCommandHandler(startup),
+            new AddBranchCommandHandler(startup),
             new AuthCommandHandler(),
             new ProfileCommandHandler(startup)
         };
