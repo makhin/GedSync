@@ -39,6 +39,12 @@ public class FixNamesProgress
     public HashSet<string> ProcessedProfiles { get; set; } = new();
 
     /// <summary>
+    /// Set of profile IDs whose names have been processed
+    /// </summary>
+    [JsonPropertyName("name_processed_profiles")]
+    public HashSet<string> NameProcessedProfiles { get; set; } = new();
+
+    /// <summary>
     /// Profiles that had changes applied
     /// </summary>
     [JsonPropertyName("changed_profiles")]
@@ -90,17 +96,22 @@ public class FixNamesProgress
     }
 
     /// <summary>
-    /// Mark profile as processed
+    /// Mark profile as expanded in BFS
     /// </summary>
-    public void MarkProcessed(string profileId, bool hadChanges, bool failed = false)
+    public void MarkExpanded(string profileId)
     {
         ProcessedProfiles.Add(profileId);
+        LastUpdated = DateTime.UtcNow;
+    }
 
-        if (failed)
-        {
-            FailedProfiles.Add(profileId);
-        }
-        else if (hadChanges)
+    /// <summary>
+    /// Mark profile names as processed
+    /// </summary>
+    public void MarkNameProcessed(string profileId, bool hadChanges)
+    {
+        NameProcessedProfiles.Add(profileId);
+
+        if (hadChanges)
         {
             ChangedProfiles.Add(profileId);
         }
@@ -109,9 +120,24 @@ public class FixNamesProgress
     }
 
     /// <summary>
-    /// Check if profile was already processed
+    /// Mark profile as failed
     /// </summary>
-    public bool IsProcessed(string profileId) => ProcessedProfiles.Contains(profileId);
+    public void MarkFailed(string profileId)
+    {
+        ProcessedProfiles.Add(profileId);
+        FailedProfiles.Add(profileId);
+        LastUpdated = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Check if profile was already expanded
+    /// </summary>
+    public bool IsExpanded(string profileId) => ProcessedProfiles.Contains(profileId);
+
+    /// <summary>
+    /// Check if profile names were already processed
+    /// </summary>
+    public bool IsNameProcessed(string profileId) => NameProcessedProfiles.Contains(profileId);
 }
 
 /// <summary>

@@ -124,7 +124,7 @@ public class FixNamesExecutor
             }
 
             // Check if already processed
-            if (_progress.IsProcessed(profileId))
+            if (_progress.IsExpanded(profileId))
             {
                 _logger.LogDebug("Skipping {ProfileId}: already processed", profileId);
                 continue;
@@ -155,7 +155,7 @@ public class FixNamesExecutor
             if (family?.Nodes == null)
             {
                 _logger.LogWarning("Failed to get family for {ProfileId}", profileId);
-                _progress.MarkProcessed(profileId, hadChanges: false, failed: true);
+                _progress.MarkFailed(profileId);
                 _profilesFailed++;
                 return;
             }
@@ -169,13 +169,13 @@ public class FixNamesExecutor
                 if (nodeId.StartsWith("union-")) continue;
 
                 // Skip already processed
-                if (_progress.IsProcessed(nodeId)) continue;
+                if (_progress.IsNameProcessed(nodeId)) continue;
 
                 // Process this node's names
                 var hadChanges = await ProcessNodeAsync(node);
 
                 // Mark as processed
-                _progress.MarkProcessed(nodeId, hadChanges);
+                _progress.MarkNameProcessed(nodeId, hadChanges);
 
                 if (hadChanges)
                 {
@@ -183,16 +183,20 @@ public class FixNamesExecutor
                 }
 
                 // Add to queue for BFS (if not the focus profile)
-                if (nodeId != $"profile-{profileId}" && nodeId != profileId)
+                if (nodeId != $"profile-{profileId}"
+                    && nodeId != profileId
+                    && !_progress.IsExpanded(nodeId))
                 {
                     _queue.Enqueue((nodeId, depth + 1));
                 }
             }
+
+            _progress.MarkExpanded(profileId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing profile {ProfileId}", profileId);
-            _progress.MarkProcessed(profileId, hadChanges: false, failed: true);
+            _progress.MarkFailed(profileId);
             _profilesFailed++;
         }
     }
