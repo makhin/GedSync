@@ -642,7 +642,8 @@ public class NameFixHandlerTests
         handler.Handle(context);
 
         context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Smith");
-        context.MaidenName.Should().Be("Jones");
+        // Maiden name is extracted to the locale's maiden_name field
+        context.GetName(Locales.PreferredEnglish, NameFields.MaidenName).Should().Be("Jones");
     }
 
     #endregion
