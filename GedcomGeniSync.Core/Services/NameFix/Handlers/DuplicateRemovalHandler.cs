@@ -83,9 +83,9 @@ public class DuplicateRemovalHandler : NameFixHandlerBase
                 if (sorted[0].Value == removeValue ||
                     IsTrivialDuplicate(sorted[0].Value, removeValue, keepLocale, removeLocale))
                 {
-                    // Remove from this locale
-                    var fields = context.GetLocaleFields(removeLocale);
-                    if (fields != null && fields.ContainsKey(field))
+                    // Remove from this locale using mutable dictionary
+                    if (context.Names.TryGetValue(removeLocale, out var mutableFields) &&
+                        mutableFields.ContainsKey(field))
                     {
                         context.Changes.Add(new NameChange
                         {
@@ -96,7 +96,7 @@ public class DuplicateRemovalHandler : NameFixHandlerBase
                             Handler = Name
                         });
 
-                        fields.Remove(field);
+                        mutableFields.Remove(field);
                     }
                 }
             }
