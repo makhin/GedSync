@@ -22,7 +22,8 @@ class Program
             new AddCommandHandler(startup),
             new AddBranchCommandHandler(startup),
             new AuthCommandHandler(),
-            new ProfileCommandHandler(startup)
+            new ProfileCommandHandler(startup),
+            new FixNamesCommandHandler(startup)
         };
 
         var rootCommand = new RootCommand("GEDCOM to Geni synchronization tool");

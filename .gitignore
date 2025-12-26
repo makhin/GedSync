@@ -35,3 +35,4 @@ Thumbs.db
 /backup
 /*.ged
 /geni_token.json
+/*.log
