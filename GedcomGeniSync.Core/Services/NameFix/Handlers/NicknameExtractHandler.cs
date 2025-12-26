@@ -14,8 +14,9 @@ public class NicknameExtractHandler : NameFixHandlerBase
     public override int Order => 13;
 
     // Pattern for quoted nicknames: 'nickname' or "nickname"
+    // Supports: " ' « » „ " ' '
     private static readonly Regex QuotedNicknamePattern = new(
-        @"[""'«»„"'']([^""'«»„"'']+)[""'«»„"'']",
+        "[\"'«»„"''']([^\"'«»„"''']+)[\"'«»„"''']",
         RegexOptions.Compiled);
 
     // Pattern for parenthetical nicknames in first name context
