@@ -3,6 +3,7 @@ using System.CommandLine.Invocation;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Cli.Services;
+using GedcomGeniSync.Services.Interfaces;
 using GedcomGeniSync.Services.NameFix;
 using GedcomGeniSync.Services.NameFix.Handlers;
 using Microsoft.Extensions.DependencyInjection;
@@ -226,6 +227,7 @@ public class FixNamesCommandHandler : IHostedCommand
 
             // Final cleanup phase (Order: 95-100)
             (typeof(CapitalizationHandler), "Capitalization"),             // Order: 95
+            (typeof(TypoDetectionHandler), "TypoDetection"),               // Order: 96 - Uses CSV dictionaries
             (typeof(DuplicateRemovalHandler), "DuplicateRemoval"),         // Order: 98
             (typeof(CleanupHandler), "Cleanup")                            // Order: 100
         };
@@ -238,7 +240,21 @@ public class FixNamesCommandHandler : IHostedCommand
                 continue;
             }
 
-            services.AddSingleton(typeof(INameFixHandler), type);
+            // TypoDetectionHandler needs special registration with INameVariantsService
+            if (type == typeof(TypoDetectionHandler))
+            {
+                services.AddSingleton<INameFixHandler>(sp =>
+                {
+                    var variantsService = sp.GetService<INameVariantsService>();
+                    return variantsService != null
+                        ? new TypoDetectionHandler(variantsService)
+                        : new TypoDetectionHandler();
+                });
+            }
+            else
+            {
+                services.AddSingleton(typeof(INameFixHandler), type);
+            }
         }
     }
 }

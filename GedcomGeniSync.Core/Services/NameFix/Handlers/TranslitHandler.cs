@@ -1,11 +1,9 @@
-using GedcomGeniSync.Utils;
-
 namespace GedcomGeniSync.Services.NameFix.Handlers;
 
 /// <summary>
 /// Handler that generates transliterations for names.
 /// If Russian names exist but English doesn't, creates Latin transliteration.
-/// Uses the existing NameNormalizer.Transliterate method.
+/// Uses Unidecode.NET library for transliteration.
 /// </summary>
 public class TranslitHandler : NameFixHandlerBase
 {
@@ -41,12 +39,9 @@ public class TranslitHandler : NameFixHandlerBase
             // Check if source is Cyrillic
             if (!ScriptDetector.ContainsCyrillic(sourceValue)) continue;
 
-            // Generate transliteration
-            var transliterated = NameNormalizer.Transliterate(sourceValue);
+            // Generate transliteration using Unidecode.NET
+            var transliterated = Transliterator.TransliterateCyrillic(sourceValue);
             if (string.IsNullOrWhiteSpace(transliterated)) continue;
-
-            // Apply title case for proper names
-            transliterated = ToTitleCase(transliterated);
 
             SetName(context, targetLocale, field, transliterated,
                 $"Transliterated from {sourceLocale}");
@@ -70,11 +65,10 @@ public class TranslitHandler : NameFixHandlerBase
             }
             else
             {
-                // Generate transliteration for primary field
-                var translit = NameNormalizer.Transliterate(context.FirstName);
+                // Generate transliteration for primary field using Unidecode.NET
+                var translit = Transliterator.TransliterateCyrillic(context.FirstName);
                 if (!string.IsNullOrWhiteSpace(translit))
                 {
-                    translit = ToTitleCase(translit);
                     UpdatePrimaryField(context, "FirstName", context.FirstName, translit,
                         v => context.FirstName = v);
                 }
@@ -93,10 +87,9 @@ public class TranslitHandler : NameFixHandlerBase
             }
             else
             {
-                var translit = NameNormalizer.Transliterate(context.LastName);
+                var translit = Transliterator.TransliterateCyrillic(context.LastName);
                 if (!string.IsNullOrWhiteSpace(translit))
                 {
-                    translit = ToTitleCase(translit);
                     UpdatePrimaryField(context, "LastName", context.LastName, translit,
                         v => context.LastName = v);
                 }
@@ -115,10 +108,9 @@ public class TranslitHandler : NameFixHandlerBase
             }
             else
             {
-                var translit = NameNormalizer.Transliterate(context.MaidenName);
+                var translit = Transliterator.TransliterateCyrillic(context.MaidenName);
                 if (!string.IsNullOrWhiteSpace(translit))
                 {
-                    translit = ToTitleCase(translit);
                     UpdatePrimaryField(context, "MaidenName", context.MaidenName, translit,
                         v => context.MaidenName = v);
                 }
@@ -137,10 +129,9 @@ public class TranslitHandler : NameFixHandlerBase
             }
             else
             {
-                var translit = NameNormalizer.Transliterate(context.MiddleName);
+                var translit = Transliterator.TransliterateCyrillic(context.MiddleName);
                 if (!string.IsNullOrWhiteSpace(translit))
                 {
-                    translit = ToTitleCase(translit);
                     UpdatePrimaryField(context, "MiddleName", context.MiddleName, translit,
                         v => context.MiddleName = v);
                 }
@@ -159,24 +150,5 @@ public class TranslitHandler : NameFixHandlerBase
             Reason = "Primary field updated to Latin transliteration",
             Handler = Name
         });
-    }
-
-    /// <summary>
-    /// Convert text to Title Case for proper names
-    /// </summary>
-    private static string ToTitleCase(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return text;
-
-        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < words.Length; i++)
-        {
-            if (words[i].Length > 0)
-            {
-                words[i] = char.ToUpper(words[i][0]) +
-                    (words[i].Length > 1 ? words[i].Substring(1).ToLower() : "");
-            }
-        }
-        return string.Join(" ", words);
     }
 }

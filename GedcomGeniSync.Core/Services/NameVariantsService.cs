@@ -213,6 +213,86 @@ public class NameVariantsService : INameVariantsService
     }
 
     /// <summary>
+    /// Find the canonical form for a given name variant.
+    /// The canonical form is the first (base) name in the group.
+    /// </summary>
+    public string? FindCanonicalGivenName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return null;
+
+        var normalized = name.ToLowerInvariant().Trim();
+
+        // If this name exists as a key, it might be canonical
+        if (_givenNameGroups.ContainsKey(normalized))
+        {
+            // Return the name itself if it's a canonical key
+            return normalized;
+        }
+
+        // Search if this name is a variant of another
+        foreach (var (canonical, variants) in _givenNameGroups)
+        {
+            if (variants.Contains(normalized))
+            {
+                return canonical;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Find the canonical form for a surname variant.
+    /// </summary>
+    public string? FindCanonicalSurname(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return null;
+
+        var normalized = name.ToLowerInvariant().Trim();
+
+        if (_surnameGroups.ContainsKey(normalized))
+        {
+            return normalized;
+        }
+
+        foreach (var (canonical, variants) in _surnameGroups)
+        {
+            if (variants.Contains(normalized))
+            {
+                return canonical;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Check if a given name exists in the dictionary.
+    /// </summary>
+    public bool IsKnownGivenName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        var normalized = name.ToLowerInvariant().Trim();
+        return _givenNameGroups.ContainsKey(normalized);
+    }
+
+    /// <summary>
+    /// Check if a surname exists in the dictionary.
+    /// </summary>
+    public bool IsKnownSurname(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        var normalized = name.ToLowerInvariant().Trim();
+        return _surnameGroups.ContainsKey(normalized);
+    }
+
+    /// <summary>
     /// Load built-in common variants (Slavic names focus)
     /// </summary>
     private void LoadBuiltInVariants()

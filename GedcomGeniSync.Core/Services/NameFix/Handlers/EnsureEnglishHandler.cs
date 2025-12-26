@@ -1,5 +1,3 @@
-using GedcomGeniSync.Utils;
-
 namespace GedcomGeniSync.Services.NameFix.Handlers;
 
 /// <summary>
@@ -10,6 +8,8 @@ namespace GedcomGeniSync.Services.NameFix.Handlers;
 /// 1. If en-US is empty, populate from: ru (transliterated) → other Latin locales
 /// 2. If en-US contains non-basic Latin (ä, š, ł, etc.), simplify to basic Latin
 /// 3. Ensure en-US contains ONLY A-Z, a-z (plus spaces, hyphens, apostrophes)
+///
+/// Uses Unidecode.NET library for transliteration.
 /// </summary>
 public class EnsureEnglishHandler : NameFixHandlerBase
 {
@@ -40,7 +40,7 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         }
 
         // Case 2: en-US has non-basic Latin - simplify it
-        if (!string.IsNullOrWhiteSpace(enValue) && !DiacriticsRemover.IsBasicLatin(enValue))
+        if (!string.IsNullOrWhiteSpace(enValue) && !Transliterator.IsBasicLatin(enValue))
         {
             SimplifyToBasicLatin(context, field, enValue);
         }
@@ -52,10 +52,9 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         var ruValue = context.GetName(Locales.Russian, field);
         if (!string.IsNullOrWhiteSpace(ruValue))
         {
-            var transliterated = NameNormalizer.Transliterate(ruValue);
+            var transliterated = Transliterator.TransliterateCyrillic(ruValue);
             if (!string.IsNullOrWhiteSpace(transliterated))
             {
-                transliterated = ToTitleCase(transliterated);
                 SetName(context, Locales.PreferredEnglish, field, transliterated,
                     "Created from Russian transliteration");
                 return;
@@ -66,10 +65,9 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         var ukValue = context.GetName(Locales.Ukrainian, field);
         if (!string.IsNullOrWhiteSpace(ukValue))
         {
-            var transliterated = NameNormalizer.Transliterate(ukValue);
+            var transliterated = Transliterator.TransliterateCyrillic(ukValue);
             if (!string.IsNullOrWhiteSpace(transliterated))
             {
-                transliterated = ToTitleCase(transliterated);
                 SetName(context, Locales.PreferredEnglish, field, transliterated,
                     "Created from Ukrainian transliteration");
                 return;
@@ -85,11 +83,10 @@ public class EnsureEnglishHandler : NameFixHandlerBase
             var value = context.GetName(locale, field);
             if (!string.IsNullOrWhiteSpace(value) && ScriptDetector.IsPurelyLatin(value))
             {
-                // Simplify to basic Latin
-                var simplified = DiacriticsRemover.RemoveDiacritics(value);
+                // Simplify to basic Latin using Unidecode
+                var simplified = Transliterator.RemoveDiacritics(value);
                 if (!string.IsNullOrWhiteSpace(simplified))
                 {
-                    simplified = ToTitleCase(simplified);
                     SetName(context, Locales.PreferredEnglish, field, simplified,
                         $"Created from [{locale}] with diacritics removed");
                     return;
@@ -103,7 +100,7 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         {
             if (ScriptDetector.IsPurelyLatin(primaryValue))
             {
-                var simplified = DiacriticsRemover.RemoveDiacritics(primaryValue);
+                var simplified = Transliterator.RemoveDiacritics(primaryValue);
                 if (!string.IsNullOrWhiteSpace(simplified))
                 {
                     SetName(context, Locales.PreferredEnglish, field, simplified,
@@ -113,10 +110,9 @@ public class EnsureEnglishHandler : NameFixHandlerBase
             }
             else if (ScriptDetector.IsPurelyCyrillic(primaryValue))
             {
-                var transliterated = NameNormalizer.Transliterate(primaryValue);
+                var transliterated = Transliterator.TransliterateCyrillic(primaryValue);
                 if (!string.IsNullOrWhiteSpace(transliterated))
                 {
-                    transliterated = ToTitleCase(transliterated);
                     SetName(context, Locales.PreferredEnglish, field, transliterated,
                         "Created from primary field transliteration");
                     return;
@@ -131,19 +127,18 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         if (ScriptDetector.ContainsCyrillic(currentValue))
         {
             // This should have been handled by CyrillicToRuHandler
-            // Just transliterate
-            var transliterated = NameNormalizer.Transliterate(currentValue);
+            // Just transliterate using Unidecode
+            var transliterated = Transliterator.ToAscii(currentValue);
             if (!string.IsNullOrWhiteSpace(transliterated))
             {
-                transliterated = DiacriticsRemover.RemoveDiacritics(transliterated);
-                SetName(context, Locales.PreferredEnglish, field, ToTitleCase(transliterated),
+                SetName(context, Locales.PreferredEnglish, field, transliterated,
                     "Replaced Cyrillic with transliteration");
             }
             return;
         }
 
-        // It's Latin with diacritics - simplify
-        var simplified = DiacriticsRemover.RemoveDiacritics(currentValue);
+        // It's Latin with diacritics - simplify using Unidecode
+        var simplified = Transliterator.RemoveDiacritics(currentValue);
         if (simplified != currentValue)
         {
             SetName(context, Locales.PreferredEnglish, field, simplified,
@@ -156,17 +151,10 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         // FirstName
         if (!string.IsNullOrWhiteSpace(context.FirstName))
         {
-            if (!DiacriticsRemover.IsBasicLatin(context.FirstName))
+            if (!Transliterator.IsBasicLatin(context.FirstName))
             {
                 var old = context.FirstName;
-                if (ScriptDetector.ContainsCyrillic(old))
-                {
-                    context.FirstName = ToTitleCase(NameNormalizer.Transliterate(old));
-                }
-                else
-                {
-                    context.FirstName = DiacriticsRemover.RemoveDiacritics(old);
-                }
+                context.FirstName = Transliterator.ToAscii(old);
 
                 context.Changes.Add(new NameChange
                 {
@@ -182,17 +170,10 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         // LastName
         if (!string.IsNullOrWhiteSpace(context.LastName))
         {
-            if (!DiacriticsRemover.IsBasicLatin(context.LastName))
+            if (!Transliterator.IsBasicLatin(context.LastName))
             {
                 var old = context.LastName;
-                if (ScriptDetector.ContainsCyrillic(old))
-                {
-                    context.LastName = ToTitleCase(NameNormalizer.Transliterate(old));
-                }
-                else
-                {
-                    context.LastName = DiacriticsRemover.RemoveDiacritics(old);
-                }
+                context.LastName = Transliterator.ToAscii(old);
 
                 context.Changes.Add(new NameChange
                 {
@@ -208,17 +189,10 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         // MaidenName
         if (!string.IsNullOrWhiteSpace(context.MaidenName))
         {
-            if (!DiacriticsRemover.IsBasicLatin(context.MaidenName))
+            if (!Transliterator.IsBasicLatin(context.MaidenName))
             {
                 var old = context.MaidenName;
-                if (ScriptDetector.ContainsCyrillic(old))
-                {
-                    context.MaidenName = ToTitleCase(NameNormalizer.Transliterate(old));
-                }
-                else
-                {
-                    context.MaidenName = DiacriticsRemover.RemoveDiacritics(old);
-                }
+                context.MaidenName = Transliterator.ToAscii(old);
 
                 context.Changes.Add(new NameChange
                 {
@@ -234,17 +208,10 @@ public class EnsureEnglishHandler : NameFixHandlerBase
         // MiddleName
         if (!string.IsNullOrWhiteSpace(context.MiddleName))
         {
-            if (!DiacriticsRemover.IsBasicLatin(context.MiddleName))
+            if (!Transliterator.IsBasicLatin(context.MiddleName))
             {
                 var old = context.MiddleName;
-                if (ScriptDetector.ContainsCyrillic(old))
-                {
-                    context.MiddleName = ToTitleCase(NameNormalizer.Transliterate(old));
-                }
-                else
-                {
-                    context.MiddleName = DiacriticsRemover.RemoveDiacritics(old);
-                }
+                context.MiddleName = Transliterator.ToAscii(old);
 
                 context.Changes.Add(new NameChange
                 {
@@ -269,21 +236,5 @@ public class EnsureEnglishHandler : NameFixHandlerBase
             NameFields.Suffix => context.Suffix,
             _ => null
         };
-    }
-
-    private static string ToTitleCase(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return text;
-
-        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < words.Length; i++)
-        {
-            if (words[i].Length > 0)
-            {
-                words[i] = char.ToUpper(words[i][0]) +
-                    (words[i].Length > 1 ? words[i].Substring(1).ToLower() : "");
-            }
-        }
-        return string.Join(" ", words);
     }
 }

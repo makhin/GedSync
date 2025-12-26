@@ -41,6 +41,12 @@ public record NameChange
     /// </summary>
     public string? Handler { get; init; }
 
+    /// <summary>
+    /// If true, this is a warning/suggestion, not an actual change.
+    /// Used for typo detection where we suggest but don't auto-fix.
+    /// </summary>
+    public bool IsWarning { get; init; }
+
     public override string ToString()
     {
         var from = FromLocale != null ? $"[{FromLocale}]" : "";
