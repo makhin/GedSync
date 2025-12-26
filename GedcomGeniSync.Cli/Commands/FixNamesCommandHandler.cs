@@ -198,18 +198,36 @@ public class FixNamesCommandHandler : IHostedCommand
 
     private void RegisterHandlers(IServiceCollection services, HashSet<string>? enabledHandlers)
     {
-        // Register all handlers as INameFixHandler
+        // Register all handlers as INameFixHandler (ordered by execution priority)
         var handlerTypes = new (Type Type, string Name)[]
         {
-            (typeof(ScriptSplitHandler), "ScriptSplit"),           // Order: 10
-            (typeof(CyrillicToRuHandler), "CyrillicToRu"),         // Order: 20
-            (typeof(LithuanianHandler), "Lithuanian"),             // Order: 25
-            (typeof(EstonianHandler), "Estonian"),                 // Order: 26
-            (typeof(LatinLanguageHandler), "LatinLanguage"),       // Order: 27
-            (typeof(TranslitHandler), "Translit"),                 // Order: 30
-            (typeof(EnsureEnglishHandler), "EnsureEnglish"),       // Order: 35 - MUST have English
-            (typeof(FeminineSurnameHandler), "FeminineSurname"),   // Order: 40
-            (typeof(CleanupHandler), "Cleanup")                    // Order: 100
+            // Cleanup & extraction phase (Order: 5-15)
+            (typeof(SpecialCharsCleanupHandler), "SpecialCharsCleanup"),   // Order: 5
+            (typeof(TitleExtractHandler), "TitleExtract"),                 // Order: 8
+            (typeof(ScriptSplitHandler), "ScriptSplit"),                   // Order: 10
+            (typeof(SuffixExtractHandler), "SuffixExtract"),               // Order: 11
+            (typeof(MaidenNameExtractHandler), "MaidenNameExtract"),       // Order: 12
+            (typeof(NicknameExtractHandler), "NicknameExtract"),           // Order: 13
+            (typeof(PatronymicHandler), "Patronymic"),                     // Order: 15
+
+            // Script/Language detection phase (Order: 20-28)
+            (typeof(CyrillicToRuHandler), "CyrillicToRu"),                 // Order: 20
+            (typeof(UkrainianHandler), "Ukrainian"),                       // Order: 24
+            (typeof(LithuanianHandler), "Lithuanian"),                     // Order: 25
+            (typeof(EstonianHandler), "Estonian"),                         // Order: 26
+            (typeof(LatinLanguageHandler), "LatinLanguage"),               // Order: 27
+            (typeof(HebrewHandler), "Hebrew"),                             // Order: 28
+
+            // Transliteration & normalization phase (Order: 30-42)
+            (typeof(TranslitHandler), "Translit"),                         // Order: 30
+            (typeof(EnsureEnglishHandler), "EnsureEnglish"),               // Order: 35 - MUST have English
+            (typeof(FeminineSurnameHandler), "FeminineSurname"),           // Order: 40
+            (typeof(SurnameParticleHandler), "SurnameParticle"),           // Order: 42
+
+            // Final cleanup phase (Order: 95-100)
+            (typeof(CapitalizationHandler), "Capitalization"),             // Order: 95
+            (typeof(DuplicateRemovalHandler), "DuplicateRemoval"),         // Order: 98
+            (typeof(CleanupHandler), "Cleanup")                            // Order: 100
         };
 
         foreach (var (type, name) in handlerTypes)

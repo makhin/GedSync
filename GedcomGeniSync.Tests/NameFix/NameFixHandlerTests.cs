@@ -507,6 +507,411 @@ public class NameFixHandlerTests
 
     #endregion
 
+    #region SpecialCharsCleanupHandler Tests
+
+    [Fact]
+    public void SpecialCharsCleanupHandler_ShouldRemoveAsterisk()
+    {
+        var context = CreateContext();
+        context.FirstName = "Иван*";
+
+        var handler = new SpecialCharsCleanupHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("Иван");
+    }
+
+    [Fact]
+    public void SpecialCharsCleanupHandler_ShouldRemoveQuestionMark()
+    {
+        var context = CreateContext();
+        context.LastName = "Петров?";
+
+        var handler = new SpecialCharsCleanupHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Петров");
+    }
+
+    [Fact]
+    public void SpecialCharsCleanupHandler_ShouldRemoveLeadingNumbers()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "123 John"
+        };
+
+        var handler = new SpecialCharsCleanupHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("John");
+    }
+
+    #endregion
+
+    #region TitleExtractHandler Tests
+
+    [Fact]
+    public void TitleExtractHandler_ShouldExtractDr()
+    {
+        var context = CreateContext();
+        context.FirstName = "Dr. John";
+
+        var handler = new TitleExtractHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("John");
+        context.Title.Should().Be("Dr.");
+    }
+
+    [Fact]
+    public void TitleExtractHandler_ShouldExtractRussianTitle()
+    {
+        var context = CreateContext();
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "князь Иван"
+        };
+
+        var handler = new TitleExtractHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Russian, NameFields.FirstName).Should().Be("Иван");
+        context.Title.Should().Be("князь");
+    }
+
+    #endregion
+
+    #region SuffixExtractHandler Tests
+
+    [Fact]
+    public void SuffixExtractHandler_ShouldExtractJr()
+    {
+        var context = CreateContext();
+        context.LastName = "Smith Jr.";
+
+        var handler = new SuffixExtractHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Smith");
+        context.Suffix.Should().Be("Jr.");
+    }
+
+    [Fact]
+    public void SuffixExtractHandler_ShouldExtractIII()
+    {
+        var context = CreateContext();
+        context.LastName = "John III";
+
+        var handler = new SuffixExtractHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("John");
+        context.Suffix.Should().Be("III");
+    }
+
+    #endregion
+
+    #region MaidenNameExtractHandler Tests
+
+    [Fact]
+    public void MaidenNameExtractHandler_ShouldExtractFromParentheses()
+    {
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Иванова (Петрова)";
+
+        var handler = new MaidenNameExtractHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Иванова");
+        context.MaidenName.Should().Be("Петрова");
+    }
+
+    [Fact]
+    public void MaidenNameExtractHandler_ShouldExtractNee()
+    {
+        var context = CreateContext(Gender.Female);
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["last_name"] = "Smith née Jones"
+        };
+
+        var handler = new MaidenNameExtractHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Smith");
+        context.MaidenName.Should().Be("Jones");
+    }
+
+    #endregion
+
+    #region NicknameExtractHandler Tests
+
+    [Fact]
+    public void NicknameExtractHandler_ShouldExtractFromQuotes()
+    {
+        var context = CreateContext();
+        context.FirstName = "Александр \"Саша\"";
+
+        var handler = new NicknameExtractHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("Александр");
+        context.Nickname.Should().Be("Саша");
+    }
+
+    [Fact]
+    public void NicknameExtractHandler_ShouldExtractFromParentheses()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "William (Bill)"
+        };
+
+        var handler = new NicknameExtractHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("William");
+        context.Nickname.Should().Be("Bill");
+    }
+
+    #endregion
+
+    #region PatronymicHandler Tests
+
+    [Fact]
+    public void PatronymicHandler_ShouldDetectMalePatronymic()
+    {
+        var context = CreateContext(Gender.Male);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Иван Петрович"
+        };
+
+        var handler = new PatronymicHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Russian, NameFields.FirstName).Should().Be("Иван");
+        context.GetName(Locales.Russian, NameFields.MiddleName).Should().Be("Петрович");
+    }
+
+    [Fact]
+    public void PatronymicHandler_ShouldDetectFemalePatronymic()
+    {
+        var context = CreateContext(Gender.Female);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Мария Ивановна"
+        };
+
+        var handler = new PatronymicHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Russian, NameFields.FirstName).Should().Be("Мария");
+        context.GetName(Locales.Russian, NameFields.MiddleName).Should().Be("Ивановна");
+    }
+
+    #endregion
+
+    #region UkrainianHandler Tests
+
+    [Fact]
+    public void UkrainianHandler_ShouldDetectUkrainianI()
+    {
+        var context = CreateContext();
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Олексій"  // Contains Ukrainian і
+        };
+
+        var handler = new UkrainianHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Ukrainian, NameFields.FirstName).Should().Be("Олексій");
+    }
+
+    [Fact]
+    public void UkrainianHandler_ShouldDetectEnkoSurname()
+    {
+        var context = CreateContext();
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["last_name"] = "Шевченко"
+        };
+
+        var handler = new UkrainianHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Ukrainian, NameFields.LastName).Should().Be("Шевченко");
+    }
+
+    #endregion
+
+    #region HebrewHandler Tests
+
+    [Fact]
+    public void HebrewHandler_ShouldDetectHebrewText()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "דוד"  // David in Hebrew
+        };
+
+        var handler = new HebrewHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Hebrew, NameFields.FirstName).Should().Be("דוד");
+    }
+
+    [Fact]
+    public void HebrewHandler_ShouldExtractHebrewFromMixed()
+    {
+        var context = CreateContext();
+        context.FirstName = "דוד David";
+
+        var handler = new HebrewHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Hebrew, NameFields.FirstName).Should().Be("דוד");
+    }
+
+    #endregion
+
+    #region SurnameParticleHandler Tests
+
+    [Fact]
+    public void SurnameParticleHandler_ShouldNormalizeVon()
+    {
+        var context = CreateContext();
+        context.LastName = "VON NEUMANN";
+
+        var handler = new SurnameParticleHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("von Neumann");
+    }
+
+    [Fact]
+    public void SurnameParticleHandler_ShouldNormalizeMcDonald()
+    {
+        var context = CreateContext();
+        context.LastName = "mcdonald";
+
+        var handler = new SurnameParticleHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("McDonald");
+    }
+
+    [Fact]
+    public void SurnameParticleHandler_ShouldNormalizeOBrien()
+    {
+        var context = CreateContext();
+        context.LastName = "o'brien";
+
+        var handler = new SurnameParticleHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("O'Brien");
+    }
+
+    #endregion
+
+    #region CapitalizationHandler Tests
+
+    [Fact]
+    public void CapitalizationHandler_ShouldFixAllCaps()
+    {
+        var context = CreateContext();
+        context.FirstName = "JOHN";
+        context.LastName = "SMITH";
+
+        var handler = new CapitalizationHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("John");
+        context.LastName.Should().Be("Smith");
+    }
+
+    [Fact]
+    public void CapitalizationHandler_ShouldFixAllLowercase()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "john",
+            ["last_name"] = "smith"
+        };
+
+        var handler = new CapitalizationHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("John");
+        context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Smith");
+    }
+
+    [Fact]
+    public void CapitalizationHandler_ShouldHandleHyphenatedNames()
+    {
+        var context = CreateContext();
+        context.FirstName = "ANNA-MARIA";
+
+        var handler = new CapitalizationHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("Anna-Maria");
+    }
+
+    #endregion
+
+    #region DuplicateRemovalHandler Tests
+
+    [Fact]
+    public void DuplicateRemovalHandler_ShouldRemoveExactDuplicates()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "John"
+        };
+        context.Names["de"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "John"  // Same value, lower priority locale
+        };
+
+        var handler = new DuplicateRemovalHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("John");
+        context.GetName("de", NameFields.FirstName).Should().BeNull();
+    }
+
+    [Fact]
+    public void DuplicateRemovalHandler_ShouldNotRemoveDifferentScripts()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Ivan"
+        };
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Иван"  // Same name, different script - keep both
+        };
+
+        var handler = new DuplicateRemovalHandler();
+        handler.Handle(context);
+
+        // Both should remain as they're in different scripts
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Ivan");
+        context.GetName(Locales.Russian, NameFields.FirstName).Should().Be("Иван");
+    }
+
+    #endregion
+
     #region Helpers
 
     private static NameFixContext CreateContext(Gender gender = Gender.Unknown)
