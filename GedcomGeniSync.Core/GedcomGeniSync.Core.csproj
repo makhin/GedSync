@@ -9,6 +9,7 @@
     <PackageReference Include="Gedcom.Net.SDK" Version="1.0.8" />
     <PackageReference Include="F23.StringSimilarity" Version="7.0.1" />
     <PackageReference Include="Unidecode.NET" Version="2.1.0" />
+    <PackageReference Include="NickBuhro.Translit" Version="1.4.5" />
     <PackageReference Include="Humanizer.Core" Version="3.0.1" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />

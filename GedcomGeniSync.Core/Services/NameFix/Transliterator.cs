@@ -1,40 +1,80 @@
+using NickBuhro.Translit;
 using Unidecode.NET;
 
 namespace GedcomGeniSync.Services.NameFix;
 
 /// <summary>
-/// Transliteration service using Unidecode.NET library.
-/// Converts any Unicode text to ASCII representation.
+/// Transliteration service combining:
+/// - NickBuhro.Translit for Slavic languages (GOST 7.79-2000 / ISO 9)
+/// - Unidecode.NET for other scripts (Hebrew, Greek, etc.)
 /// </summary>
 public static class Transliterator
 {
     /// <summary>
-    /// Transliterate text to ASCII using Unidecode.NET library.
-    /// Handles Cyrillic, Hebrew, Greek, and other scripts.
+    /// Transliterate text to ASCII.
+    /// Uses GOST for Cyrillic, Unidecode for other scripts.
     /// </summary>
     public static string ToAscii(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
 
-        // Unidecode converts any Unicode to ASCII approximation
+        // Check if text contains Cyrillic - use GOST
+        if (ContainsCyrillic(text))
+        {
+            return TransliterateCyrillicGost(text);
+        }
+
+        // For other scripts (Hebrew, Greek, etc.) - use Unidecode
         return text.Unidecode();
     }
 
     /// <summary>
-    /// Transliterate Cyrillic text to Latin with proper name casing.
-    /// Uses Unidecode.NET for the actual transliteration.
+    /// Transliterate Cyrillic text to Latin using GOST 7.79-2000 (ISO 9) standard.
+    /// Detects language (Russian/Ukrainian/Belarusian) automatically.
     /// </summary>
     public static string TransliterateCyrillic(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
 
-        // Unidecode handles Cyrillic → Latin automatically
-        var result = text.Unidecode();
+        var result = TransliterateCyrillicGost(text);
 
         // Apply title case for proper names
         return ToTitleCase(result);
+    }
+
+    /// <summary>
+    /// Transliterate Russian text using GOST 7.79-2000.
+    /// </summary>
+    public static string TransliterateRussian(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        return Transliteration.CyrillicToLatin(text, Language.Russian);
+    }
+
+    /// <summary>
+    /// Transliterate Ukrainian text using GOST 7.79-2000.
+    /// </summary>
+    public static string TransliterateUkrainian(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        return Transliteration.CyrillicToLatin(text, Language.Ukrainian);
+    }
+
+    /// <summary>
+    /// Transliterate Belarusian text using GOST 7.79-2000.
+    /// </summary>
+    public static string TransliterateBelarusian(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        return Transliteration.CyrillicToLatin(text, Language.Belorussian);
     }
 
     /// <summary>
@@ -70,6 +110,36 @@ public static class Transliterator
             return false;
 
         return text.Any(c => char.IsLetter(c) && c > 127);
+    }
+
+    /// <summary>
+    /// Check if text contains Cyrillic characters.
+    /// </summary>
+    private static bool ContainsCyrillic(string text)
+    {
+        return text.Any(c => (c >= 0x0400 && c <= 0x04FF) || (c >= 0x0500 && c <= 0x052F));
+    }
+
+    /// <summary>
+    /// Detect language and transliterate using appropriate GOST rules.
+    /// </summary>
+    private static string TransliterateCyrillicGost(string text)
+    {
+        // Detect Ukrainian by specific letters: і, ї, є, ґ
+        if (text.Any(c => c == 'і' || c == 'І' || c == 'ї' || c == 'Ї' ||
+                         c == 'є' || c == 'Є' || c == 'ґ' || c == 'Ґ'))
+        {
+            return Transliteration.CyrillicToLatin(text, Language.Ukrainian);
+        }
+
+        // Detect Belarusian by specific letters: ў, і
+        if (text.Any(c => c == 'ў' || c == 'Ў'))
+        {
+            return Transliteration.CyrillicToLatin(text, Language.Belorussian);
+        }
+
+        // Default to Russian
+        return Transliteration.CyrillicToLatin(text, Language.Russian);
     }
 
     /// <summary>
