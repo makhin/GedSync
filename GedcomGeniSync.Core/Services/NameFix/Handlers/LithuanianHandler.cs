@@ -7,7 +7,7 @@ namespace GedcomGeniSync.Services.NameFix.Handlers;
 public class LithuanianHandler : NameFixHandlerBase
 {
     public override string Name => "Lithuanian";
-    public override int Order => 50;
+    public override int Order => 25;  // Before EnsureEnglish (35) to preserve original with diacritics
 
     public override void Handle(NameFixContext context)
     {

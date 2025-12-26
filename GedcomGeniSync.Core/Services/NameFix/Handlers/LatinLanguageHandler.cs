@@ -7,7 +7,7 @@ namespace GedcomGeniSync.Services.NameFix.Handlers;
 public class LatinLanguageHandler : NameFixHandlerBase
 {
     public override string Name => "LatinLanguage";
-    public override int Order => 70;
+    public override int Order => 27;  // Before EnsureEnglish (35) to preserve original with diacritics
 
     public override void Handle(NameFixContext context)
     {

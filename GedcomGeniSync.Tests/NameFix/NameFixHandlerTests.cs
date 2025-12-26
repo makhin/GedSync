@@ -369,6 +369,109 @@ public class NameFixHandlerTests
 
     #endregion
 
+    #region EnsureEnglishHandler Tests
+
+    [Fact]
+    public void EnsureEnglishHandler_ShouldPopulateFromRussian()
+    {
+        var context = CreateContext();
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Иван",
+            ["last_name"] = "Петров"
+        };
+
+        var handler = new EnsureEnglishHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Ivan");
+        context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Petrov");
+    }
+
+    [Fact]
+    public void EnsureEnglishHandler_ShouldSimplifyDiacritics()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Müller",
+            ["last_name"] = "Šimkus"
+        };
+
+        var handler = new EnsureEnglishHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Muller");
+        context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Simkus");
+    }
+
+    [Fact]
+    public void EnsureEnglishHandler_ShouldPopulateFromLithuanianWithSimplification()
+    {
+        var context = CreateContext();
+        context.Names["lt"] = new Dictionary<string, string>
+        {
+            ["last_name"] = "Kazlauskaitė"
+        };
+
+        var handler = new EnsureEnglishHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Kazlauskaite");
+    }
+
+    [Fact]
+    public void EnsureEnglishHandler_ShouldNotOverwriteExistingBasicLatin()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "John"
+        };
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Джон"
+        };
+
+        var handler = new EnsureEnglishHandler();
+        handler.Handle(context);
+
+        // Should keep existing English, not replace with transliteration
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("John");
+    }
+
+    [Fact]
+    public void EnsureEnglishHandler_ShouldHandleGermanEszett()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["last_name"] = "Weiß"
+        };
+
+        var handler = new EnsureEnglishHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Weiss");
+    }
+
+    [Fact]
+    public void EnsureEnglishHandler_ShouldHandlePolishL()
+    {
+        var context = CreateContext();
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Łukasz"
+        };
+
+        var handler = new EnsureEnglishHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Lukasz");
+    }
+
+    #endregion
+
     #region Pipeline Tests
 
     [Fact]

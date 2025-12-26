@@ -201,14 +201,15 @@ public class FixNamesCommandHandler : IHostedCommand
         // Register all handlers as INameFixHandler
         var handlerTypes = new (Type Type, string Name)[]
         {
-            (typeof(ScriptSplitHandler), "ScriptSplit"),
-            (typeof(CyrillicToRuHandler), "CyrillicToRu"),
-            (typeof(TranslitHandler), "Translit"),
-            (typeof(FeminineSurnameHandler), "FeminineSurname"),
-            (typeof(LithuanianHandler), "Lithuanian"),
-            (typeof(EstonianHandler), "Estonian"),
-            (typeof(LatinLanguageHandler), "LatinLanguage"),
-            (typeof(CleanupHandler), "Cleanup")
+            (typeof(ScriptSplitHandler), "ScriptSplit"),           // Order: 10
+            (typeof(CyrillicToRuHandler), "CyrillicToRu"),         // Order: 20
+            (typeof(LithuanianHandler), "Lithuanian"),             // Order: 25
+            (typeof(EstonianHandler), "Estonian"),                 // Order: 26
+            (typeof(LatinLanguageHandler), "LatinLanguage"),       // Order: 27
+            (typeof(TranslitHandler), "Translit"),                 // Order: 30
+            (typeof(EnsureEnglishHandler), "EnsureEnglish"),       // Order: 35 - MUST have English
+            (typeof(FeminineSurnameHandler), "FeminineSurname"),   // Order: 40
+            (typeof(CleanupHandler), "Cleanup")                    // Order: 100
         };
 
         foreach (var (type, name) in handlerTypes)
