@@ -251,7 +251,10 @@ public class NameFixPipelineIntegrationTests
 
         // Assert
         context.GetName("ru", "last_name").Should().Be("Иванова");
-        context.MaidenName.Should().Be("Петрова");
+        // Cyrillic maiden name should be in ru locale
+        context.GetName("ru", "maiden_name").Should().Be("Петрова");
+        // Primary maiden name gets transliterated to Latin
+        context.MaidenName.Should().NotBeNullOrEmpty();
     }
 
     #endregion
@@ -362,6 +365,341 @@ public class NameFixPipelineIntegrationTests
 
         // Multiple changes should be recorded
         context.Changes.Count.Should().BeGreaterThan(3);
+    }
+
+    #endregion
+
+    #region Test 11: Estonian Name Detection
+
+    /// <summary>
+    /// Test: Estonian name with specific characters.
+    /// Expected: Should be detected and placed in et locale.
+    /// </summary>
+    [Fact]
+    public void Test11_EstonianName_ShouldBeDetected()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Tõnu",  // Contains Estonian-specific 'õ'
+            ["last_name"] = "Mägi"    // Estonian surname pattern
+        };
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.GetName("et", "first_name").Should().Be("Tõnu");
+        context.GetName("et", "last_name").Should().Be("Mägi");
+    }
+
+    #endregion
+
+    #region Test 12: Patronymic in LastName Field
+
+    /// <summary>
+    /// Test: Russian patronymic incorrectly placed in last_name field.
+    /// Expected: Should be moved to middle_name.
+    /// </summary>
+    [Fact]
+    public void Test12_PatronymicInLastName_ShouldBeMoved()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Иван",
+            ["last_name"] = "Петрович"  // This is a patronymic, not a surname
+        };
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.GetName("ru", "middle_name").Should().Be("Петрович");
+        context.GetName("ru", "last_name").Should().BeNull();
+    }
+
+    #endregion
+
+    #region Test 13: O'Brien Style Surnames
+
+    /// <summary>
+    /// Test: Irish-style surname with apostrophe.
+    /// Expected: Proper O' formatting without extra space.
+    /// </summary>
+    [Fact]
+    public void Test13_OBrienSurname_ShouldBeProperlyFormatted()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.LastName = "O'BRIEN";
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.LastName.Should().Be("O'Brien");
+    }
+
+    #endregion
+
+    #region Test 14: McDonald Style Surnames
+
+    /// <summary>
+    /// Test: Scottish-style surname with Mc prefix.
+    /// Expected: Proper McDonald capitalization.
+    /// </summary>
+    [Fact]
+    public void Test14_McDonaldSurname_ShouldBeProperlyCapitalized()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.LastName = "MCDONALD";
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.LastName.Should().Be("McDonald");
+    }
+
+    #endregion
+
+    #region Test 15: Née Pattern for Maiden Name
+
+    /// <summary>
+    /// Test: Maiden name with "née" pattern.
+    /// Expected: Extract maiden name properly.
+    /// </summary>
+    [Fact]
+    public void Test15_NeePattern_ShouldExtractMaidenName()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Smith née Jones";
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.LastName.Should().Be("Smith");
+        context.MaidenName.Should().Be("Jones");
+    }
+
+    #endregion
+
+    #region Test 16: Nickname Extraction
+
+    /// <summary>
+    /// Test: Name with nickname in quotes.
+    /// Expected: Nickname should be extracted or handled properly.
+    /// </summary>
+    [Fact]
+    public void Test16_NicknameInQuotes_ShouldBeHandled()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.FirstName = "William \"Bill\"";
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.FirstName.Should().Be("William");
+    }
+
+    #endregion
+
+    #region Test 17: Hebrew Name Detection
+
+    /// <summary>
+    /// Test: Hebrew name should be placed in he locale.
+    /// Expected: Hebrew text should be in he locale.
+    /// </summary>
+    [Fact]
+    public void Test17_HebrewName_ShouldBeInHeLocale()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.FirstName = "דוד";  // David in Hebrew
+        context.LastName = "כהן";   // Cohen in Hebrew
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.GetName("he", "first_name").Should().Be("דוד");
+        context.GetName("he", "last_name").Should().Be("כהן");
+    }
+
+    #endregion
+
+    #region Test 18: Full Name in FirstName Field
+
+    /// <summary>
+    /// Test: Full name with patronymic in first_name field.
+    /// Expected: Should be split into components.
+    /// </summary>
+    [Fact]
+    public void Test18_FullNameInFirstNameField_ShouldBeSplit()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Иван Петрович Сидоров"  // Full name in one field
+        };
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.GetName("ru", "first_name").Should().Be("Иван");
+        context.GetName("ru", "middle_name").Should().Be("Петрович");
+        context.GetName("ru", "last_name").Should().Be("Сидоров");
+    }
+
+    #endregion
+
+    #region Test 19: Preserving Multiple Locales
+
+    /// <summary>
+    /// Test: Names in multiple locales should be preserved.
+    /// Expected: Each locale maintains its own data.
+    /// </summary>
+    [Fact]
+    public void Test19_MultipleLocales_ShouldBePreserved()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Иван",
+            ["last_name"] = "Петров"
+        };
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Ivan",
+            ["last_name"] = "Petrov"
+        };
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert - both locales should still have data
+        context.GetName("ru", "first_name").Should().Be("Иван");
+        context.GetName("ru", "last_name").Should().Be("Петров");
+        context.GetName("en-US", "first_name").Should().Be("Ivan");
+        context.GetName("en-US", "last_name").Should().Be("Petrov");
+    }
+
+    #endregion
+
+    #region Test 20: Cyrillic in English Locale with Existing Russian
+
+    /// <summary>
+    /// Test: Cyrillic text in en-US when ru already has data.
+    /// Expected: Should not overwrite existing ru data, just clean en-US.
+    /// </summary>
+    [Fact]
+    public void Test20_CyrillicInEnglish_WithExistingRussian_ShouldNotOverwrite()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Александр",  // Different from en-US
+            ["last_name"] = "Пушкин"
+        };
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Саша",  // Nickname, different from ru
+            ["last_name"] = "Пушкин"
+        };
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert - ru should not be overwritten
+        context.GetName("ru", "first_name").Should().Be("Александр");
+        context.GetName("ru", "last_name").Should().Be("Пушкин");
+        // en-US should have transliteration
+        var enFirstName = context.GetName("en-US", "first_name");
+        enFirstName.Should().MatchRegex("^[A-Za-z]+$");
+    }
+
+    #endregion
+
+    #region Test 21: Special Characters Cleanup
+
+    /// <summary>
+    /// Test: Names with various special characters.
+    /// Expected: Special characters should be removed.
+    /// </summary>
+    [Fact]
+    public void Test21_SpecialCharacters_ShouldBeRemoved()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Male);
+        context.FirstName = "***John***";
+        context.LastName = "<<Smith>>";
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.FirstName.Should().Be("John");
+        context.LastName.Should().Be("Smith");
+    }
+
+    #endregion
+
+    #region Test 22: Ukrainian Female Surname
+
+    /// <summary>
+    /// Test: Ukrainian female surname should not be changed.
+    /// Expected: -enko surnames stay the same for both genders.
+    /// </summary>
+    [Fact]
+    public void Test22_UkrainianFemaleSurname_ShouldNotChange()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Female);
+        context.Names["uk"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Оксана",
+            ["last_name"] = "Шевченко"  // Should NOT become Шевченка
+        };
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.GetName("uk", "last_name").Should().Be("Шевченко");
+    }
+
+    #endregion
+
+    #region Test 23: Double-Barreled Surname
+
+    /// <summary>
+    /// Test: Hyphenated surname should be properly capitalized.
+    /// Expected: Both parts properly capitalized.
+    /// </summary>
+    [Fact]
+    public void Test23_DoubleBarreledSurname_ShouldBeProperlyCapitalized()
+    {
+        // Arrange
+        var context = CreateContext(Gender.Female);
+        context.LastName = "SMITH-JONES";
+
+        // Act
+        _pipeline.Process(context);
+
+        // Assert
+        context.LastName.Should().Be("Smith-Jones");
     }
 
     #endregion

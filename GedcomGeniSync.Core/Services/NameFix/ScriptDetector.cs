@@ -282,7 +282,7 @@ public static class ScriptDetector
         if (text.Any(c => etChars.Contains(c))) return true;
 
         // Common Estonian surname patterns
-        var etPatterns = new[] { "mäe", "mets", "saar", "pere", "nurm", "vald", "järv" };
+        var etPatterns = new[] { "mäe", "mägi", "mets", "saar", "pere", "nurm", "vald", "järv" };
         var lowerText = text.ToLowerInvariant();
         return etPatterns.Any(p => lowerText.Contains(p));
     }

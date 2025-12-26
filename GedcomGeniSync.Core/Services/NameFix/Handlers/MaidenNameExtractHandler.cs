@@ -114,6 +114,20 @@ public class MaidenNameExtractHandler : NameFixHandlerBase
             $"Extracted maiden name '{maidenName}'");
         SetName(context, locale, NameFields.MaidenName, maidenName,
             "Maiden name extracted from last name");
+
+        // Also set primary MaidenName if empty
+        if (string.IsNullOrWhiteSpace(context.MaidenName))
+        {
+            context.MaidenName = maidenName;
+            context.Changes.Add(new NameChange
+            {
+                Field = "MaidenName",
+                OldValue = null,
+                NewValue = maidenName,
+                Reason = $"Maiden name extracted from {locale} locale",
+                Handler = Name
+            });
+        }
     }
 
     private (string LastName, string MaidenName)? TryExtractMaidenName(string input)

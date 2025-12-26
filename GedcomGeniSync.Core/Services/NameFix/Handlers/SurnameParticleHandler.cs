@@ -140,7 +140,9 @@ public class SurnameParticleHandler : NameFixHandlerBase
                 // Capitalize the main part of the surname
                 var normalizedRest = CapitalizeFirstLetter(restOfName);
 
-                result = normalizedParticle + " " + normalizedRest;
+                // Don't add space after particles ending with apostrophe (O', L')
+                var separator = normalizedParticle.EndsWith("'") ? "" : " ";
+                result = normalizedParticle + separator + normalizedRest;
                 break;
             }
         }
@@ -182,7 +184,8 @@ public class SurnameParticleHandler : NameFixHandlerBase
         // McDonald, MacDonald - Mc/Mac followed by capital letter
         if (surname.StartsWith("mc", StringComparison.OrdinalIgnoreCase) && surname.Length > 2)
         {
-            return "Mc" + char.ToUpper(surname[2]) + surname.Substring(3);
+            var rest = surname.Substring(3);
+            return "Mc" + char.ToUpper(surname[2]) + rest.ToLowerInvariant();
         }
 
         if (surname.StartsWith("mac", StringComparison.OrdinalIgnoreCase) && surname.Length > 3)
@@ -190,7 +193,8 @@ public class SurnameParticleHandler : NameFixHandlerBase
             // Check if it's really Mac + Name (not just "machin")
             if (char.IsUpper(surname[3]) || surname.Length > 5)
             {
-                return "Mac" + char.ToUpper(surname[3]) + surname.Substring(4);
+                var rest = surname.Substring(4);
+                return "Mac" + char.ToUpper(surname[3]) + rest.ToLowerInvariant();
             }
         }
 
@@ -210,7 +214,16 @@ public class SurnameParticleHandler : NameFixHandlerBase
     private static string CapitalizeFirstLetter(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
-        return char.ToUpper(text[0]) + text.Substring(1);
+
+        // Handle hyphenated names (Neumann-Schmidt)
+        if (text.Contains('-'))
+        {
+            var parts = text.Split('-');
+            return string.Join("-", parts.Select(CapitalizeFirstLetter));
+        }
+
+        // Convert to proper case: first letter uppercase, rest lowercase
+        return char.ToUpper(text[0]) + text.Substring(1).ToLowerInvariant();
     }
 
     private record ParticleInfo(string NormalizedForm, bool AlwaysCapitalized);

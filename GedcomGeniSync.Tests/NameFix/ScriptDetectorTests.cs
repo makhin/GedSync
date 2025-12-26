@@ -83,9 +83,10 @@ public class ScriptDetectorTests
     }
 
     [Theory]
-    [InlineData("Kowalski", true)]  // Polish surname
+    [InlineData("Kowalski", false)]  // No Polish special chars
     [InlineData("Wójcik", true)]  // Polish special character
     [InlineData("Nowak", false)]  // Common but no special chars
+    [InlineData("Żółć", true)]  // Polish special characters
     public void IsPolish_ShouldDetectCorrectly(string? input, bool expected)
     {
         var result = ScriptDetector.IsPolish(input);

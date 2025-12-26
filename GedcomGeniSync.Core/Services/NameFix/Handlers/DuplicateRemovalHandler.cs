@@ -79,28 +79,73 @@ public class DuplicateRemovalHandler : NameFixHandlerBase
                 var removeLocale = sorted[i].Key;
                 var removeValue = sorted[i].Value;
 
-                // Check if it's exact duplicate or just normalized match
-                if (sorted[0].Value == removeValue ||
-                    IsTrivialDuplicate(sorted[0].Value, removeValue, keepLocale, removeLocale))
+                // Check if this should be considered a removable duplicate
+                if (!ShouldRemoveDuplicate(sorted[0].Value, removeValue, keepLocale, removeLocale))
                 {
-                    // Remove from this locale using mutable dictionary
-                    if (context.Names.TryGetValue(removeLocale, out var mutableFields) &&
-                        mutableFields.ContainsKey(field))
-                    {
-                        context.Changes.Add(new NameChange
-                        {
-                            Field = $"{field}[{removeLocale}]",
-                            OldValue = removeValue,
-                            NewValue = null,
-                            Reason = $"Duplicate value exists in [{keepLocale}]",
-                            Handler = Name
-                        });
+                    continue;
+                }
 
-                        mutableFields.Remove(field);
-                    }
+                // Remove from this locale using mutable dictionary
+                if (context.Names.TryGetValue(removeLocale, out var mutableFields) &&
+                    mutableFields.ContainsKey(field))
+                {
+                    context.Changes.Add(new NameChange
+                    {
+                        Field = $"{field}[{removeLocale}]",
+                        OldValue = removeValue,
+                        NewValue = null,
+                        Reason = $"Duplicate value exists in [{keepLocale}]",
+                        Handler = Name
+                    });
+
+                    mutableFields.Remove(field);
                 }
             }
         }
+    }
+
+    private bool ShouldRemoveDuplicate(string kept, string removed, string keepLocale, string removeLocale)
+    {
+        // Don't remove from language-specific locales that represent different languages
+        // even if values are identical
+
+        // Don't remove from Cyrillic language locales (uk, be, etc.) if kept in ru
+        // These are different languages that may share names
+        if (IsCyrillicLocale(keepLocale) && IsCyrillicLocale(removeLocale))
+        {
+            return false;
+        }
+
+        // Don't remove from Latin language locales if the name contains language-specific characters
+        // (e.g., Šimkauskas in lt should not be removed even if same in en-US)
+        if (IsLatinLanguageLocale(removeLocale) && Locales.IsEnglish(keepLocale))
+        {
+            // Check if the value contains language-specific diacritics
+            if (ContainsLanguageSpecificChars(removed))
+            {
+                return false;
+            }
+        }
+
+        // For same language duplicates, check if it's truly a duplicate
+        return IsTrivialDuplicate(kept, removed, keepLocale, removeLocale);
+    }
+
+    private static bool ContainsLanguageSpecificChars(string text)
+    {
+        // Check for diacritics and special characters that indicate a non-English name
+        foreach (var c in text)
+        {
+            // Extended Latin characters (not basic A-Z, a-z)
+            if (c >= 0x00C0 && c <= 0x00FF) return true;  // Latin-1 Supplement (ä, ö, ü, etc.)
+            if (c >= 0x0100 && c <= 0x024F) return true;  // Latin Extended-A and B (š, ž, ą, etc.)
+        }
+        return false;
+    }
+
+    private static bool IsLatinLanguageLocale(string locale)
+    {
+        return locale is "lt" or "et" or "lv" or "pl" or "de" or "fr" or "es" or "pt" or "it";
     }
 
     private string NormalizeForComparison(string value)
@@ -174,10 +219,6 @@ public class DuplicateRemovalHandler : NameFixHandlerBase
 
     private bool IsTrivialDuplicate(string kept, string removed, string keepLocale, string removeLocale)
     {
-        // Exact match (case insensitive)
-        if (kept.Equals(removed, StringComparison.OrdinalIgnoreCase))
-            return true;
-
         // Same value in different scripts is NOT a trivial duplicate
         // (e.g., "Иван" and "Ivan" should both be kept in their respective locales)
         var keptHasCyrillic = kept.Any(c => ScriptDetector.IsCyrillic(c));
@@ -186,7 +227,24 @@ public class DuplicateRemovalHandler : NameFixHandlerBase
         if (keptHasCyrillic != removedHasCyrillic)
             return false;  // Different scripts, keep both
 
+        // Don't remove from language-specific Cyrillic locales (uk, ru, be, etc.)
+        // even if values match - they represent different languages
+        if (IsCyrillicLocale(keepLocale) && IsCyrillicLocale(removeLocale))
+        {
+            // Ukrainian names should stay in uk even if same as ru
+            return false;
+        }
+
+        // Exact match (case insensitive) in non-Cyrillic locales
+        if (kept.Equals(removed, StringComparison.OrdinalIgnoreCase))
+            return true;
+
         // Same script, just case difference
         return true;
+    }
+
+    private static bool IsCyrillicLocale(string locale)
+    {
+        return locale is "ru" or "uk" or "be" or "bg" or "sr" or "mk" or "kk" or "ky";
     }
 }

@@ -174,7 +174,7 @@ public class PatronymicHandler : NameFixHandlerBase
         var firstName = context.GetName(locale, NameFields.FirstName);
         if (string.IsNullOrWhiteSpace(firstName)) return;
 
-        // Check for full name pattern
+        // Check for full name pattern (FirstName Patronymic LastName)
         var fullMatch = FullNamePattern.Match(firstName);
         if (fullMatch.Success)
         {
@@ -189,6 +189,22 @@ public class PatronymicHandler : NameFixHandlerBase
                     "Patronymic extracted");
                 SetName(context, locale, NameFields.LastName, fullMatch.Groups[3].Value,
                     "Last name extracted");
+                return;
+            }
+        }
+
+        // Check for partial pattern (FirstName Patronymic)
+        var partialMatch = FirstAndPatronymicPattern.Match(firstName);
+        if (partialMatch.Success)
+        {
+            var existingMiddle = context.GetName(locale, NameFields.MiddleName);
+
+            if (string.IsNullOrWhiteSpace(existingMiddle))
+            {
+                SetName(context, locale, NameFields.FirstName, partialMatch.Groups[1].Value,
+                    "Split patronymic from first name");
+                SetName(context, locale, NameFields.MiddleName, partialMatch.Groups[2].Value,
+                    "Patronymic extracted");
             }
         }
 
