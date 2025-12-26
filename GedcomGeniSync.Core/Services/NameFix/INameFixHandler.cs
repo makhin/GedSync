@@ -62,4 +62,70 @@ public abstract class NameFixHandlerBase : INameFixHandler
     {
         context.MoveName(fromLocale, toLocale, field, reason, Name);
     }
+
+    /// <summary>
+    /// Primary field definitions for iteration.
+    /// </summary>
+    protected static readonly (string FieldName, Func<NameFixContext, string?> Getter, Action<NameFixContext, string?> Setter)[] PrimaryFields =
+    {
+        ("FirstName", c => c.FirstName, (c, v) => c.FirstName = v),
+        ("LastName", c => c.LastName, (c, v) => c.LastName = v),
+        ("MiddleName", c => c.MiddleName, (c, v) => c.MiddleName = v),
+        ("MaidenName", c => c.MaidenName, (c, v) => c.MaidenName = v),
+    };
+
+    /// <summary>
+    /// Iterate over primary fields with a processor function.
+    /// </summary>
+    protected void ForEachPrimaryField(
+        NameFixContext context,
+        Func<string, string> processor,
+        string reason)
+    {
+        foreach (var (fieldName, getter, setter) in PrimaryFields)
+        {
+            var value = getter(context);
+            if (string.IsNullOrWhiteSpace(value)) continue;
+
+            var newValue = processor(value);
+            if (newValue == value) continue;
+
+            context.Changes.Add(new NameChange
+            {
+                Field = fieldName,
+                OldValue = value,
+                NewValue = newValue,
+                Reason = reason,
+                Handler = Name
+            });
+            setter(context, newValue);
+        }
+    }
+
+    /// <summary>
+    /// Iterate over all locale fields with a processor function.
+    /// </summary>
+    protected void ForEachLocaleField(
+        NameFixContext context,
+        Func<string, string> processor,
+        string reason)
+    {
+        foreach (var locale in context.Names.Keys.ToList())
+        {
+            var fields = context.GetLocaleFields(locale);
+            if (fields == null) continue;
+
+            foreach (var field in NameFields.All)
+            {
+                if (!fields.TryGetValue(field, out var value)) continue;
+                if (string.IsNullOrWhiteSpace(value)) continue;
+
+                var newValue = processor(value);
+                if (newValue != value)
+                {
+                    SetName(context, locale, field, newValue, reason);
+                }
+            }
+        }
+    }
 }

@@ -176,6 +176,34 @@ public static class ScriptDetector
     public record LanguageDetectionResult(string LanguageCode, double Confidence, string Reason);
 
     /// <summary>
+    /// Check if character is basic Latin (A-Z, a-z only, no diacritics)
+    /// </summary>
+    public static bool IsLatinLetter(char c)
+    {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    }
+
+    /// <summary>
+    /// Check if text contains Ukrainian-specific characters or patterns
+    /// </summary>
+    public static bool IsUkrainian(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        // Must contain Cyrillic first
+        if (!ContainsCyrillic(text)) return false;
+
+        // Ukrainian-specific letters (definitive)
+        var ukChars = new[] { 'і', 'І', 'ї', 'Ї', 'є', 'Є', 'ґ', 'Ґ' };
+        if (text.Any(c => ukChars.Contains(c))) return true;
+
+        // Common Ukrainian surname patterns
+        var lowerText = text.ToLowerInvariant();
+        var ukSurnameEndings = new[] { "енко", "ейко", "ченко", "шенко", "чук", "щук" };
+        return ukSurnameEndings.Any(e => lowerText.EndsWith(e));
+    }
+
+    /// <summary>
     /// Detect specific language for Latin text
     /// </summary>
     public static LanguageDetectionResult? DetectLatinLanguage(string? text)
