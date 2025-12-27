@@ -483,7 +483,7 @@ public class WaveCompareCommandHandler : IHostedCommand
         foreach (var nodeToAdd in report.Individuals.NodesToAdd)
         {
             // Get Geni profile ID of the relative
-            if (!mappingBySource.TryGetValue(nodeToAdd.RelatedToNodeId, out var mapping))
+            if (nodeToAdd.RelatedToNodeId == null || !mappingBySource.TryGetValue(nodeToAdd.RelatedToNodeId, out var mapping))
             {
                 logger.LogWarning(
                     "Cannot verify {SourceId} - related profile {RelatedId} not found in mappings",

@@ -3,7 +3,7 @@ namespace GedcomGeniSync.Services.NameFix.Handlers;
 /// <summary>
 /// Handler for Ukrainian names.
 /// Detects Ukrainian-specific letters (і, ї, є, ґ) and surname patterns (-енко, -чук).
-/// Uses NickBuhro.Translit for GOST-compliant transliteration.
+/// Uses Cyrillic.Convert for BGN/PCGN transliteration.
 /// </summary>
 public class UkrainianHandler : LanguageDetectionHandlerBase
 {

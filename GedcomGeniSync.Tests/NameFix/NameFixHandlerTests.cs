@@ -501,7 +501,7 @@ public class NameFixHandlerTests
         // Verify final state
         context.GetName(Locales.Russian, NameFields.FirstName).Should().Be("Мария");
         context.GetName(Locales.Russian, NameFields.LastName).Should().Be("Попова");
-        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Mariya");
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Marija");
         context.GetName(Locales.PreferredEnglish, NameFields.LastName).Should().Be("Popova");
     }
 

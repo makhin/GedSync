@@ -1,28 +1,30 @@
-using NickBuhro.Translit;
+using Cyrillic.Convert;
 using Unidecode.NET;
 
 namespace GedcomGeniSync.Services.NameFix;
 
 /// <summary>
 /// Transliteration service combining:
-/// - NickBuhro.Translit for Slavic languages (GOST 7.79-2000 / ISO 9)
+/// - Cyrillic.Convert for Slavic languages (BGN/PCGN standard)
 /// - Unidecode.NET for other scripts (Hebrew, Greek, etc.)
 /// </summary>
 public static class Transliterator
 {
+    private static readonly Conversion _conversion = new();
+
     /// <summary>
     /// Transliterate text to ASCII.
-    /// Uses GOST for Cyrillic, Unidecode for other scripts.
+    /// Uses BGN/PCGN for Cyrillic, Unidecode for other scripts.
     /// </summary>
     public static string ToAscii(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
 
-        // Check if text contains Cyrillic - use GOST
+        // Check if text contains Cyrillic - use BGN/PCGN
         if (ContainsCyrillic(text))
         {
-            return TransliterateCyrillicGost(text);
+            return TransliterateCyrillicBgn(text);
         }
 
         // For other scripts (Hebrew, Greek, etc.) - use Unidecode
@@ -30,7 +32,7 @@ public static class Transliterator
     }
 
     /// <summary>
-    /// Transliterate Cyrillic text to Latin using GOST 7.79-2000 (ISO 9) standard.
+    /// Transliterate Cyrillic text to Latin using BGN/PCGN standard.
     /// Detects language (Russian/Ukrainian/Belarusian) automatically.
     /// </summary>
     public static string TransliterateCyrillic(string text)
@@ -38,43 +40,43 @@ public static class Transliterator
         if (string.IsNullOrEmpty(text))
             return text;
 
-        var result = TransliterateCyrillicGost(text);
+        var result = TransliterateCyrillicBgn(text);
 
         // Apply title case for proper names
         return ToTitleCase(result);
     }
 
     /// <summary>
-    /// Transliterate Russian text using GOST 7.79-2000.
+    /// Transliterate Russian text using BGN/PCGN.
     /// </summary>
     public static string TransliterateRussian(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
 
-        return Transliteration.CyrillicToLatin(text, Language.Russian);
+        return _conversion.RussianCyrillicToLatin(text);
     }
 
     /// <summary>
-    /// Transliterate Ukrainian text using GOST 7.79-2000.
+    /// Transliterate Ukrainian text using BGN/PCGN.
     /// </summary>
     public static string TransliterateUkrainian(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
 
-        return Transliteration.CyrillicToLatin(text, Language.Ukrainian);
+        return _conversion.UkrainianCyrillicToLatin(text);
     }
 
     /// <summary>
-    /// Transliterate Belarusian text using GOST 7.79-2000.
+    /// Transliterate Belarusian text using BGN/PCGN.
     /// </summary>
     public static string TransliterateBelarusian(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
 
-        return Transliteration.CyrillicToLatin(text, Language.Belorussian);
+        return _conversion.BelarusianCyrillicToLatin(text);
     }
 
     /// <summary>
@@ -121,25 +123,25 @@ public static class Transliterator
     }
 
     /// <summary>
-    /// Detect language and transliterate using appropriate GOST rules.
+    /// Detect language and transliterate using appropriate BGN/PCGN rules.
     /// </summary>
-    private static string TransliterateCyrillicGost(string text)
+    private static string TransliterateCyrillicBgn(string text)
     {
         // Detect Ukrainian by specific letters: і, ї, є, ґ
         if (text.Any(c => c == 'і' || c == 'І' || c == 'ї' || c == 'Ї' ||
                          c == 'є' || c == 'Є' || c == 'ґ' || c == 'Ґ'))
         {
-            return Transliteration.CyrillicToLatin(text, Language.Ukrainian);
+            return _conversion.UkrainianCyrillicToLatin(text);
         }
 
-        // Detect Belarusian by specific letters: ў, і
+        // Detect Belarusian by specific letters: ў
         if (text.Any(c => c == 'ў' || c == 'Ў'))
         {
-            return Transliteration.CyrillicToLatin(text, Language.Belorussian);
+            return _conversion.BelarusianCyrillicToLatin(text);
         }
 
         // Default to Russian
-        return Transliteration.CyrillicToLatin(text, Language.Russian);
+        return _conversion.RussianCyrillicToLatin(text);
     }
 
     /// <summary>

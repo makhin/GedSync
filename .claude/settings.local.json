@@ -44,7 +44,8 @@
       "Bash(rm:*)",
       "Bash(./GedcomGeniSync.Cli.exe wave-compare:*)",
       "Bash(del c:codeGedSyncGedcomGeniSync.TestsWaveWaveCompareCommandHandlerTests.cs)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(dotnet remove:*)"
     ],
     "deny": [],
     "ask": []
