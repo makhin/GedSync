@@ -25,4 +25,25 @@ public interface IGeniProfileClient
     Task<GeniProfile?> AddChildToUnionAsync(string unionId, GeniProfileCreate child);
     Task<GeniProfile?> AddPartnerToUnionAsync(string unionId, GeniProfileCreate partner);
     Task<GeniProfile?> UpdateProfileAsync(string profileId, GeniProfileUpdate update);
+
+    // Cache Operations
+    /// <summary>
+    /// Gets a cached profile if available
+    /// </summary>
+    GeniProfile? GetCachedProfile(string profileId);
+
+    /// <summary>
+    /// Gets a cached union if available
+    /// </summary>
+    GeniUnion? GetCachedUnion(string unionId);
+
+    /// <summary>
+    /// Gets cache statistics (unique profile count, unique union count)
+    /// </summary>
+    (int ProfileCount, int UnionCount) GetCacheStats();
+
+    /// <summary>
+    /// Clears the profile and union cache
+    /// </summary>
+    void ClearCache();
 }

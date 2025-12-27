@@ -6,13 +6,14 @@ namespace GedcomGeniSync.Tests;
 public class RateLimitInfoTests
 {
     [Fact]
-    public void GetRecommendedDelayMs_NoInfo_ReturnsDefaultDelay()
+    public void GetRecommendedDelayMs_NoInfo_ReturnsConservativeDelay()
     {
         var rateLimitInfo = new RateLimitInfo();
 
         var delay = rateLimitInfo.GetRecommendedDelayMs();
 
-        Assert.Equal(1000, delay); // Default 1 second
+        // Conservative default for Geni API which allows ~1 req/10s
+        Assert.Equal(10000, delay);
     }
 
     [Fact]

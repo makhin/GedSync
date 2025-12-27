@@ -55,6 +55,24 @@ public class NameFixContext
     public string? Suffix { get; set; }
 
     /// <summary>
+    /// Nicknames (comma-delimited list).
+    /// Populated from names like "Александр (Шура, Саша)".
+    /// </summary>
+    public string? Nicknames { get; set; }
+
+    /// <summary>
+    /// Spouse's last name (for married surname resolution).
+    /// Populated from immediate family data.
+    /// </summary>
+    public string? SpouseLastName { get; set; }
+
+    /// <summary>
+    /// Spouse's multilingual last names (for married surname resolution).
+    /// Structure: SpouseLastNames[locale] = value
+    /// </summary>
+    public Dictionary<string, string>? SpouseLastNames { get; set; }
+
+    /// <summary>
     /// Multilingual names dictionary.
     /// Structure: Names[locale][field] = value
     /// Example: Names["ru"]["first_name"] = "Иван"
@@ -261,8 +279,48 @@ public class NameFixContext
             LastName = LastName,
             MaidenName = MaidenName,
             Suffix = Suffix,
+            Nicknames = Nicknames,
             Names = Names.Count > 0 ? Names : null
         };
+    }
+
+    #endregion
+
+    #region Spouse Info
+
+    /// <summary>
+    /// Set spouse information from a GeniNode
+    /// </summary>
+    public void SetSpouseInfo(GeniNode? spouseNode)
+    {
+        if (spouseNode == null) return;
+
+        SpouseLastName = spouseNode.LastName;
+
+        if (spouseNode.Names != null)
+        {
+            SpouseLastNames = new Dictionary<string, string>();
+            foreach (var (locale, fields) in spouseNode.Names)
+            {
+                if (fields.TryGetValue(NameFields.LastName, out var lastName) &&
+                    !string.IsNullOrWhiteSpace(lastName))
+                {
+                    SpouseLastNames[locale] = lastName;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get spouse's last name for a specific locale
+    /// </summary>
+    public string? GetSpouseLastName(string locale)
+    {
+        if (SpouseLastNames?.TryGetValue(locale, out var lastName) == true)
+        {
+            return string.IsNullOrWhiteSpace(lastName) ? null : lastName;
+        }
+        return null;
     }
 
     #endregion

@@ -3,10 +3,15 @@ using System.Text.RegularExpressions;
 namespace GedcomGeniSync.Services.NameFix.Handlers;
 
 /// <summary>
-/// Handler that extracts nicknames from names:
-/// - "Александр 'Саша' Петров" -> first_name: Александр, nickname: Саша
-/// - "William (Bill) Smith" -> first_name: William, nickname: Bill
-/// - 'Robert "Bob" Johnson' -> first_name: Robert, nickname: Bob
+/// Handler that extracts nicknames from first names:
+/// - "Александр (Саша)" -> first_name: Александр, nicknames: Саша
+/// - "Нина (Серафима)" -> first_name: Нина, nicknames: Серафима
+/// - "Александр (Шура, Саша)" -> first_name: Александр, nicknames: Шура, Саша
+/// - "William 'Bill'" -> first_name: William, nicknames: Bill
+/// - 'Robert "Bob"' -> first_name: Robert, nicknames: Bob
+///
+/// Any content in parentheses within FirstName is treated as nickname(s).
+/// Multiple nicknames can be comma-separated.
 /// </summary>
 public class NicknameExtractHandler : NameFixHandlerBase
 {
@@ -79,39 +84,68 @@ public class NicknameExtractHandler : NameFixHandlerBase
 
     public override void Handle(NameFixContext context)
     {
+        var extractedNicknames = new List<string>();
+
         // Extract from primary FirstName
-        ExtractFromPrimaryFirstName(context);
+        ExtractFromPrimaryFirstName(context, extractedNicknames);
 
         // Extract from localized first names
         foreach (var locale in context.Names.Keys.ToList())
         {
-            ExtractFromLocale(context, locale);
+            ExtractFromLocale(context, locale, extractedNicknames);
+        }
+
+        // Set nicknames if any were extracted
+        if (extractedNicknames.Count > 0)
+        {
+            var existingNicknames = context.Nicknames?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                ?? Array.Empty<string>();
+
+            var allNicknames = existingNicknames
+                .Concat(extractedNicknames)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var newNicknamesValue = string.Join(", ", allNicknames);
+
+            if (newNicknamesValue != context.Nicknames)
+            {
+                context.Changes.Add(new NameChange
+                {
+                    Field = "Nicknames",
+                    OldValue = context.Nicknames,
+                    NewValue = newNicknamesValue,
+                    Reason = $"Extracted nicknames from first name",
+                    Handler = Name
+                });
+                context.Nicknames = newNicknamesValue;
+            }
         }
     }
 
-    private void ExtractFromPrimaryFirstName(NameFixContext context)
+    private void ExtractFromPrimaryFirstName(NameFixContext context, List<string> extractedNicknames)
     {
         if (string.IsNullOrWhiteSpace(context.FirstName)) return;
 
         var result = TryExtractNickname(context.FirstName);
         if (result == null) return;
 
-        var (cleanName, nickname) = result.Value;
+        var (cleanName, nicknames) = result.Value;
 
         context.Changes.Add(new NameChange
         {
             Field = "FirstName",
             OldValue = context.FirstName,
             NewValue = cleanName,
-            Reason = $"Extracted nickname '{nickname}'",
+            Reason = $"Extracted nickname(s) '{string.Join(", ", nicknames)}'",
             Handler = Name
         });
 
         context.FirstName = cleanName;
-        // Note: Would set context.Nickname if it existed
+        extractedNicknames.AddRange(nicknames);
     }
 
-    private void ExtractFromLocale(NameFixContext context, string locale)
+    private void ExtractFromLocale(NameFixContext context, string locale, List<string> extractedNicknames)
     {
         var firstName = context.GetName(locale, NameFields.FirstName);
         if (string.IsNullOrWhiteSpace(firstName)) return;
@@ -119,44 +153,62 @@ public class NicknameExtractHandler : NameFixHandlerBase
         var result = TryExtractNickname(firstName);
         if (result == null) return;
 
-        var (cleanName, nickname) = result.Value;
+        var (cleanName, nicknames) = result.Value;
 
         SetName(context, locale, NameFields.FirstName, cleanName,
-            $"Extracted nickname '{nickname}'");
+            $"Extracted nickname(s) '{string.Join(", ", nicknames)}'");
 
-        // Store nickname - Geni uses "nicknames" field
-        // For now, we just clean the first name
+        extractedNicknames.AddRange(nicknames);
     }
 
-    private (string CleanName, string Nickname)? TryExtractNickname(string input)
+    /// <summary>
+    /// Try to extract nicknames from a first name.
+    /// Returns the clean name and list of extracted nicknames.
+    /// </summary>
+    private (string CleanName, List<string> Nicknames)? TryExtractNickname(string input)
     {
+        var nicknames = new List<string>();
+        var cleanName = input;
+
         // Try quoted nickname first
-        var quotedMatch = QuotedNicknamePattern.Match(input);
+        var quotedMatch = QuotedNicknamePattern.Match(cleanName);
         if (quotedMatch.Success)
         {
             var nickname = quotedMatch.Groups[1].Value.Trim();
-            var cleanName = input.Remove(quotedMatch.Index, quotedMatch.Length).Trim();
+            cleanName = cleanName.Remove(quotedMatch.Index, quotedMatch.Length).Trim();
             cleanName = NormalizeSpaces(cleanName);
 
-            if (!string.IsNullOrWhiteSpace(nickname) && !string.IsNullOrWhiteSpace(cleanName))
+            if (!string.IsNullOrWhiteSpace(nickname))
             {
-                return (cleanName, nickname);
+                nicknames.Add(nickname);
             }
         }
 
-        // Try parenthetical nickname (only if it looks like a diminutive, not maiden name)
-        var parenMatch = ParenNicknamePattern.Match(input);
+        // Try parenthetical nickname - extract ANY content in parentheses from FirstName
+        var parenMatch = ParenNicknamePattern.Match(cleanName);
         if (parenMatch.Success)
         {
-            var potentialNickname = parenMatch.Groups[1].Value.Trim();
-            var remainingName = input.Remove(parenMatch.Index, parenMatch.Length).Trim();
+            var parenContent = parenMatch.Groups[1].Value.Trim();
+            var remainingName = cleanName.Remove(parenMatch.Index, parenMatch.Length).Trim();
             remainingName = NormalizeSpaces(remainingName);
 
-            // Check if it's a known diminutive
-            if (IsKnownDiminutive(remainingName, potentialNickname))
+            // Only extract if we have a valid remaining name
+            if (!string.IsNullOrWhiteSpace(remainingName) && !string.IsNullOrWhiteSpace(parenContent))
             {
-                return (remainingName, potentialNickname);
+                cleanName = remainingName;
+
+                // Split by comma for multiple nicknames: "Шура, Саша"
+                var parenNicknames = parenContent
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(n => !string.IsNullOrWhiteSpace(n));
+
+                nicknames.AddRange(parenNicknames);
             }
+        }
+
+        if (nicknames.Count > 0 && !string.IsNullOrWhiteSpace(cleanName))
+        {
+            return (cleanName, nicknames);
         }
 
         return null;

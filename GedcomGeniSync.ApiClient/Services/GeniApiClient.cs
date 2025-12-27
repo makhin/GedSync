@@ -60,6 +60,18 @@ public class GeniApiClient : IGeniApiClient
     public Task<GeniProfile?> UpdateProfileAsync(string profileId, GeniProfileUpdate update)
         => _profileClient.UpdateProfileAsync(profileId, update);
 
+    public GeniProfile? GetCachedProfile(string profileId)
+        => _profileClient.GetCachedProfile(profileId);
+
+    public GeniUnion? GetCachedUnion(string unionId)
+        => _profileClient.GetCachedUnion(unionId);
+
+    public (int ProfileCount, int UnionCount) GetCacheStats()
+        => _profileClient.GetCacheStats();
+
+    public void ClearCache()
+        => _profileClient.ClearCache();
+
     #endregion
 
     #region Photo Operations - Delegated to IGeniPhotoClient

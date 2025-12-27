@@ -660,8 +660,7 @@ public class NameFixHandlerTests
         handler.Handle(context);
 
         context.FirstName.Should().Be("Александр");
-        // Nickname extraction is recorded in changes
-        context.Changes.Should().Contain(c => c.Reason.Contains("nickname") || c.Reason.Contains("Саша"));
+        context.Nicknames.Should().Be("Саша");
     }
 
     [Fact]
@@ -677,8 +676,68 @@ public class NameFixHandlerTests
         handler.Handle(context);
 
         context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("William");
-        // Nickname extraction is recorded in changes
-        context.Changes.Should().Contain(c => c.Reason.Contains("nickname") || c.Reason.Contains("Bill"));
+        context.Nicknames.Should().Be("Bill");
+    }
+
+    [Fact]
+    public void NicknameExtractHandler_ShouldExtractAnyParenthesesContent()
+    {
+        // Нина (Серафима) - not a known diminutive but should still extract
+        var context = CreateContext();
+        context.FirstName = "Нина (Серафима)";
+
+        var handler = new NicknameExtractHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("Нина");
+        context.Nicknames.Should().Be("Серафима");
+    }
+
+    [Fact]
+    public void NicknameExtractHandler_ShouldExtractMultipleNicknames()
+    {
+        // Александр (Шура, Саша) - multiple nicknames
+        var context = CreateContext();
+        context.FirstName = "Александр (Шура, Саша)";
+
+        var handler = new NicknameExtractHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("Александр");
+        context.Nicknames.Should().Be("Шура, Саша");
+    }
+
+    [Fact]
+    public void NicknameExtractHandler_ShouldExtractFromPrimaryAndLocale()
+    {
+        var context = CreateContext();
+        context.FirstName = "Александр (Саша)";
+        context.Names["en-US"] = new Dictionary<string, string>
+        {
+            ["first_name"] = "Alexander (Alex)"
+        };
+
+        var handler = new NicknameExtractHandler();
+        handler.Handle(context);
+
+        context.FirstName.Should().Be("Александр");
+        context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Alexander");
+        // Should have both nicknames, deduplicated
+        context.Nicknames.Should().Contain("Саша");
+        context.Nicknames.Should().Contain("Alex");
+    }
+
+    [Fact]
+    public void NicknameExtractHandler_ShouldNotExtractEmptyParentheses()
+    {
+        var context = CreateContext();
+        context.FirstName = "Александр ()";
+
+        var handler = new NicknameExtractHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeFalse();
+        context.FirstName.Should().Be("Александр ()");
     }
 
     #endregion
@@ -912,6 +971,237 @@ public class NameFixHandlerTests
         // Both should remain as they're in different scripts
         context.GetName(Locales.PreferredEnglish, NameFields.FirstName).Should().Be("Ivan");
         context.GetName(Locales.Russian, NameFields.FirstName).Should().Be("Иван");
+    }
+
+    #endregion
+
+    #region MarriedSurnameHandler Tests
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldSwapWhenMaidenMatchesSpouse()
+    {
+        // Woman has: LastName="Попова", MaidenName="Рыжова"
+        // Husband: LastName="Рыжов"
+        // Expected: LastName="Рыжова", MaidenName="Попова"
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Попова";
+        context.MaidenName = "Рыжова";
+        context.SpouseLastName = "Рыжов";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Рыжова");
+        context.MaidenName.Should().Be("Попова");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldNotSwapWhenLastNameMatchesSpouse()
+    {
+        // Woman has: LastName="Попова", MaidenName="Рыжова"
+        // Husband: LastName="Попов"
+        // Expected: No change (already correct)
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Попова";
+        context.MaidenName = "Рыжова";
+        context.SpouseLastName = "Попов";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeFalse();
+        context.LastName.Should().Be("Попова");
+        context.MaidenName.Should().Be("Рыжова");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldHandleTransliteratedSurnames()
+    {
+        // Woman has: LastName="Popova", MaidenName="Ryzhova"
+        // Husband: LastName="Ryzhov"
+        // Expected: LastName="Ryzhova", MaidenName="Popova"
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Popova";
+        context.MaidenName = "Ryzhova";
+        context.SpouseLastName = "Ryzhov";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Ryzhova");
+        context.MaidenName.Should().Be("Popova");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldSwapLocaleFields()
+    {
+        var context = CreateContext(Gender.Female);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["last_name"] = "Попова",
+            ["maiden_name"] = "Рыжова"
+        };
+        context.SpouseLastNames = new Dictionary<string, string>
+        {
+            ["ru"] = "Рыжов"
+        };
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Russian, NameFields.LastName).Should().Be("Рыжова");
+        context.GetName(Locales.Russian, NameFields.MaidenName).Should().Be("Попова");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldNotProcessMales()
+    {
+        var context = CreateContext(Gender.Male);
+        context.LastName = "Попов";
+        context.MaidenName = "Рыжов";
+        context.SpouseLastName = "Рыжова";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldNotProcessWithoutSpouseInfo()
+    {
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Попова";
+        context.MaidenName = "Рыжова";
+        // No SpouseLastName
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldHandleAdjectiveSurnames()
+    {
+        // Adjective-style surnames: Чайковский → Чайковская
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Чайковская";
+        context.MaidenName = "Рыжова";
+        context.SpouseLastName = "Рыжов";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Рыжова");
+        context.MaidenName.Should().Be("Чайковская");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldHandleInSuffix()
+    {
+        // -ин → -ина: Путин → Путина
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Иванова";
+        context.MaidenName = "Путина";
+        context.SpouseLastName = "Путин";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Путина");
+        context.MaidenName.Should().Be("Иванова");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldHandleUkrainianKoUnchanged()
+    {
+        // Ukrainian -ко surnames don't change by gender
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Иванова";
+        context.MaidenName = "Шевченко";
+        context.SpouseLastName = "Шевченко";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.LastName.Should().Be("Шевченко");
+        context.MaidenName.Should().Be("Иванова");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldCopyLastNameToMaidenNameForMale()
+    {
+        // Male with LastName but no MaidenName
+        var context = CreateContext(Gender.Male);
+        context.LastName = "Попов";
+        // MaidenName is null
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeTrue();
+        context.MaidenName.Should().Be("Попов");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldCopyLastNameToMaidenNameForUnmarriedFemale()
+    {
+        // Female without spouse info (unmarried)
+        var context = CreateContext(Gender.Female);
+        context.LastName = "Иванова";
+        // No SpouseLastName, MaidenName is null
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeTrue();
+        context.MaidenName.Should().Be("Иванова");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldNotOverwriteExistingMaidenName()
+    {
+        // Male with existing MaidenName (should not overwrite)
+        var context = CreateContext(Gender.Male);
+        context.LastName = "Попов";
+        context.MaidenName = "Другая";
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeFalse();
+        context.MaidenName.Should().Be("Другая");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldCopyLocaleLastNameToMaidenName()
+    {
+        // Male with locale LastName but no MaidenName in that locale
+        var context = CreateContext(Gender.Male);
+        context.Names["ru"] = new Dictionary<string, string>
+        {
+            ["last_name"] = "Петров"
+        };
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.GetName(Locales.Russian, NameFields.MaidenName).Should().Be("Петров");
+    }
+
+    [Fact]
+    public void MarriedSurnameHandler_ShouldNotCopyIfLastNameEmpty()
+    {
+        // Male without LastName
+        var context = CreateContext(Gender.Male);
+        // LastName is null
+
+        var handler = new MarriedSurnameHandler();
+        handler.Handle(context);
+
+        context.IsDirty.Should().BeFalse();
+        context.MaidenName.Should().BeNull();
     }
 
     #endregion

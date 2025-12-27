@@ -135,10 +135,13 @@ public class FixNamesExecutor
             // Process this profile
             await ProcessProfileAsync(profileId, depth, cancellationToken);
 
-            // Save progress periodically
+            // Save progress and log cache stats periodically
             if (_profilesVisited % 10 == 0)
             {
                 await SaveProgressAsync();
+                var (cachedProfiles, cachedUnions) = _profileClient.GetCacheStats();
+                _logger.LogInformation("Cache stats: {ProfileCount} profiles, {UnionCount} unions cached",
+                    cachedProfiles, cachedUnions);
             }
         }
     }
@@ -173,8 +176,11 @@ public class FixNamesExecutor
                 // Skip already processed
                 if (_progress.IsNameProcessed(nodeId)) continue;
 
+                // Find spouse for this node
+                var spouseNode = FindSpouseNode(node, family.Nodes);
+
                 // Process this node's names
-                var hadChanges = await ProcessNodeAsync(node);
+                var hadChanges = await ProcessNodeAsync(node, spouseNode);
 
                 // Mark as processed
                 _progress.MarkNameProcessed(nodeId, hadChanges);
@@ -203,12 +209,15 @@ public class FixNamesExecutor
         }
     }
 
-    private async Task<bool> ProcessNodeAsync(GeniNode node)
+    private async Task<bool> ProcessNodeAsync(GeniNode node, GeniNode? spouseNode)
     {
         if (node.Id == null) return false;
 
         // Create context from node
         var context = NameFixContext.FromGeniNode(node);
+
+        // Set spouse info if available
+        context.SetSpouseInfo(spouseNode);
 
         // Run through pipeline
         _pipeline.Process(context);
@@ -255,6 +264,39 @@ public class FixNamesExecutor
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Find spouse node for a given profile node by looking through union nodes
+    /// </summary>
+    private GeniNode? FindSpouseNode(GeniNode node, Dictionary<string, GeniNode> allNodes)
+    {
+        if (node.Id == null || node.Edges?.Unions == null) return null;
+
+        // Look through each union the person belongs to
+        foreach (var unionId in node.Edges.Unions)
+        {
+            if (!allNodes.TryGetValue(unionId, out var unionNode)) continue;
+            if (unionNode.Edges == null) continue;
+
+            // Get partner profile IDs from this union
+            var partnerIds = unionNode.Edges.GetPartnerProfileIds();
+
+            // Find partner that isn't this node
+            foreach (var partnerId in partnerIds)
+            {
+                if (partnerId == node.Id) continue;
+
+                // Found a spouse - try to get their node
+                if (allNodes.TryGetValue(partnerId, out var spouseNode))
+                {
+                    // Return the first spouse found (most marriages have one spouse)
+                    return spouseNode;
+                }
+            }
+        }
+
+        return null;
     }
 
     private async Task LoadProgressAsync()

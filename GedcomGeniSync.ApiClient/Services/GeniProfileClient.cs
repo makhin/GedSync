@@ -15,6 +15,11 @@ namespace GedcomGeniSync.ApiClient.Services;
 [ExcludeFromCodeCoverage]
 public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
 {
+    // Cache for profile data to avoid redundant API calls
+    private readonly Dictionary<string, GeniProfile> _profileCache = new();
+    private readonly Dictionary<string, GeniUnion> _unionCache = new();
+    private readonly object _cacheLock = new();
+
     public GeniProfileClient(
         IHttpClientFactory httpClientFactory,
         string accessToken,
@@ -23,6 +28,98 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
         : base(httpClientFactory, accessToken, dryRun, logger)
     {
     }
+
+    #region Cache Management
+
+    /// <summary>
+    /// Gets a cached profile if available
+    /// </summary>
+    public GeniProfile? GetCachedProfile(string profileId)
+    {
+        var cleanId = ProfileIdHelper.ExtractProfileIdForUrl(profileId);
+        lock (_cacheLock)
+        {
+            if (_profileCache.TryGetValue(cleanId, out var profile))
+                return profile;
+            if (_profileCache.TryGetValue($"profile-{cleanId}", out profile))
+                return profile;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Gets a cached union if available
+    /// </summary>
+    public GeniUnion? GetCachedUnion(string unionId)
+    {
+        var cleanId = unionId.Replace("union-", "");
+        lock (_cacheLock)
+        {
+            if (_unionCache.TryGetValue(cleanId, out var union))
+                return union;
+            if (_unionCache.TryGetValue($"union-{cleanId}", out union))
+                return union;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Adds a profile to the cache
+    /// </summary>
+    private void CacheProfile(GeniProfile profile)
+    {
+        if (profile?.Id == null) return;
+        lock (_cacheLock)
+        {
+            var numericId = profile.NumericId;
+            _profileCache[numericId] = profile;
+            _profileCache[profile.Id] = profile;
+        }
+    }
+
+    /// <summary>
+    /// Adds a union to the cache
+    /// </summary>
+    private void CacheUnion(GeniUnion union)
+    {
+        if (union?.Id == null) return;
+        lock (_cacheLock)
+        {
+            var numericId = union.NumericId;
+            _unionCache[numericId] = union;
+            _unionCache[$"union-{numericId}"] = union;
+            _unionCache[union.Id] = union;
+        }
+    }
+
+    /// <summary>
+    /// Gets cache statistics
+    /// </summary>
+    public (int ProfileCount, int UnionCount) GetCacheStats()
+    {
+        lock (_cacheLock)
+        {
+            // Count unique profiles (each is stored multiple times with different keys)
+            var uniqueProfiles = _profileCache.Values.Select(p => p.Id).Distinct().Count();
+            var uniqueUnions = _unionCache.Values.Select(u => u.Id).Distinct().Count();
+            return (uniqueProfiles, uniqueUnions);
+        }
+    }
+
+    /// <summary>
+    /// Clears the cache
+    /// </summary>
+    public void ClearCache()
+    {
+        lock (_cacheLock)
+        {
+            _profileCache.Clear();
+            _unionCache.Clear();
+        }
+        Logger.LogDebug("Profile and union cache cleared");
+    }
+
+    #endregion
 
     #region Read Operations
 
@@ -55,49 +152,78 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
             return new Dictionary<string, GeniProfile>();
         }
 
-        await ThrottleAsync();
+        var dictionary = new Dictionary<string, GeniProfile>();
+        var idsToFetch = new List<string>();
 
-        // Join profile IDs with commas
-        var idsParam = string.Join(",", profileIds);
-        var url = $"{BaseUrl}/profile?ids={idsParam}";
-        Logger.LogDebug("GET {Url} (batch of {Count} profiles)", url, profileIds.Count);
-
-        try
+        // Check cache first
+        foreach (var id in profileIds)
         {
-            using var client = CreateClient();
-            var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
-            response.EnsureSuccessStatusCode();
-
-            // Log raw JSON response for debugging
-            var jsonContent = await response.Content.ReadAsStringAsync();
-            Logger.LogDebug("Batch API returned {Length} characters for {Count} profiles",
-                jsonContent.Length, profileIds.Count);
-
-            // The batch API returns {"results": [GeniProfile, ...]}
-            var batchResult = System.Text.Json.JsonSerializer.Deserialize<GeniBatchProfileResult>(
-                jsonContent,
-                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            // Convert list to dictionary keyed by numeric ID (without "profile-" prefix)
-            var dictionary = new Dictionary<string, GeniProfile>();
-            if (batchResult?.Results != null)
+            var cached = GetCachedProfile(id);
+            if (cached != null)
             {
-                foreach (var profile in batchResult.Results)
+                dictionary[cached.NumericId] = cached;
+                dictionary[cached.Id] = cached;
+            }
+            else
+            {
+                idsToFetch.Add(id);
+            }
+        }
+
+        if (idsToFetch.Count > 0)
+        {
+            Logger.LogDebug("Cache hit for {CacheHits} profiles, fetching {ToFetch} from API",
+                profileIds.Count - idsToFetch.Count, idsToFetch.Count);
+
+            await ThrottleAsync();
+
+            // Join profile IDs with commas
+            var idsParam = string.Join(",", idsToFetch);
+            var url = $"{BaseUrl}/profile?ids={idsParam}";
+            Logger.LogDebug("GET {Url} (batch of {Count} profiles)", url, idsToFetch.Count);
+
+            try
+            {
+                using var client = CreateClient();
+                var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
+                response.EnsureSuccessStatusCode();
+
+                // Log raw JSON response for debugging
+                var jsonContent = await response.Content.ReadAsStringAsync();
+                Logger.LogDebug("Batch API returned {Length} characters for {Count} profiles",
+                    jsonContent.Length, idsToFetch.Count);
+
+                // The batch API returns {"results": [GeniProfile, ...]}
+                var batchResult = System.Text.Json.JsonSerializer.Deserialize<GeniBatchProfileResult>(
+                    jsonContent,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                // Convert list to dictionary keyed by numeric ID (without "profile-" prefix)
+                if (batchResult?.Results != null)
                 {
-                    var numericId = profile.NumericId;
-                    dictionary[numericId] = profile;
-                    // Also add with "profile-" prefix for compatibility
-                    dictionary[profile.Id] = profile;
+                    foreach (var profile in batchResult.Results)
+                    {
+                        var numericId = profile.NumericId;
+                        dictionary[numericId] = profile;
+                        // Also add with "profile-" prefix for compatibility
+                        dictionary[profile.Id] = profile;
+
+                        // Cache the profile for future use
+                        CacheProfile(profile);
+                    }
                 }
             }
-
-            return dictionary;
+            catch (HttpRequestException ex)
+            {
+                Logger.LogError(ex, "Failed to get batch profiles for IDs: {ProfileIds}", string.Join(", ", idsToFetch));
+            }
         }
-        catch (HttpRequestException ex)
+        else
         {
-            Logger.LogError(ex, "Failed to get batch profiles for IDs: {ProfileIds}", string.Join(", ", profileIds));
-            return new Dictionary<string, GeniProfile>();
+            Logger.LogDebug("All {Count} profiles found in cache, skipping API call", profileIds.Count);
         }
+
+        return dictionary;
     }
 
     public async Task<GeniProfile?> GetCurrentUserProfileAsync()
@@ -335,53 +461,85 @@ public class GeniProfileClient : GeniApiClientBase, IGeniProfileClient
             return new Dictionary<string, GeniUnion>();
         }
 
-        await ThrottleAsync();
+        var dictionary = new Dictionary<string, GeniUnion>();
+        var idsToFetch = new List<string>();
 
-        // Join union IDs with commas
-        var idsParam = string.Join(",", unionIds);
-        var url = $"{BaseUrl}/union?ids={idsParam}";
-        Logger.LogDebug("GET {Url} (batch of {Count} unions)", url, unionIds.Count);
-
-        try
+        // Check cache first
+        foreach (var id in unionIds)
         {
-            using var client = CreateClient();
-            var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
-            response.EnsureSuccessStatusCode();
-
-            // Log raw JSON response for debugging
-            var jsonContent = await response.Content.ReadAsStringAsync();
-            Logger.LogDebug("Batch API returned {Length} characters for {Count} unions",
-                jsonContent.Length, unionIds.Count);
-
-            // The batch API returns {"results": [GeniUnion, ...]}
-            var batchResult = System.Text.Json.JsonSerializer.Deserialize<GeniBatchUnionResult>(
-                jsonContent,
-                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            // Convert list to dictionary keyed by numeric ID (without "union-" prefix)
-            var dictionary = new Dictionary<string, GeniUnion>();
-            if (batchResult?.Results != null)
+            var cached = GetCachedUnion(id);
+            if (cached != null)
             {
-                foreach (var union in batchResult.Results)
-                {
-                    if (union.Id == null) continue;
+                var numericId = cached.NumericId;
+                dictionary[numericId] = cached;
+                dictionary[$"union-{numericId}"] = cached;
+                if (cached.Id != null)
+                    dictionary[cached.Id] = cached;
+            }
+            else
+            {
+                idsToFetch.Add(id);
+            }
+        }
 
-                    var numericId = union.NumericId;
-                    dictionary[numericId] = union;
-                    // Also add with "union-" prefix for compatibility
-                    dictionary[$"union-{numericId}"] = union;
-                    // Also add with full URL for compatibility
-                    dictionary[union.Id] = union;
+        if (idsToFetch.Count > 0)
+        {
+            Logger.LogDebug("Cache hit for {CacheHits} unions, fetching {ToFetch} from API",
+                unionIds.Count - idsToFetch.Count, idsToFetch.Count);
+
+            await ThrottleAsync();
+
+            // Join union IDs with commas
+            var idsParam = string.Join(",", idsToFetch);
+            var url = $"{BaseUrl}/union?ids={idsParam}";
+            Logger.LogDebug("GET {Url} (batch of {Count} unions)", url, idsToFetch.Count);
+
+            try
+            {
+                using var client = CreateClient();
+                var response = await ExecuteWithRetryAsync(() => client.GetAsync(url));
+                response.EnsureSuccessStatusCode();
+
+                // Log raw JSON response for debugging
+                var jsonContent = await response.Content.ReadAsStringAsync();
+                Logger.LogDebug("Batch API returned {Length} characters for {Count} unions",
+                    jsonContent.Length, idsToFetch.Count);
+
+                // The batch API returns {"results": [GeniUnion, ...]}
+                var batchResult = System.Text.Json.JsonSerializer.Deserialize<GeniBatchUnionResult>(
+                    jsonContent,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                // Convert list to dictionary keyed by numeric ID (without "union-" prefix)
+                if (batchResult?.Results != null)
+                {
+                    foreach (var union in batchResult.Results)
+                    {
+                        if (union.Id == null) continue;
+
+                        var numericId = union.NumericId;
+                        dictionary[numericId] = union;
+                        // Also add with "union-" prefix for compatibility
+                        dictionary[$"union-{numericId}"] = union;
+                        // Also add with full URL for compatibility
+                        dictionary[union.Id] = union;
+
+                        // Cache the union for future use
+                        CacheUnion(union);
+                    }
                 }
             }
-
-            return dictionary;
+            catch (HttpRequestException ex)
+            {
+                Logger.LogError(ex, "Failed to get batch unions for IDs: {UnionIds}", string.Join(", ", idsToFetch));
+            }
         }
-        catch (HttpRequestException ex)
+        else
         {
-            Logger.LogError(ex, "Failed to get batch unions for IDs: {UnionIds}", string.Join(", ", unionIds));
-            return new Dictionary<string, GeniUnion>();
+            Logger.LogDebug("All {Count} unions found in cache, skipping API call", unionIds.Count);
         }
+
+        return dictionary;
     }
 
     #endregion

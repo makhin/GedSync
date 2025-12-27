@@ -209,6 +209,7 @@ public class FixNamesCommandHandler : IHostedCommand
             (typeof(SuffixExtractHandler), "SuffixExtract"),               // Order: 11
             (typeof(MaidenNameExtractHandler), "MaidenNameExtract"),       // Order: 12
             (typeof(NicknameExtractHandler), "NicknameExtract"),           // Order: 13
+            (typeof(MarriedSurnameHandler), "MarriedSurname"),             // Order: 14
             (typeof(PatronymicHandler), "Patronymic"),                     // Order: 15
 
             // Script/Language detection phase (Order: 20-28)

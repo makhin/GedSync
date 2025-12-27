@@ -43,18 +43,14 @@ public class RateLimitInfo
     {
         if (!Remaining.HasValue || !Limit.HasValue || !WindowSeconds.HasValue)
         {
-            // No rate limit info, use conservative default (1 request per second)
-            return 1000;
+            // No rate limit info yet - Geni API typically allows 1 req/10s
+            // Use conservative default to avoid hitting 429 errors
+            return 10000;
         }
 
-        if (IsExceeded)
+        if (IsExceeded || Remaining.Value == 0)
         {
             // If exceeded, wait for the full window
-            return WindowSeconds.Value * 1000;
-        }
-
-        if (Remaining.Value == 0)
-        {
             return WindowSeconds.Value * 1000;
         }
 
@@ -64,13 +60,13 @@ public class RateLimitInfo
 
         if (timeRemaining <= 0)
         {
-            // Window has likely reset, use minimal delay
-            return 100;
+            // Window has likely reset, but be conservative
+            return 1000;
         }
 
-        // Spread remaining requests across remaining time
-        var delaySeconds = timeRemaining / Remaining.Value;
-        return Math.Max(100, (int)(delaySeconds * 1000)); // Minimum 100ms
+        // Spread remaining requests across remaining time, with minimum of 1 second
+        var delaySeconds = timeRemaining / Math.Max(1, Remaining.Value);
+        return Math.Max(1000, (int)(delaySeconds * 1000));
     }
 
     public override string ToString()
