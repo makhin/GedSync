@@ -53,6 +53,7 @@ public static class ProfileIdHelper
     /// - "profile-g6000000207133980253" → "g6000000207133980253" (GUID, keep 'g')
     /// - "g6000000207133980253" → "g6000000207133980253" (GUID, keep 'g')
     /// - "g34852237013" → "34852237013" (internal ID, remove 'g')
+    /// - "I6000000207133980253" → "g6000000207133980253" (GEDCOM format, convert to GUID)
     /// </summary>
     public static string ExtractProfileIdForUrl(string profileId)
     {
@@ -65,6 +66,22 @@ public static class ProfileIdHelper
         if (id.StartsWith("profile-", StringComparison.OrdinalIgnoreCase))
         {
             id = id.Substring(8);
+        }
+
+        // Handle 'I' prefix (GEDCOM format): convert to numeric, then add 'g' for GUIDs
+        if ((id.StartsWith('I') || id.StartsWith('i')) && id.Length > 1 && char.IsDigit(id[1]))
+        {
+            var numericPart = id.Substring(1);
+            if (numericPart.Length >= GuidMinLength)
+            {
+                // It's a GUID, add 'g' prefix
+                return $"g{numericPart}";
+            }
+            else
+            {
+                // It's an internal ID
+                return numericPart;
+            }
         }
 
         // Handle 'g' prefix: keep for GUIDs, remove for internal IDs
