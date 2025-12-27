@@ -1,4 +1,6 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using GedcomGeniSync.ApiClient.Models;
 using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
@@ -284,7 +286,8 @@ public class FixNamesExecutor
 
             var json = JsonSerializer.Serialize(_progress, new JsonSerializerOptions
             {
-                WriteIndented = true
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
             });
 
             await File.WriteAllTextAsync(_progressFile, json);
@@ -317,7 +320,10 @@ public class FixNamesExecutor
                 })
             };
 
-            var json = JsonSerializer.Serialize(logEntry);
+            var json = JsonSerializer.Serialize(logEntry, new JsonSerializerOptions
+            {
+                Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
+            });
             await File.AppendAllTextAsync(_logFile, json + Environment.NewLine);
         }
         catch (Exception ex)
