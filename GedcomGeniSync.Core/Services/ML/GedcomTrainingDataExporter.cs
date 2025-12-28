@@ -21,11 +21,12 @@ public class GedcomTrainingDataExporter
     /// <summary>
     /// Export training data from a GEDCOM file
     /// </summary>
-    public List<NameTrainingData> ExportFromGedcom(string gedcomPath)
+    public async Task<List<NameTrainingData>> ExportFromGedcomAsync(string gedcomPath)
     {
         _logger.LogInformation("Loading GEDCOM file: {Path}", gedcomPath);
 
-        var result = _loader.Load(gedcomPath);
+        // Load without downloading photos - we only need names
+        var result = await _loader.LoadAsync(gedcomPath, downloadPhotos: false);
         var trainingData = new List<NameTrainingData>();
         var stats = new Dictionary<string, int>();
 
@@ -56,7 +57,7 @@ public class GedcomTrainingDataExporter
     /// </summary>
     public async Task ExportToCsvAsync(string gedcomPath, string outputPath)
     {
-        var data = ExportFromGedcom(gedcomPath);
+        var data = await ExportFromGedcomAsync(gedcomPath);
 
         var sb = new StringBuilder();
         sb.AppendLine("Name,Locale,NameType,Gender");
@@ -76,6 +77,39 @@ public class GedcomTrainingDataExporter
         _logger.LogInformation("Exported {Count} records to {Path}", data.Count, outputPath);
     }
 
+    // Names to exclude from training data (placeholders, not real names)
+    private static readonly HashSet<string> ExcludedNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "private", "unknown", "living", "deceased", "unnamed", "stillborn",
+        "infant", "baby", "child", "son", "daughter", "mr", "mrs", "ms",
+        "nn", "n.n.", "n.n", "?", "??", "???", "-", "--", "---"
+    };
+
+    /// <summary>
+    /// Check if a name is valid for training (not a placeholder)
+    /// </summary>
+    private static bool IsValidTrainingName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+
+        var trimmed = name.Trim();
+
+        // Too short
+        if (trimmed.Length < 2)
+            return false;
+
+        // Excluded placeholder names
+        if (ExcludedNames.Contains(trimmed))
+            return false;
+
+        // Names that are just punctuation or numbers
+        if (trimmed.All(c => !char.IsLetter(c)))
+            return false;
+
+        return true;
+    }
+
     /// <summary>
     /// Extract training records from a single person
     /// </summary>
@@ -89,14 +123,14 @@ public class GedcomTrainingDataExporter
                        ?? ScriptDetector.InferLocaleFromPlace(person.DeathPlace);
 
         // Extract first name
-        if (!string.IsNullOrWhiteSpace(person.FirstName))
+        if (IsValidTrainingName(person.FirstName))
         {
-            var locale = DetermineLocale(person.FirstName, placeLocale);
+            var locale = DetermineLocale(person.FirstName!, placeLocale);
             if (locale != "unknown")
             {
                 records.Add(new NameTrainingData
                 {
-                    Name = person.FirstName.Trim(),
+                    Name = person.FirstName!.Trim(),
                     Locale = locale,
                     NameType = "first",
                     Gender = gender
@@ -105,14 +139,14 @@ public class GedcomTrainingDataExporter
         }
 
         // Extract middle name (patronymic for Russian names)
-        if (!string.IsNullOrWhiteSpace(person.MiddleName))
+        if (IsValidTrainingName(person.MiddleName))
         {
-            var locale = DetermineLocale(person.MiddleName, placeLocale);
+            var locale = DetermineLocale(person.MiddleName!, placeLocale);
             if (locale != "unknown")
             {
                 records.Add(new NameTrainingData
                 {
-                    Name = person.MiddleName.Trim(),
+                    Name = person.MiddleName!.Trim(),
                     Locale = locale,
                     NameType = "middle",
                     Gender = gender
@@ -121,14 +155,14 @@ public class GedcomTrainingDataExporter
         }
 
         // Extract last name
-        if (!string.IsNullOrWhiteSpace(person.LastName))
+        if (IsValidTrainingName(person.LastName))
         {
-            var locale = DetermineLocale(person.LastName, placeLocale);
+            var locale = DetermineLocale(person.LastName!, placeLocale);
             if (locale != "unknown")
             {
                 records.Add(new NameTrainingData
                 {
-                    Name = person.LastName.Trim(),
+                    Name = person.LastName!.Trim(),
                     Locale = locale,
                     NameType = "last",
                     Gender = gender
@@ -137,14 +171,14 @@ public class GedcomTrainingDataExporter
         }
 
         // Extract maiden name
-        if (!string.IsNullOrWhiteSpace(person.MaidenName))
+        if (IsValidTrainingName(person.MaidenName))
         {
-            var locale = DetermineLocale(person.MaidenName, placeLocale);
+            var locale = DetermineLocale(person.MaidenName!, placeLocale);
             if (locale != "unknown")
             {
                 records.Add(new NameTrainingData
                 {
-                    Name = person.MaidenName.Trim(),
+                    Name = person.MaidenName!.Trim(),
                     Locale = locale,
                     NameType = "maiden",
                     Gender = "female" // Maiden names are always for females
@@ -155,7 +189,7 @@ public class GedcomTrainingDataExporter
         // Extract from name variants (transliterations)
         foreach (var variant in person.NameVariants)
         {
-            if (string.IsNullOrWhiteSpace(variant))
+            if (!IsValidTrainingName(variant))
                 continue;
 
             // Skip if already added
