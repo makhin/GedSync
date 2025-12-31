@@ -145,6 +145,54 @@ public class NameFixContext
         return context;
     }
 
+    /// <summary>
+    /// Create context from a PersonRecord (GEDCOM data).
+    /// Used for fixing names before creating a new profile.
+    /// </summary>
+    public static NameFixContext FromPersonRecord(PersonRecord person)
+    {
+        var context = new NameFixContext
+        {
+            ProfileId = person.Id,
+            DisplayName = person.FullName,
+            Gender = person.Gender,
+            FirstName = person.FirstName,
+            MiddleName = person.MiddleName,
+            LastName = person.LastName,
+            MaidenName = person.MaidenName,
+            Suffix = person.Suffix,
+            Nicknames = person.Nickname
+        };
+
+        // For new profiles, we initialize Names dictionary from primary names
+        // The handlers will detect script and move to appropriate locales
+        if (!string.IsNullOrWhiteSpace(person.FirstName) ||
+            !string.IsNullOrWhiteSpace(person.MiddleName) ||
+            !string.IsNullOrWhiteSpace(person.LastName) ||
+            !string.IsNullOrWhiteSpace(person.MaidenName))
+        {
+            // Start with a default "root" locale that handlers will fix
+            var rootNames = new Dictionary<string, string>();
+            if (!string.IsNullOrWhiteSpace(person.FirstName))
+                rootNames[NameFields.FirstName] = person.FirstName;
+            if (!string.IsNullOrWhiteSpace(person.MiddleName))
+                rootNames[NameFields.MiddleName] = person.MiddleName;
+            if (!string.IsNullOrWhiteSpace(person.LastName))
+                rootNames[NameFields.LastName] = person.LastName;
+            if (!string.IsNullOrWhiteSpace(person.MaidenName))
+                rootNames[NameFields.MaidenName] = person.MaidenName;
+
+            // Use root locale as placeholder - handlers will move to correct locale
+            if (rootNames.Count > 0)
+            {
+                context.Names["root"] = rootNames;
+            }
+        }
+
+        context.OriginalNames = CloneNames(context.Names);
+        return context;
+    }
+
     #endregion
 
     #region Name Access Methods
@@ -282,6 +330,27 @@ public class NameFixContext
             Nicknames = Nicknames,
             Names = Names.Count > 0 ? Names : null
         };
+    }
+
+    /// <summary>
+    /// Apply fixed names to a GeniProfileCreate.
+    /// Removes the "root" locale if present (it was just a placeholder).
+    /// </summary>
+    public void ApplyToProfileCreate(GeniProfileCreate profile)
+    {
+        profile.FirstName = FirstName;
+        profile.MiddleName = MiddleName;
+        profile.LastName = LastName;
+        profile.MaidenName = MaidenName;
+        profile.Suffix = Suffix;
+        profile.Nicknames = Nicknames;
+
+        // Remove root locale (placeholder) and apply real locales
+        var namesToApply = Names
+            .Where(kvp => kvp.Key != "root" && kvp.Value.Count > 0)
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+        profile.Names = namesToApply.Count > 0 ? namesToApply : null;
     }
 
     #endregion

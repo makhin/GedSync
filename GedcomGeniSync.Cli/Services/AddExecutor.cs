@@ -3,6 +3,7 @@ using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Models;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Services.NameFix;
 using GedcomGeniSync.Services.Photo;
 using GedcomGeniSync.Utils;
 using Microsoft.Extensions.Logging;
@@ -18,6 +19,7 @@ public class AddExecutor
     private readonly IGeniPhotoClient _photoClient;
     private readonly IPhotoDownloadService _photoService;
     private readonly IPhotoCacheService? _photoCacheService;
+    private readonly INameFixPipeline? _nameFixPipeline;
     private readonly GedcomLoadResult _gedcom;
     private readonly ILogger _logger;
     private readonly InteractiveConfirmationService _confirmationService;
@@ -29,6 +31,7 @@ public class AddExecutor
         IGeniPhotoClient photoClient,
         IPhotoDownloadService photoService,
         IPhotoCacheService? photoCacheService,
+        INameFixPipeline? nameFixPipeline,
         GedcomLoadResult gedcom,
         ILogger logger,
         InteractiveConfirmationService confirmationService,
@@ -39,6 +42,7 @@ public class AddExecutor
         _photoClient = photoClient;
         _photoService = photoService;
         _photoCacheService = photoCacheService;
+        _nameFixPipeline = nameFixPipeline;
         _gedcom = gedcom;
         _logger = logger;
         _confirmationService = confirmationService;
@@ -152,8 +156,8 @@ public class AddExecutor
                 _logger.LogInformation("  Related to {RelatedId} (Geni: {GeniId}) as {RelationType}",
                     node.RelatedToNodeId, relatedGeniId, node.RelationType);
 
-                // Map PersonData to GeniProfileCreate
-                var profileCreate = MapToGeniProfileCreate(node.PersonData);
+                // Map PersonData to GeniProfileCreate (with name fixes applied)
+                var profileCreate = MapToGeniProfileCreate(node.PersonData, sourcePerson);
 
                 // Interactive confirmation if enabled
                 if (_confirmationService.IsEnabled)
@@ -435,14 +439,14 @@ public class AddExecutor
     }
 
     /// <summary>
-    /// Maps PersonData to GeniProfileCreate
+    /// Maps PersonData to GeniProfileCreate, applying name fixes if pipeline is available
     /// </summary>
-    private GeniProfileCreate MapToGeniProfileCreate(PersonData personData)
+    private GeniProfileCreate MapToGeniProfileCreate(PersonData personData, PersonRecord? sourcePerson = null)
     {
         // Person is alive unless they have a death date
         var isAlive = string.IsNullOrEmpty(personData.DeathDate);
 
-        return new GeniProfileCreate
+        var profile = new GeniProfileCreate
         {
             FirstName = personData.FirstName,
             MiddleName = personData.MiddleName,
@@ -457,6 +461,25 @@ public class AddExecutor
             Nicknames = personData.Nickname,
             IsAlive = isAlive
         };
+
+        // Apply name fixes if pipeline is available and we have source person
+        if (_nameFixPipeline != null && sourcePerson != null)
+        {
+            var context = NameFixContext.FromPersonRecord(sourcePerson);
+            _nameFixPipeline.Process(context);
+
+            if (context.IsDirty)
+            {
+                _logger.LogInformation("  Applied {Count} name fix(es):", context.Changes.Count);
+                foreach (var change in context.Changes)
+                {
+                    _logger.LogInformation("    - {Change}", change);
+                }
+                context.ApplyToProfileCreate(profile);
+            }
+        }
+
+        return profile;
     }
 
     /// <summary>

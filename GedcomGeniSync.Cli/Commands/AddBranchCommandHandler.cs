@@ -5,6 +5,7 @@ using GedcomGeniSync.ApiClient.Services.Interfaces;
 using GedcomGeniSync.Cli.Models;
 using GedcomGeniSync.Cli.Services;
 using GedcomGeniSync.Services;
+using GedcomGeniSync.Services.NameFix;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -115,6 +116,9 @@ public class AddBranchCommandHandler : IHostedCommand
                     sp.GetRequiredService<IHttpClientFactory>(),
                     sp.GetRequiredService<ILogger<GedcomGeniSync.Services.PhotoDownloadService>>(),
                     dryRun));
+
+            // Register name fix pipeline for fixing names before profile creation
+            NameFixPipelineFactory.RegisterNameFixServices(services);
         });
 
         var provider = scope.ServiceProvider;
@@ -180,6 +184,7 @@ public class AddBranchCommandHandler : IHostedCommand
                 profileClient,
                 photoClient,
                 photoService,
+                provider.GetService<INameFixPipeline>(),
                 gedcomResult,
                 logger,
                 confirmationService);
